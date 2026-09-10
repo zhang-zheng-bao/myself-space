@@ -58,11 +58,10 @@ Write-Host "  Copying deploy scripts..." -ForegroundColor Gray
 Copy-Item -Path (Join-Path $ProjectRoot "deploy-windows.ps1") -Destination (Join-Path $PackageDir "deploy-windows.ps1") -ErrorAction SilentlyContinue
 Copy-Item -Path (Join-Path $ProjectRoot "run-deploy-server.ps1") -Destination (Join-Path $PackageDir "run-deploy-server.ps1") -ErrorAction SilentlyContinue
 
-# Copy domain certificate bundle when present (used by the front proxy / HTTPS host)
-if (Test-Path (Join-Path $ProjectRoot "zhengbao.work_tomcat")) {
-    Write-Host "  Copying zhengbao.work_tomcat/..." -ForegroundColor Gray
-    Copy-Item -Recurse -Path (Join-Path $ProjectRoot "zhengbao.work_tomcat") -Destination (Join-Path $PackageDir "zhengbao.work_tomcat")
-}
+# Certificates are intentionally NOT copied here.
+# TLS termination and SNI moved to the standalone gateway project
+# (zhang-zheng-bao/gateway), which owns the only authoritative cert set.
+# This app is reached through that gateway on port 3002.
 
 # Copy .env template (NOT the real .env with secrets)
 Write-Host "  Copying .env template..." -ForegroundColor Gray
