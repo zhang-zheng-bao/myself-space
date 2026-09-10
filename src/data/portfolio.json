@@ -1,0 +1,217 @@
+{
+  "profile": {
+    "name": "张正宝",
+    "avatar": "/avatar-zhang-v2.png",
+    "tagline": "求职方向：AI产品经理 新媒体运营",
+    "intro": "我是一名对 AIGC、内容生产和产品表达都保持高热情的网络与新媒体专业求职者。熟悉短视频账号运营、AI 工作流、UI 原型和前端应用搭建，擅长把创意快速落成可展示、可传播、可复用的作品。",
+    "quote": "把想法做成作品，把作品推向真实的人群。",
+    "resumePdfUrl": ""
+  },
+  "experiences": [
+    {
+      "id": "exp-1",
+      "period": "2024.07 - 至今",
+      "role": "抖音、视频号、小红书",
+      "company": "内容创作者",
+      "desc": "独立策划并运营短视频账号，完成选题、脚本、剪辑、发布和数据复盘，积累多条高播放内容经验。"
+    },
+    {
+      "id": "exp-2",
+      "period": "2025.03 - 至今",
+      "role": "咸鱼鱼小铺",
+      "company": "店铺运营",
+      "desc": "通过差异化文案、商品陈列和沟通转化完成个人电商实践，沉淀从内容引流到交易转化的实操经验。"
+    },
+    {
+      "id": "exp-3",
+      "period": "2026.03",
+      "role": "Runninghub",
+      "company": "AIGC 内容项目",
+      "desc": "使用 ComfyUI、TTS、视频增强和非线性剪辑工具制作演示内容，跑通 AI 辅助影视解说和课程生产流程。"
+    },
+    {
+      "id": "exp-940c1ed5-2c41-4f35-ba96-179109f568fe",
+      "period": "2026.3-2026.4",
+      "role": "食本文化科技有限公司",
+      "company": "运营助理",
+      "desc": "电商运营，新媒体运营"
+    }
+  ],
+  "prospects": {
+    "title": "继续把内容、产品与 AI 工作流连起来",
+    "content": "接下来我会重点提升可规模化内容生产能力、数据化运营能力和产品落地能力，让每一次创作都能被验证、迭代和复用。",
+    "points": [
+      "建立更稳定的 AIGC 内容生产流水线，提升从选题到发布的效率。",
+      "结合数据分析工具追踪内容转化，把播放、互动和商业结果连接起来。",
+      "持续完善独立产品项目，把前端原型推进到可运营的真实服务。"
+    ]
+  },
+  "skills": [
+    "新媒体账号运营",
+    "短视频策划与剪辑",
+    "AIGC 工作流",
+    "UI/UX 原型设计",
+    "React 前端开发",
+    "数据复盘与内容增长"
+  ],
+  "works": [
+    {
+      "id": "work-1",
+      "category": "app",
+      "title": "”庐州GO“产品AI全栈开发",
+      "description": "独立完成产品构思、界面设计、交互原型和前端开发，展示从创意到应用雏形的完整能力。",
+      "icon": "AppWindow",
+      "images": [
+        "https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?w=800&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1542435503-956c469947f6?w=800&auto=format&fit=crop"
+      ],
+      "videoUrl": "",
+      "links": [
+        {
+          "label": "GitHub",
+          "url": "https://github.com/linmo-ink"
+        },
+        {
+          "label": "在线预览",
+          "url": "http://luzhougo.cn/"
+        }
+      ],
+      "tags": [
+        "APP",
+        "AI 辅助开发"
+      ]
+    },
+    {
+      "id": "work-2",
+      "category": "video",
+      "title": "“知杏”APP原型图绘制",
+      "description": "结合 AI 配音、画质增强和剪辑工作流制作影视解说与课程演示内容，关注效率、叙事和画面完成度。",
+      "icon": "Video",
+      "images": [
+        "https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=800&auto=format&fit=crop"
+      ],
+      "videoUrl": "",
+      "links": [
+        {
+          "label": "作品链接",
+          "url": "https://modao.cc/proto/NjgJLitEtbq6tqOP2MhWqu/sharing?view_mode=read_only #“知杏”APP有AI-分享"
+        }
+      ],
+      "tags": [
+        "ComfyUI",
+        "TTS",
+        "剪辑",
+        "课程制作"
+      ]
+    },
+    {
+      "id": "work-3",
+      "category": "operation",
+      "title": "自媒体账号运营",
+      "description": "围绕热点判断、选题包装、发布节奏和数据复盘进行账号运营实践，沉淀内容增长方法。",
+      "icon": "TrendingUp",
+      "images": [
+        "https://images.unsplash.com/photo-1557804506-669a67965ba0?w=800&auto=format&fit=crop"
+      ],
+      "videoUrl": "",
+      "links": [
+        {
+          "label": "案例文档",
+          "url": "https://example.com/case.pdf"
+        }
+      ],
+      "tags": [
+        "短视频",
+        "账号运营",
+        "内容增长"
+      ]
+    },
+    {
+      "id": "work-poetry-1",
+      "category": "poetry",
+      "title": "雨后合肥",
+      "description": "雨停在傍晚的窗沿，\n城市把灯一盏盏递给行人。\n我从潮湿的风里经过，\n把未说出口的愿望，\n折成一枚很轻的纸船。\n\n它不急着抵达远方，\n只在水光里慢慢练习漂流，\n像我练习把生活写成作品，\n也把作品交还给真实的人群。",
+      "icon": "Feather",
+      "images": [
+        "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?w=900&auto=format&fit=crop"
+      ],
+      "videoUrl": "",
+      "links": [],
+      "tags": [
+        "诗作",
+        "城市",
+        "合肥",
+        "个人表达"
+      ]
+    },
+    {
+      "id": "work-9e495050-b24e-47c1-b707-a60dd459f99d",
+      "category": "app",
+      "title": "“心屿”App原型绘制",
+      "description": "",
+      "icon": "",
+      "images": [],
+      "videoUrl": "",
+      "links": [
+        {
+          "label": "在线预览",
+          "url": "https://modao.cc/proto/eaGGn1aOt80fad4DYE2Iiz/sharing?view_mode=read_only #心屿-分享"
+        }
+      ],
+      "tags": []
+    },
+    {
+      "id": "work-4d35c5f9-e400-488d-9ee0-412e4c23e9ab",
+      "category": "app",
+      "title": "批量重名软件开发",
+      "description": "",
+      "icon": "",
+      "images": [],
+      "videoUrl": "",
+      "links": [],
+      "tags": []
+    }
+  ],
+  "gallery": [
+    {
+      "id": "gallery-1",
+      "category": "应用",
+      "title": "首页界面截图",
+      "description": "用于展示项目首页、主要信息结构与视觉风格的工程截图。",
+      "imageUrl": "https://images.unsplash.com/photo-1551650975-87deedd944c3?w=1200&auto=format&fit=crop"
+    },
+    {
+      "id": "gallery-2",
+      "category": "原型图",
+      "title": "原型界面截图",
+      "description": "用于展示产品原型、界面布局和交互结构。",
+      "imageUrl": "https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=1200&auto=format&fit=crop"
+    }
+  ],
+  "musicTracks": [
+    {
+      "id": "track-1",
+      "title": "创作音流",
+      "artist": "Dear970",
+      "audioUrl": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
+      "coverUrl": "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop"
+    }
+  ],
+  "awards": [
+    {
+      "period": "2024",
+      "title": "校级优秀团员"
+    },
+    {
+      "period": "2025",
+      "title": "教育教学能力比赛奖项"
+    }
+  ],
+  "contact": {
+    "wechat": "linmo_ink",
+    "qq": "384952011",
+    "email": "dear970@163.com",
+    "phone": "18755571310",
+    "github": "https://github.com/linmo-ink"
+  }
+}

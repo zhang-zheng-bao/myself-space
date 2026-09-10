@@ -1,0 +1,6 @@
+{
+  "name": "墨痕 - 极简高雅个人空间",
+  "description": "一个流淌着斗破般坚韧精神与文艺墨痕的个人高雅极简黑色履历作品集空间，支持在线视频流媒体、多图轮播与后端内容更新。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

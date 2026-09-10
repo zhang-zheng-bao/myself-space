@@ -1,0 +1,32 @@
+node_modules/
+build/
+dist/
+LZGO1/
+tmp/
+uploads/
+coverage/
+.DS_Store
+*.log
+
+# 环境变量（含密钥，绝不入库）
+.env*
+!.env.example
+
+# SSL 证书与私钥（绝不入库）
+*.pem
+*.key
+*.pfx
+keystorePass.txt
+*_tomcat/
+
+# 打包产物与备份
+zhengbao-deploy*/
+zhengbao-deploy.zip
+cert-backup-*/
+cert-stage-*/
+deploy-package/
+deploy-package.zip
+
+# 构建产物（由服务器在部署时构建，不入库）
+server/server.cjs
+server/server.cjs.map
