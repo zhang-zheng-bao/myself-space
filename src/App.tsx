@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AppWindow,
+  Bot,
   Compass,
   Download,
   ExternalLink,
@@ -21,14 +22,15 @@ import {
   X,
 } from "lucide-react";
 import AdminApp from "./AdminApp";
-import { FloatingSentencesConfig, GalleryItem, MusicTrack, PortfolioData, TreasureItem, Work } from "./types";
+import { FloatingSentencesConfig, GalleryItem, MusicTrack, PortfolioData, ResumeProfile, TreasureItem, Work, defaultPageCopy } from "./types";
 
-type TabKey = "intro" | "resume" | "works" | "prospects" | "treasures" | "contact";
+type TabKey = "intro" | "resume" | "works" | "ai" | "prospects" | "treasures" | "contact";
 
 const navItems: { key: TabKey; label: string; sub: string }[] = [
   { key: "intro", label: "自我介绍", sub: "BIOGRAPHY" },
   { key: "resume", label: "个人简历", sub: "CURRICULUM" },
   { key: "works", label: "作品展示", sub: "PORTFOLIO" },
+  { key: "ai", label: "AI专区", sub: "AI ZONE" },
   { key: "prospects", label: "工程截图", sub: "GALLERY" },
   { key: "treasures", label: "我的珍藏", sub: "TREASURES" },
   { key: "contact", label: "联系方式", sub: "CONTACT" },
@@ -43,13 +45,6 @@ const workCategories = [
 ];
 
 const galleryCategoryOrder = ["应用", "原型图", "Agent", "剪辑"];
-const defaultPageCopy = {
-  resume: "“纸上得来终觉浅，绝知此事要躬行。”一页履历，照见实践。",
-  works: "“文章合为时而著，歌诗合为事而作。”作品因想法而生。",
-  gallery: "“横看成岭侧成峰，远近高低各不同。”截图留住侧影。",
-  treasures: "“此情可待成追忆，只是当时已惘然。”珍藏美好，岁月留香。",
-  contact: "“海内存知己，天涯若比邻。”愿在此处相逢。",
-};
 
 const emptyPortfolioData: PortfolioData = {
   profile: { name: "", avatar: "", tagline: "", intro: "", quote: "", resumePdfUrl: "", musicAutoplay: false, pageCopy: {} },
@@ -80,6 +75,25 @@ function normalizeData(data: PortfolioData): PortfolioData {
   };
 }
 
+/**
+ * 「我的珍藏」栏目是否在前台展示。
+ *
+ * 只有管理员在后台显式关闭（写入 false）才隐藏；缺省 undefined 视为展示，
+ * 因此历史数据无需迁移也不会被误隐藏。导航过滤与图片预载都走这一个判断，
+ * 避免两处规则各写一遍后彼此不一致。
+ */
+function isTreasuresVisible(data: PortfolioData) {
+  return data.profile.pageCopy?.treasuresVisible !== false;
+}
+
+/**
+ * 「AI 专区」栏目是否在前台展示。约定与 isTreasuresVisible 完全一致：
+ * 只有管理员在后台显式关闭（写入 false）才隐藏，缺省 undefined 一律视为展示。
+ */
+function isAiZoneVisible(data: PortfolioData) {
+  return data.profile.pageCopy?.aiZoneVisible !== false;
+}
+
 function categoryLabel(category: string) {
   return {
     operation: "账号运营",
@@ -87,6 +101,10 @@ function categoryLabel(category: string) {
     prototype: "原型图",
     video: "视频剪辑",
     poetry: "闲诗",
+    // AI 专区默认给的三个分类，后台也可以自己填别的，填别的就原样显示。
+    agent: "AI Agent",
+    image: "AI 绘图",
+    text: "AI 文案",
   }[category] || category;
 }
 
@@ -98,6 +116,9 @@ function categoryIcon(category: string) {
     case "prototype": return <Compass size={16} className={className} />;
     case "video": return <Video size={16} className={className} />;
     case "poetry": return <Feather size={16} className={className} />;
+    case "agent": return <Bot size={16} className={className} />;
+    case "image": return <Sparkles size={16} className={className} />;
+    case "text": return <FileText size={16} className={className} />;
     default: return <Compass size={16} className={className} />;
   }
 }
@@ -870,54 +891,68 @@ function GalleryModal({ item, onClose }: { item: GalleryItem; onClose: () => voi
   );
 }
 
-type ResumeKind = "productManager" | "newMedia";
-
-const resumeTabs: { key: ResumeKind; label: string; sub: string }[] = [
-  { key: "productManager", label: "产品经理", sub: "PRODUCT MANAGER" },
-  { key: "newMedia", label: "新媒体运营", sub: "NEW MEDIA OPS" },
-];
-
+/**
+ * 「个人简历」栏目。展示哪些岗位、叫什么名字、是否出现，全部由后台的简历列表决定，
+ * 后台还没配置过列表时回落到旧版写死的两份 PDF，保证历史数据照常展示。
+ */
 function ResumePane({ data }: { data: PortfolioData }) {
-  const [activeResume, setActiveResume] = useState<ResumeKind>("productManager");
   const pageCopy = { ...defaultPageCopy, ...(data.profile.pageCopy || {}) };
-  const resumePdfs = data.profile.pageCopy?.resumePdfs || {};
-  const resumePdfUrl = (activeResume === "productManager"
-    ? (resumePdfs.productManager || data.profile.resumePdfUrl)
-    : resumePdfs.newMedia
-  )?.trim();
+  const legacyPdfs = data.profile.pageCopy?.resumePdfs || {};
+
+  const profiles = useMemo<ResumeProfile[]>(() => {
+    const raw = data.profile.pageCopy?.resumeProfiles;
+    // 只有「后台从来没配过动态列表」才回落到旧版写死的两份 PDF。
+    // 键一旦存在（哪怕是空数组）就完全以后台为准 —— 管理员把每行都隐藏/删空，
+    // 那也是明确意图，不能把旧岗位又变出来。
+    if (raw) return raw.filter((item) => item?.visible !== false);
+    // 后台尚未配置动态列表，沿用旧版写死的两个岗位（没传 PDF 的就不再占一个空标签）。
+    const legacy: ResumeProfile[] = [
+      { id: "productManager", position: "产品经理", name: "PRODUCT MANAGER", url: legacyPdfs.productManager || data.profile.resumePdfUrl || "" },
+      { id: "newMedia", position: "新媒体运营", name: "NEW MEDIA OPS", url: legacyPdfs.newMedia || "" },
+    ];
+    return legacy.filter((item) => item.url.trim());
+  }, [data.profile.pageCopy?.resumeProfiles, legacyPdfs.productManager, legacyPdfs.newMedia, data.profile.resumePdfUrl]);
+
+  const [activeId, setActiveId] = useState("");
+  const active = profiles.find((item) => item.id === activeId) || profiles[0];
+  const resumePdfUrl = active?.url?.trim() || "";
   const previewUrl = resumePdfUrl ? `/api/media/pdf-preview?url=${encodeURIComponent(resumePdfUrl)}` : "";
-  const activeMeta = resumeTabs.find((item) => item.key === activeResume) || resumeTabs[0];
+
   return (
     <div className="space-y-8">
       <div className="border-b border-zinc-900 pb-5"><span className="mb-1 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">履历档案 / DIGITAL CURRICULUM VITAE</span><h2 className="font-serif text-3xl tracking-tight text-white md:text-4xl">个人履历 PDF</h2><p className="mt-3 text-[15px] leading-8 text-zinc-300">{zhText(pageCopy.resume)}</p></div>
-      <div className="flex max-w-full gap-1.5 rounded-xl border border-zinc-900 bg-zinc-950/80 p-1.5">
-        {resumeTabs.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => setActiveResume(item.key)}
-            className={`flex-1 rounded-lg border px-3 py-2 text-left transition-colors ${
-              activeResume === item.key
-                ? "border-emerald-300/40 bg-emerald-300/10 text-white"
-                : "border-transparent text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
-            }`}
-          >
-            <span className="block text-sm font-semibold">{item.label}</span>
-            <span className="mt-0.5 block font-mono text-[10px] uppercase tracking-widest opacity-70">{item.sub}</span>
-          </button>
-        ))}
-      </div>
+      {profiles.length > 0 && (
+        <div className="flex max-w-full flex-wrap gap-1.5 rounded-xl border border-zinc-900 bg-zinc-950/80 p-1.5">
+          {profiles.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setActiveId(item.id)}
+              className={`min-w-[9rem] flex-1 rounded-lg border px-3 py-2 text-left transition-colors ${
+                active?.id === item.id
+                  ? "border-emerald-300/40 bg-emerald-300/10 text-white"
+                  : "border-transparent text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
+              }`}
+            >
+              <span className="block text-sm font-semibold">{zhText(item.position)}</span>
+              <span className="mt-0.5 block font-mono text-[10px] uppercase tracking-widest opacity-70">{item.name || "PDF RESUME"}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {resumePdfUrl ? (
         <div className="overflow-hidden rounded-xl border border-zinc-900 bg-zinc-950 shadow-xl">
-          <div className="flex flex-col justify-between gap-3 border-b border-zinc-900 p-4 md:flex-row md:items-center"><div><h3 className="font-serif text-lg font-semibold text-white">{data.profile.name} · {activeMeta.label}</h3><p className="mt-1 text-xs text-zinc-500">A4 PDF Preview</p></div><div className="flex flex-wrap gap-2"><a href={previewUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs text-zinc-200 hover:border-zinc-700"><ExternalLink size={13} /> 新窗口预览</a><a href={resumePdfUrl} download className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs text-zinc-200 hover:border-zinc-700"><Download size={13} /> 下载 PDF</a></div></div>
+          <div className="flex flex-col justify-between gap-3 border-b border-zinc-900 p-4 md:flex-row md:items-center"><div><h3 className="font-serif text-lg font-semibold text-white">{data.profile.name} · {zhText(active.position)}</h3><p className="mt-1 text-xs text-zinc-500">A4 PDF Preview</p></div><div className="flex flex-wrap gap-2"><a href={previewUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs text-zinc-200 hover:border-zinc-700"><ExternalLink size={13} /> 新窗口预览</a><a href={resumePdfUrl} download className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs text-zinc-200 hover:border-zinc-700"><Download size={13} /> 下载 PDF</a></div></div>
           <div className="bg-zinc-900/70 p-4 md:p-6">
             <div className="mx-auto aspect-[210/297] w-full max-w-[820px] overflow-hidden rounded-lg border border-zinc-800 bg-white shadow-2xl">
-              <iframe title={`${activeMeta.label}简历 PDF A4 预览`} src={`${previewUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} className="h-full w-full bg-white" />
+              <iframe title={`${zhText(active.position)}简历 PDF A4 预览`} src={`${previewUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} className="h-full w-full bg-white" />
             </div>
           </div>
         </div>
+      ) : profiles.length > 0 ? (
+        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂未上传{zhText(active.position)}简历 PDF</p><p className="mt-3 text-sm leading-7 text-zinc-400">请进入后台 `/admin`，在“站点资料 → 简历展示”里为这个岗位上传 PDF，保存后这里会自动展示。</p></div>
       ) : (
-        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂未上传{activeMeta.label}简历 PDF</p><p className="mt-3 text-sm leading-7 text-zinc-400">请进入后台 `/admin`，在“站点资料”中上传对应岗位 PDF 简历，保存后这里会自动展示。</p></div>
+        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂未配置简历</p><p className="mt-3 text-sm leading-7 text-zinc-400">请进入后台 `/admin`，在“站点资料 → 简历展示”中新增岗位并上传 PDF 简历。</p></div>
       )}
     </div>
   );
@@ -951,6 +986,105 @@ function FilterRail({
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * 作品网格。作品展示与 AI 专区共用这一份渲染，保证两处的外观和交互完全一致。
+ *
+ * categoryOrder 有值时按它固定的顺序出筛选项（作品展示就是这种）；不传时按列表里
+ * 实际出现过的分类自动生成——AI 专区的分类由后台自由填写，事先枚举不出来。
+ */
+function WorksPane({
+  items,
+  description,
+  onSelect,
+  eyebrow = "精心打磨的痕迹 / PORTFOLIO EXHIBITS",
+  title = "我的创意合集",
+  emptyTitle = "暂无作品",
+  emptyDescription = "请进入后台 /admin，在「作品媒体」中新增作品并保存。",
+  categoryOrder,
+}: {
+  items: Work[];
+  description?: string;
+  onSelect: (work: Work) => void;
+  eyebrow?: string;
+  title?: string;
+  emptyTitle?: string;
+  emptyDescription?: string;
+  categoryOrder?: { key: string; label: string }[];
+}) {
+  const [filter, setFilter] = useState("all");
+  const filters = useMemo(() => {
+    if (categoryOrder) return categoryOrder.filter((item) => item.key !== "all");
+    return Array.from(new Set(items.map((item) => item.category).filter(Boolean)))
+      .map((key) => ({ key, label: categoryLabel(key) }));
+  }, [items, categoryOrder]);
+  // 筛选项是跟着数据走的，删掉某分类最后一个作品后旧筛选值会落空，这里统一回落成「全部」。
+  const activeFilter = filter === "all" || filters.some((item) => item.key === filter) ? filter : "all";
+  const filteredItems = activeFilter === "all" ? items : items.filter((work) => work.category === activeFilter);
+
+  return (
+    <div className="space-y-8">
+      <div className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
+        <div>
+          <span className="mb-2 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">{eyebrow}</span>
+          <h2 className="font-serif text-3xl tracking-tight text-white md:text-4xl">{zhText(title)}</h2>
+          <p className="mt-3 text-[15px] leading-8 text-zinc-300">{zhText(description)}</p>
+        </div>
+        {filters.length > 0 && (
+          <FilterRail
+            allActive={activeFilter === "all"}
+            onAll={() => setFilter("all")}
+            items={filters.map((item) => ({ key: item.key, label: item.label, active: activeFilter === item.key, onSelect: () => setFilter(item.key) }))}
+          />
+        )}
+      </div>
+      {filteredItems.length > 0 ? (
+        <div className="grid grid-cols-1 gap-6 pt-2 md:grid-cols-2">
+          {filteredItems.map((work) => (
+            <article
+              key={work.id}
+              onClick={() => onSelect(work)}
+              className="group flex cursor-pointer flex-col justify-between space-y-4 rounded-xl border border-zinc-900 bg-zinc-950/60 p-5 transition-all duration-500 hover:border-zinc-800 hover:bg-zinc-950"
+            >
+              <div>
+                <div className="mb-4 flex items-start justify-between">
+                  <div className="flex items-center space-x-2.5">
+                    <span className="rounded-lg border border-zinc-800 bg-zinc-900 p-2 transition-transform duration-300 group-hover:scale-105">{categoryIcon(work.category)}</span>
+                    <span className="font-mono text-xs font-semibold uppercase tracking-widest text-zinc-200">{categoryLabel(work.category)}</span>
+                  </div>
+                  {work.badgeText && <span className="rounded border border-emerald-900 bg-emerald-950/40 px-2 py-0.5 font-mono text-[10px] text-emerald-300">{zhText(work.badgeText)}</span>}
+                </div>
+                <div className="relative mb-4 aspect-video overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/60 shadow-inner">
+                  {work.images?.[0] ? (
+                    <img src={work.images[0]} alt={zhText(work.title)} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-zinc-900/20 font-mono text-xs text-zinc-600">NO IMAGES</div>
+                  )}
+                  {(work.images?.length || 0) > 1 && <span className="absolute right-2 top-2 rounded border border-zinc-800 bg-black/70 px-2 py-0.5 font-mono text-[10px] text-zinc-200">{work.images.length} 图</span>}
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+                    <span className="rounded-md border border-zinc-850 bg-zinc-950/90 px-4 py-2 font-serif text-xs tracking-widest text-zinc-100 shadow-lg">查看详情与解读</span>
+                  </div>
+                </div>
+                <h3 className="mb-1 line-clamp-1 font-serif text-lg font-bold tracking-wide text-white">{zhText(work.title)}</h3>
+                <p className="mt-2 line-clamp-2 text-sm font-light leading-7 text-zinc-300/95 md:text-[15px]">{zhText(work.description)}</p>
+              </div>
+              <div className="flex flex-wrap gap-1.5 border-t border-zinc-900/50 pt-3">
+                {(work.tags || []).slice(0, 3).map((tag, idx) => (
+                  <span key={idx} className="rounded border border-zinc-850 bg-zinc-900 px-2.5 py-1 text-[11px] text-zinc-300 md:text-xs">{tag}</span>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center">
+          <p className="font-serif text-xl text-white">{emptyTitle}</p>
+          <p className="mt-3 text-sm text-zinc-400">{emptyDescription}</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -1176,13 +1310,15 @@ function preloadImage(url: string) {
   });
 }
 
-async function preloadInitialAssets(data: PortfolioData) {
+async function preloadInitialAssets(data: PortfolioData, flags: { treasuresVisible: boolean; aiZoneVisible: boolean }) {
   const urls = [
     data.profile.avatar,
     data.musicTracks?.find((track) => track.coverUrl)?.coverUrl,
     data.works?.find((work) => work.images?.[0])?.images?.[0],
     data.gallery?.find((item) => item.imageUrl)?.imageUrl,
-    data.treasures?.find((item) => item.imageUrl)?.imageUrl,
+    // 栏目被隐藏时不预载对应首图，省掉一次注定看不到的流量。
+    flags.treasuresVisible ? data.treasures?.find((item) => item.imageUrl)?.imageUrl : undefined,
+    flags.aiZoneVisible ? data.profile.pageCopy?.aiWorks?.find((work) => work.images?.[0])?.images?.[0] : undefined,
   ].filter((url): url is string => Boolean(url));
   if (urls.length === 0) return;
   await Promise.race([
@@ -1196,8 +1332,8 @@ export default function App() {
   const [data, setData] = useState<PortfolioData>(normalizeData(emptyPortfolioData));
   const [portfolioReady, setPortfolioReady] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("intro");
-  const [workFilter, setWorkFilter] = useState("all");
   const [selectedWork, setSelectedWork] = useState<Work | null>(null);
+  const [selectedAiWork, setSelectedAiWork] = useState<Work | null>(null);
   const [selectedGallery, setSelectedGallery] = useState<GalleryItem | null>(null);
   const [selectedTreasure, setSelectedTreasure] = useState<TreasureItem | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -1208,7 +1344,10 @@ export default function App() {
       .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then(async (json) => {
         const nextData = normalizeData(json);
-        await preloadInitialAssets(nextData);
+        await preloadInitialAssets(nextData, {
+          treasuresVisible: isTreasuresVisible(nextData),
+          aiZoneVisible: isAiZoneVisible(nextData),
+        });
         if (!cancelled) setData(nextData);
       })
       .catch(() => {
@@ -1220,9 +1359,22 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
-  const filteredWorks = useMemo(() => workFilter === "all" ? data.works : data.works.filter((work) => work.category === workFilter), [data.works, workFilter]);
   const pageCopy = { ...defaultPageCopy, ...(data.profile.pageCopy || {}) };
   const floatingSentencesConfig = useMemo(() => resolveFloatingSentencesConfig(data.profile.pageCopy?.floatingSentences, activeTab), [data.profile.pageCopy?.floatingSentences, activeTab]);
+
+  // 后台开关决定「我的珍藏」与「AI 专区」是否出现在前台。隐藏时连导航入口一起摘掉，
+  // 而不是把空页面留在那里。
+  //
+  // 这里不需要额外的兜底副作用：站点只在挂载时取一次数据，而 activeTab 初值恒为
+  // "intro"、选中项初值恒为 null，所以开关关闭时不可能停在被隐藏的栏目上。
+  const treasuresVisible = isTreasuresVisible(data);
+  const aiZoneVisible = isAiZoneVisible(data);
+  const visibleNavItems = useMemo(
+    () => navItems.filter((item) => (
+      (item.key !== "treasures" || treasuresVisible) && (item.key !== "ai" || aiZoneVisible)
+    )),
+    [treasuresVisible, aiZoneVisible],
+  );
 
   if (!portfolioReady) return <InitialLoader />;
 
@@ -1247,21 +1399,23 @@ export default function App() {
         </aside>
         <section className="relative flex min-h-[60vh] flex-1 flex-col rounded-2xl border border-zinc-900 bg-[#0c0c0e] p-8 shadow-2xl md:p-12">
           <header className="sticky top-0 z-20 mb-8 flex items-center justify-between border-b border-zinc-900 bg-[#0c0c0e]/95 pb-5 backdrop-blur-md">
-            <nav className="hidden flex-nowrap items-center gap-2 md:flex">{navItems.map((item) => <button key={item.key} onClick={() => setActiveTab(item.key)} className={`flex shrink-0 cursor-pointer flex-col items-center justify-center rounded-xl border px-3.5 py-2.5 transition-all duration-300 ${activeTab === item.key ? "border-zinc-700 bg-zinc-900 text-white shadow-md" : "border-transparent text-zinc-300 hover:bg-zinc-950/20 hover:text-white"}`}><span className="font-serif text-[14px] font-bold tracking-widest md:text-[15px]">{item.label}</span><span className={`mt-1 font-mono text-[9px] uppercase tracking-widest ${activeTab === item.key ? "text-emerald-300/85" : "text-zinc-500"}`}>{item.sub}</span></button>)}</nav>
+            <nav className="hidden flex-nowrap items-center gap-2 md:flex">{visibleNavItems.map((item) => <button key={item.key} onClick={() => setActiveTab(item.key)} className={`flex shrink-0 cursor-pointer flex-col items-center justify-center rounded-xl border px-3.5 py-2.5 transition-all duration-300 ${activeTab === item.key ? "border-zinc-700 bg-zinc-900 text-white shadow-md" : "border-transparent text-zinc-300 hover:bg-zinc-950/20 hover:text-white"}`}><span className="font-serif text-[14px] font-bold tracking-widest md:text-[15px]">{item.label}</span><span className={`mt-1 font-mono text-[9px] uppercase tracking-widest ${activeTab === item.key ? "text-emerald-300/85" : "text-zinc-500"}`}>{item.sub}</span></button>)}</nav>
             <span className="font-serif text-base font-semibold tracking-wider text-white md:hidden">我的空间</span><button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="rounded-lg border border-zinc-800 bg-zinc-900 p-2.5 text-zinc-300 hover:text-white md:hidden" aria-label="移动端菜单">{mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}</button>
           </header>
-          {mobileMenuOpen && <div className="absolute left-6 right-6 top-20 z-30 flex flex-col space-y-3 rounded-xl border border-zinc-800 bg-zinc-950 p-5 shadow-2xl md:hidden">{navItems.map((item) => <button key={item.key} onClick={() => { setActiveTab(item.key); setMobileMenuOpen(false); }} className={`flex w-full flex-col justify-start rounded-xl p-3 px-4 text-left transition-all ${activeTab === item.key ? "border border-zinc-700 bg-zinc-900 text-white" : "text-zinc-300 hover:bg-zinc-900/50"}`}><span className="font-serif text-base font-bold tracking-widest">{item.label}</span><span className={`mt-1 font-mono text-[10px] uppercase tracking-widest ${activeTab === item.key ? "text-emerald-300/85" : "text-zinc-500"}`}>{item.sub}</span></button>)}</div>}
+          {mobileMenuOpen && <div className="absolute left-6 right-6 top-20 z-30 flex flex-col space-y-3 rounded-xl border border-zinc-800 bg-zinc-950 p-5 shadow-2xl md:hidden">{visibleNavItems.map((item) => <button key={item.key} onClick={() => { setActiveTab(item.key); setMobileMenuOpen(false); }} className={`flex w-full flex-col justify-start rounded-xl p-3 px-4 text-left transition-all ${activeTab === item.key ? "border border-zinc-700 bg-zinc-900 text-white" : "text-zinc-300 hover:bg-zinc-900/50"}`}><span className="font-serif text-base font-bold tracking-widest">{item.label}</span><span className={`mt-1 font-mono text-[10px] uppercase tracking-widest ${activeTab === item.key ? "text-emerald-300/85" : "text-zinc-500"}`}>{item.sub}</span></button>)}</div>}
           <div className="flex-1">
             {activeTab === "intro" && <div className="space-y-10"><div className="space-y-4"><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">墨香独白 / MONOLOGUE BODY</span><h2 className="font-serif text-3xl leading-normal tracking-tight text-white md:text-4xl">自我评价</h2><p className="text-[15px] font-light leading-8 text-zinc-100/90 md:text-[17px] md:leading-9">{zhText(data.profile.intro)}</p></div><div className="space-y-8 border-t border-zinc-900/60 pt-8"><span className="mb-3 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">尘埃之迹 / PERSONAL PATH TIMELINE</span><div className="relative space-y-8 before:absolute before:inset-y-1 before:left-2 before:w-[1.5px] before:bg-zinc-900">{data.experiences.map((exp) => <article key={exp.id} className="group relative pl-8"><div className="absolute left-[4px] top-[9px] h-2.5 w-2.5 rounded-full border-2 border-zinc-950 bg-zinc-800 transition-colors duration-300 group-hover:bg-zinc-300" /><div className="mb-2 grid gap-2 text-center md:grid-cols-3 md:items-center"><span className="justify-self-center font-mono text-xs font-semibold tracking-wider text-emerald-300/80 md:justify-self-start md:text-sm">{zhText(exp.period)}</span><span className="justify-self-center font-serif text-base font-medium text-white md:text-lg">{zhText(exp.role)}</span><span className="justify-self-center font-sans text-xs text-zinc-400 md:justify-self-end md:text-right md:text-sm">@ {zhText(exp.company)}</span></div><p className="text-[15px] font-light leading-7 text-zinc-200/90">{zhText(exp.desc)}</p></article>)}</div></div></div>}
-            {activeTab === "works" && <div className="space-y-8"><div className="flex flex-col justify-between gap-6 md:flex-row md:items-end"><div><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">精心打磨的痕迹 / PORTFOLIO EXHIBITS</span><h2 className="font-serif text-3xl tracking-tight text-white md:text-4xl">我的创意合集</h2><p className="mt-3 text-[15px] leading-8 text-zinc-300">{zhText(pageCopy.works)}</p></div><FilterRail allActive={workFilter === "all"} onAll={() => setWorkFilter("all")} items={workCategories.filter((item) => item.key !== "all").map((item) => ({ key: item.key, label: item.label, active: workFilter === item.key, onSelect: () => setWorkFilter(item.key) }))} /></div><div className="grid grid-cols-1 gap-6 pt-2 md:grid-cols-2">{filteredWorks.map((work) => <article key={work.id} onClick={() => setSelectedWork(work)} className="group flex cursor-pointer flex-col justify-between space-y-4 rounded-xl border border-zinc-900 bg-zinc-950/60 p-5 transition-all duration-500 hover:border-zinc-800 hover:bg-zinc-950"><div><div className="mb-4 flex items-start justify-between"><div className="flex items-center space-x-2.5"><span className="rounded-lg border border-zinc-800 bg-zinc-900 p-2 transition-transform duration-300 group-hover:scale-105">{categoryIcon(work.category)}</span><span className="font-mono text-xs font-semibold uppercase tracking-widest text-zinc-200">{categoryLabel(work.category)}</span></div>{work.badgeText && <span className="rounded border border-emerald-900 bg-emerald-950/40 px-2 py-0.5 font-mono text-[10px] text-emerald-300">{zhText(work.badgeText)}</span>}</div><div className="relative mb-4 aspect-video overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/60 shadow-inner">{work.images?.[0] ? <img src={work.images[0]} alt={zhText(work.title)} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" referrerPolicy="no-referrer" /> : <div className="flex h-full w-full items-center justify-center bg-zinc-900/20 font-mono text-xs text-zinc-600">NO IMAGES</div>}{(work.images?.length || 0) > 1 && <span className="absolute right-2 top-2 rounded border border-zinc-800 bg-black/70 px-2 py-0.5 font-mono text-[10px] text-zinc-200">{work.images.length} 图</span>}<div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity duration-300 group-hover:opacity-100"><span className="rounded-md border border-zinc-850 bg-zinc-950/90 px-4 py-2 font-serif text-xs tracking-widest text-zinc-100 shadow-lg">查看详情与解读</span></div></div><h3 className="mb-1 line-clamp-1 font-serif text-lg font-bold tracking-wide text-white">{zhText(work.title)}</h3><p className="mt-2 line-clamp-2 text-sm font-light leading-7 text-zinc-300/95 md:text-[15px]">{zhText(work.description)}</p></div><div className="flex flex-wrap gap-1.5 border-t border-zinc-900/50 pt-3">{(work.tags || []).slice(0, 3).map((tag, idx) => <span key={idx} className="rounded border border-zinc-850 bg-zinc-900 px-2.5 py-1 text-[11px] text-zinc-300 md:text-xs">{tag}</span>)}</div></article>)}</div></div>}
+            {activeTab === "works" && <WorksPane items={data.works} description={pageCopy.works} onSelect={setSelectedWork} categoryOrder={workCategories} />}
+            {activeTab === "ai" && aiZoneVisible && <WorksPane items={data.profile.pageCopy?.aiWorks || []} description={pageCopy.aiZone} onSelect={setSelectedAiWork} eyebrow="与 AI 共作 / AI ZONE EXHIBITS" title="AI 专区" emptyTitle="暂无 AI 作品" emptyDescription="请进入后台 /admin，在「AI 专区」中新增作品并保存。" />}
             {activeTab === "prospects" && <GalleryPane items={data.gallery || []} onSelect={setSelectedGallery} description={pageCopy.gallery} />}
-            {activeTab === "treasures" && <TreasurePane items={data.treasures || []} onSelect={setSelectedTreasure} description={pageCopy.treasures} />}
+            {activeTab === "treasures" && treasuresVisible && <TreasurePane items={data.treasures || []} onSelect={setSelectedTreasure} description={pageCopy.treasures} />}
             {activeTab === "resume" && <ResumePane data={data} />}
             {activeTab === "contact" && <ContactPane data={data} />}
           </div>
         </section>
       </div>
       {selectedWork && <WorkModal work={selectedWork} onClose={() => setSelectedWork(null)} />}
+      {selectedAiWork && <WorkModal work={selectedAiWork} onClose={() => setSelectedAiWork(null)} />}
       {selectedGallery && <GalleryModal item={selectedGallery} onClose={() => setSelectedGallery(null)} />}
       {selectedTreasure && <TreasureModal item={selectedTreasure} onClose={() => setSelectedTreasure(null)} />}
       <footer className="relative z-20 w-full pb-2 text-center font-mono text-[11px] text-zinc-500">

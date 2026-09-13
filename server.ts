@@ -629,14 +629,56 @@ function signCosUrl(url?: string) {
   return `${getCosPublicUrl(key)}?${authorization}`;
 }
 
-function normalizeResumePdfsInPageCopy(pageCopy: JsonRecord | undefined, transform: (url?: string) => string) {
+/**
+ * 统一处理 pageCopy 里带媒体地址的字段：读的时候签名、写的时候去掉签名。
+ *
+ * pageCopy 是 portfolio_profile 上的一整块 JSON 列，除了它以外所有列表（作品、截图、
+ * 珍藏、音乐）都有各自的表，并且都在读写两侧做了签名转换。如果不管这个函数，写进
+ * pageCopy 的 COS 签名 URL 会被原样落库、签名过期后图片就 403，所以新增的 AI 专区
+ * 作品与简历岗位列表都必须在这里过一道。
+ *
+ * 顶层用展开保留全部键，因此不影响 floatingSentences / treasuresVisible 等既有字段。
+ */
+function normalizePageCopy(pageCopy: JsonRecord | undefined, transform: (url?: string) => string) {
   const copy = { ...(pageCopy || {}) };
+
+  // 旧版两份固定简历。
   const resumePdfs = copy.resumePdfs && typeof copy.resumePdfs === "object" ? copy.resumePdfs as JsonRecord : {};
   copy.resumePdfs = {
     ...resumePdfs,
     productManager: transform(String(resumePdfs.productManager || "")),
     newMedia: transform(String(resumePdfs.newMedia || "")),
   };
+
+  // 新版动态简历岗位列表。
+  if (Array.isArray(copy.resumeProfiles)) {
+    copy.resumeProfiles = copy.resumeProfiles.map((item) => (
+      item && typeof item === "object"
+        ? { ...(item as JsonRecord), url: transform(String((item as JsonRecord).url || "")) }
+        : item
+    ));
+  }
+
+  // AI 专区作品，字段结构与作品一致，媒体地址的转换方式也照抄作品那条路径。
+  if (Array.isArray(copy.aiWorks)) {
+    copy.aiWorks = copy.aiWorks.map((item) => {
+      if (!item || typeof item !== "object") return item;
+      const work = item as JsonRecord;
+      return {
+        ...work,
+        images: Array.isArray(work.images) ? work.images.map((url) => transform(String(url || ""))) : [],
+        videoUrl: transform(String(work.videoUrl || "")),
+        links: Array.isArray(work.links)
+          ? work.links.map((link) => (
+              link && typeof link === "object"
+                ? { ...(link as JsonRecord), url: transform(String((link as JsonRecord).url || "")) }
+                : link
+            ))
+          : [],
+      };
+    });
+  }
+
   return copy;
 }
 
@@ -777,7 +819,7 @@ async function fetchPortfolioData(supabase: SupabaseClient | null) {
         avatar: signCosUrl(profile.data.avatar || ""),
         resumePdfUrl: signCosUrl(profile.data.resume_pdf_url || ""),
         musicAutoplay: Boolean(profile.data.music_autoplay),
-        pageCopy: normalizeResumePdfsInPageCopy(profile.data.page_copy || {}, signCosUrl),
+        pageCopy: normalizePageCopy(profile.data.page_copy || {}, signCosUrl),
       }
     : emptyPortfolioData().profile;
 
@@ -851,7 +893,7 @@ async function savePortfolioData(supabase: SupabaseClient | null, data: JsonReco
   }
 
   const { resumePdfUrl, resume_pdf_url, pageCopy, page_copy, musicAutoplay, music_autoplay, ...profileFields } = data.profile || {};
-  const cleanPageCopy = normalizeResumePdfsInPageCopy(pageCopy || page_copy || {}, stripCosSignature);
+  const cleanPageCopy = normalizePageCopy(pageCopy || page_copy || {}, stripCosSignature);
   const profile = await supabase.from("portfolio_profile").upsert({
     id: "main",
     ...profileFields,
