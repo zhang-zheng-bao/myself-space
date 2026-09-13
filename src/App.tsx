@@ -908,8 +908,11 @@ function ResumePane({ data }: { data: PortfolioData }) {
   const legacyPdfs = data.profile.pageCopy?.resumePdfs || {};
 
   const profiles = useMemo<ResumeProfile[]>(() => {
-    const configured = (data.profile.pageCopy?.resumeProfiles || []).filter((item) => item?.visible !== false);
-    if (configured.length > 0) return configured;
+    const raw = data.profile.pageCopy?.resumeProfiles;
+    // 只有「后台从来没配过动态列表」才回落到旧版写死的两份 PDF。
+    // 键一旦存在（哪怕是空数组）就完全以后台为准 —— 管理员把每行都隐藏/删空，
+    // 那也是明确意图，不能把旧岗位又变出来。
+    if (raw) return raw.filter((item) => item?.visible !== false);
     // 后台尚未配置动态列表，沿用旧版写死的两个岗位（没传 PDF 的就不再占一个空标签）。
     const legacy: ResumeProfile[] = [
       { id: "productManager", position: "产品经理", name: "PRODUCT MANAGER", url: legacyPdfs.productManager || data.profile.resumePdfUrl || "" },

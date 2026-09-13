@@ -14,8 +14,12 @@ export interface Profile {
     treasures?: string;
     contact?: string;
     /**
-     * 旧版的两份固定简历。保留是为了兼容线上已有数据；新数据请用 resumeProfiles，
-     * 前台在 resumeProfiles 为空时会自动回退到这两个字段。
+     * 旧版的两份固定简历。保留是为了兼容线上已有数据；新数据请用 resumeProfiles。
+     *
+     * 前台的回退条件是「resumeProfiles **这个键不存在**」（= 后台从来没配过动态列表）。
+     * 注意不要写成「过滤后数组为空就回退」：那样管理员把岗位逐个隐藏/删空之后，
+     * 旧岗位会自己冒出来，等于后台的开关失效。键一旦存在（哪怕是空数组），
+     * 前台就完全以后台为准。
      */
     resumePdfs?: {
       productManager?: string;

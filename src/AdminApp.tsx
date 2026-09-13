@@ -348,6 +348,23 @@ function uid(prefix: string) {
   return `${prefix}-${randomId}`;
 }
 
+/**
+ * 列表条目的「行标识」：有 id 用 id，没有 id（历史数据）退回下标。
+ *
+ * **不要拿 item.id 直接去判断「哪一行展开了」。** 历史数据里 id 可能是空串，
+ * 而「一行都没展开」的哨兵值一度也是空串，两者一撞就是两个后果：
+ *   1. 首屏所有无 id 的行都被判成「已展开」，展开区一股脑全开；
+ *   2. toggle 的「当前值」和「目标值」恒等，点了没反应。
+ * 所以哨兵值一律用 null（见各 expanded*Id 的初值），并且比较时统一走 rowKey ——
+ * 「null 永远不等于任何 rowKey」这条不变量保证上面两个问题不再出现。
+ *
+ * 空 id 时刻意加上 `#` 前缀：虽然理论上极少，但若某条目的 id 恰好是 "0"，
+ * 不带前缀就会和第 0 行（无 id）撞成同一个值。
+ */
+function rowKey(id: string | null | undefined, index: number) {
+  return id || `#${index}`;
+}
+
 function cloneData(data: PortfolioData): PortfolioData {
   return JSON.parse(JSON.stringify(data));
 }
@@ -487,11 +504,15 @@ function SelectField({
   options: { value: string; label: string }[];
   onChange: (value: string) => void;
 }) {
-  const normalizedValue = value || options[0]?.value || "";
+  // 只有 value 压根没传（undefined / null）才回退到第一个选项。
+  // 值就是空串时必须原样保留：那代表「这条内容的分类是空的」，
+  // 之前用 `value || options[0].value` 会把空分类偷偷显示成第一个选项，
+  // 看起来像分类被改了，实际只是显示骗人 —— 而且迁移过来的条目分类本就可能是对面栏目的词。
+  const normalizedValue = value ?? options[0]?.value ?? "";
   const hasCurrent = options.some((option) => option.value === normalizedValue);
   const visibleOptions = hasCurrent
     ? options
-    : [{ value: normalizedValue, label: `${normalizedValue}（当前）` }, ...options];
+    : [{ value: normalizedValue, label: normalizedValue ? `${normalizedValue}（当前）` : "（当前：未设置）" }, ...options];
 
   return (
     <label className="grid gap-1.5">
@@ -1060,8 +1081,8 @@ function WorkListEditor({
   categoryOptions: { value: string; label: string }[];
   readItems: (draft: PortfolioData) => Work[];
   writeItems: (draft: PortfolioData, items: Work[]) => void;
-  expandedId: string;
-  setExpandedId: (id: string) => void;
+  expandedId: string | null;
+  setExpandedId: (id: string | null) => void;
   update: (mutator: (draft: PortfolioData) => void) => void;
   updateAndSave: (mutator: (draft: PortfolioData) => void) => Promise<void>;
   upload: (event: ChangeEvent<HTMLInputElement>, onUrl: (url: string, file: File) => void | Promise<void>) => void;
@@ -1084,7 +1105,7 @@ function WorkListEditor({
   renderSaveButton: () => React.ReactNode;
 }) {
   // 迁移是「挪走」，先在原地确认再动手，避免误点把作品从当前栏目弄丢。
-  const [pendingMigrateId, setPendingMigrateId] = useState("");
+  const [pendingMigrateId, setPendingMigrateId] = useState<string | null>(null);
   const [migrating, setMigrating] = useState(false);
 
   return (
@@ -1110,14 +1131,14 @@ function WorkListEditor({
 
       <div className="space-y-3">
         {items.map((work, index) => (
-          <EditorRow key={work.id || index} expanded={expandedId === work.id}>
+          <EditorRow key={rowKey(work.id, index)} expanded={expandedId === rowKey(work.id, index)}>
             <WorkSummary
               work={work}
               index={index}
-              expanded={expandedId === work.id}
-              onToggle={() => setExpandedId(expandedId === work.id ? "" : work.id)}
+              expanded={expandedId === rowKey(work.id, index)}
+              onToggle={() => setExpandedId(expandedId === rowKey(work.id, index) ? null : rowKey(work.id, index))}
             />
-            {expandedId === work.id && (
+            {expandedId === rowKey(work.id, index) && (
               <div className="adm-drawer p-3">
                 <WorkPreview work={work} />
               <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -1200,13 +1221,13 @@ function WorkListEditor({
                 </div>
               </div>
               <div className="mt-3">
-                {migrate && pendingMigrateId === work.id && (
+                {migrate && pendingMigrateId === rowKey(work.id, index) && (
                   <div className="adm-note adm-note-info mt-0 text-xs leading-5 text-emerald-100/85">
                     <p>{migrate.hint}</p>
                     <div className="mt-2 flex flex-wrap justify-end gap-2">
                       <button
                         type="button"
-                        onClick={() => setPendingMigrateId("")}
+                        onClick={() => setPendingMigrateId(null)}
                         disabled={migrating}
                         className="rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 disabled:opacity-60"
                       >
@@ -1220,7 +1241,7 @@ function WorkListEditor({
                             .run(work, index)
                             .finally(() => {
                               setMigrating(false);
-                              setPendingMigrateId("");
+                              setPendingMigrateId(null);
                             });
                         }}
                         disabled={migrating}
@@ -1236,7 +1257,7 @@ function WorkListEditor({
                 {migrate && (
                   <button
                     type="button"
-                    onClick={() => setPendingMigrateId(pendingMigrateId === work.id ? "" : work.id)}
+                    onClick={() => setPendingMigrateId(pendingMigrateId === rowKey(work.id, index) ? null : rowKey(work.id, index))}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-zinc-300 hover:border-zinc-600"
                   >
                     <ArrowLeftRight size={14} /> {migrate.label}
@@ -1248,7 +1269,7 @@ function WorkListEditor({
                     void removeAndSave(
                       (draft) => { writeItems(draft, readItems(draft).filter((_, i) => i !== index)); },
                       collectWorkMedia(work),
-                      () => { if (expandedId === work.id) setExpandedId(""); },
+                      () => { if (expandedId === rowKey(work.id, index)) setExpandedId(null); },
                     );
                   }}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-red-300 hover:border-red-500"
@@ -1417,20 +1438,20 @@ export default function AdminApp() {
   // 用途有两个：底部状态条常驻提示、以及在用户关页面时拦一下（长表单最容易白填）。
   const [dirty, setDirty] = useState(false);
   const [active, setActive] = useState("profile");
-  const [expandedExperienceId, setExpandedExperienceId] = useState("");
-  const [expandedWorkId, setExpandedWorkId] = useState("");
-  const [expandedAiWorkId, setExpandedAiWorkId] = useState("");
-  const [expandedResumeId, setExpandedResumeId] = useState("");
-  const [expandedGalleryId, setExpandedGalleryId] = useState("");
-  const [expandedTreasureId, setExpandedTreasureId] = useState("");
-  const [expandedMusicId, setExpandedMusicId] = useState("");
+  const [expandedExperienceId, setExpandedExperienceId] = useState<string | null>(null);
+  const [expandedWorkId, setExpandedWorkId] = useState<string | null>(null);
+  const [expandedAiWorkId, setExpandedAiWorkId] = useState<string | null>(null);
+  const [expandedResumeId, setExpandedResumeId] = useState<string | null>(null);
+  const [expandedGalleryId, setExpandedGalleryId] = useState<string | null>(null);
+  const [expandedTreasureId, setExpandedTreasureId] = useState<string | null>(null);
+  const [expandedMusicId, setExpandedMusicId] = useState<string | null>(null);
   const [expandedFloatingId, setExpandedFloatingId] = useState("");
   const [supabaseConfigured, setSupabaseConfigured] = useState(false);
   const [maxUploadSizeMb, setMaxUploadSizeMb] = useState(50);
   const [storageProvider, setStorageProvider] = useState("supabase");
-  const [asrLoadingTrackId, setAsrLoadingTrackId] = useState("");
-  const [visibleLyricTimelineTrackId, setVisibleLyricTimelineTrackId] = useState("");
-  const [visibleLyricEditorTrackId, setVisibleLyricEditorTrackId] = useState("");
+  const [asrLoadingTrackId, setAsrLoadingTrackId] = useState<string | null>(null);
+  const [visibleLyricTimelineTrackId, setVisibleLyricTimelineTrackId] = useState<string | null>(null);
+  const [visibleLyricEditorTrackId, setVisibleLyricEditorTrackId] = useState<string | null>(null);
 
   // 侧栏导航。图标和文字都给（只用图标会牺牲可发现性），顺序按「先看内容、再看设置」排：
   // 前四项是站点的主要内容，后面依次是图集 / 珍藏 / 音乐 / 联系 / 装饰性设置。
@@ -1542,13 +1563,13 @@ export default function AdminApp() {
       setDirty(false);
       setStatus("已保存到数据库。");
       if (collapse) {
-        setExpandedExperienceId("");
-        setExpandedWorkId("");
-        setExpandedAiWorkId("");
-        setExpandedResumeId("");
-        setExpandedGalleryId("");
-        setExpandedTreasureId("");
-        setExpandedMusicId("");
+        setExpandedExperienceId(null);
+        setExpandedWorkId(null);
+        setExpandedAiWorkId(null);
+        setExpandedResumeId(null);
+        setExpandedGalleryId(null);
+        setExpandedTreasureId(null);
+        setExpandedMusicId(null);
       }
       return true;
     } catch (error: any) {
@@ -1630,8 +1651,8 @@ export default function AdminApp() {
       },
       () => {
         // 条目已经不在当前列表里了，展开态跟着收掉，免得留一个指不到东西的 id。
-        setExpandedWorkId("");
-        setExpandedAiWorkId("");
+        setExpandedWorkId(null);
+        setExpandedAiWorkId(null);
         setStatus(`已迁移到「${targetLabel}」，素材一并带过去，原栏目不再显示。`);
       },
       { collapse: false },
@@ -2103,7 +2124,7 @@ export default function AdminApp() {
                   {resumeProfiles.map((profile, index) => {
                     const resumeVisible = profile.visible !== false;
                     return (
-                      <EditorRow key={profile.id} expanded={expandedResumeId === profile.id}>
+                      <EditorRow key={profile.id} expanded={expandedResumeId === rowKey(profile.id, index)}>
                         <div className="flex flex-wrap items-center justify-between gap-2 p-3">
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
@@ -2116,14 +2137,14 @@ export default function AdminApp() {
                           </div>
                           <button
                             type="button"
-                            onClick={() => setExpandedResumeId(expandedResumeId === profile.id ? "" : profile.id)}
+                            onClick={() => setExpandedResumeId(expandedResumeId === rowKey(profile.id, index) ? null : rowKey(profile.id, index))}
                             className="shrink-0 rounded-lg border border-zinc-800 px-2.5 py-1 text-xs text-zinc-300"
                           >
-                            {expandedResumeId === profile.id ? "收起编辑" : "展开编辑"}
+                            {expandedResumeId === rowKey(profile.id, index) ? "收起编辑" : "展开编辑"}
                           </button>
                         </div>
 
-                        {expandedResumeId === profile.id && (
+                        {expandedResumeId === rowKey(profile.id, index) && (
                           <div className="adm-drawer space-y-3 p-3">
                             <div className="grid gap-3 md:grid-cols-2">
                               <Field label="岗位名称（前台选项卡主标题）" value={profile.position} onChange={(value) => update((draft) => { draft.profile.pageCopy!.resumeProfiles![index].position = value; })} placeholder="例如：产品经理" />
@@ -2163,7 +2184,7 @@ export default function AdminApp() {
                                       editPageCopy(draft, { resumeProfiles: (draft.profile.pageCopy?.resumeProfiles || []).filter((_, i) => i !== index) });
                                     },
                                     [profile.url || ""],
-                                    () => { if (expandedResumeId === profile.id) setExpandedResumeId(""); },
+                                    () => { if (expandedResumeId === rowKey(profile.id, index)) setExpandedResumeId(null); },
                                   );
                                 }}
                                 className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-red-300 hover:border-red-500"
@@ -2228,14 +2249,14 @@ export default function AdminApp() {
                   </div>
                 </Section>
                 {data.experiences.map((exp, index) => (
-                  <EditorRow key={exp.id || index} expanded={expandedExperienceId === exp.id}>
+                  <EditorRow key={rowKey(exp.id, index)} expanded={expandedExperienceId === rowKey(exp.id, index)}>
                     <ExperienceSummary
                       exp={exp}
                       index={index}
-                      expanded={expandedExperienceId === exp.id}
-                      onToggle={() => setExpandedExperienceId(expandedExperienceId === exp.id ? "" : exp.id)}
+                      expanded={expandedExperienceId === rowKey(exp.id, index)}
+                      onToggle={() => setExpandedExperienceId(expandedExperienceId === rowKey(exp.id, index) ? null : rowKey(exp.id, index))}
                     />
-                    {expandedExperienceId === exp.id && (
+                    {expandedExperienceId === rowKey(exp.id, index) && (
                       <div className="adm-drawer p-3">
                         <div className="grid gap-3 md:grid-cols-2">
                           <Field label="时间" value={exp.period} onChange={(value) => update((draft) => { draft.experiences[index].period = value; })} />
@@ -2252,7 +2273,7 @@ export default function AdminApp() {
                               void removeAndSave(
                                 (draft) => { draft.experiences = draft.experiences.filter((_, i) => i !== index); },
                                 [],
-                                () => { if (expandedExperienceId === exp.id) setExpandedExperienceId(""); },
+                                () => { if (expandedExperienceId === rowKey(exp.id, index)) setExpandedExperienceId(null); },
                               );
                             }}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-red-300 hover:border-red-500"
@@ -2363,14 +2384,14 @@ export default function AdminApp() {
                   </div>
                 </Section>
                 {(data.gallery || []).map((item: GalleryItem, index: number) => (
-                  <EditorRow key={item.id || index} expanded={expandedGalleryId === item.id}>
+                  <EditorRow key={rowKey(item.id, index)} expanded={expandedGalleryId === rowKey(item.id, index)}>
                     <GallerySummary
                       item={item}
                       index={index}
-                      expanded={expandedGalleryId === item.id}
-                      onToggle={() => setExpandedGalleryId(expandedGalleryId === item.id ? "" : item.id)}
+                      expanded={expandedGalleryId === rowKey(item.id, index)}
+                      onToggle={() => setExpandedGalleryId(expandedGalleryId === rowKey(item.id, index) ? null : rowKey(item.id, index))}
                     />
-                    {expandedGalleryId === item.id && (
+                    {expandedGalleryId === rowKey(item.id, index) && (
                       <div className="adm-drawer p-3">
                         <div className="grid gap-3 md:grid-cols-2">
                           <SelectField label="分类" value={item.category} options={galleryCategoryOptions} onChange={(value) => update((draft) => { draft.gallery![index].category = value; })} />
@@ -2394,7 +2415,7 @@ export default function AdminApp() {
                               void removeAndSave(
                                 (draft) => { draft.gallery = (draft.gallery || []).filter((_, i) => i !== index); },
                                 [item.imageUrl],
-                                () => { if (expandedGalleryId === item.id) setExpandedGalleryId(""); },
+                                () => { if (expandedGalleryId === rowKey(item.id, index)) setExpandedGalleryId(null); },
                               );
                             }}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-red-300 hover:border-red-500"
@@ -2733,14 +2754,14 @@ export default function AdminApp() {
                   </div>
                 </Section>
                 {(data.treasures || []).map((item: TreasureItem, index: number) => (
-                  <EditorRow key={item.id || index} expanded={expandedTreasureId === item.id} tone="amber">
+                  <EditorRow key={rowKey(item.id, index)} expanded={expandedTreasureId === rowKey(item.id, index)} tone="amber">
                     <TreasureSummary
                       item={item}
                       index={index}
-                      expanded={expandedTreasureId === item.id}
-                      onToggle={() => setExpandedTreasureId(expandedTreasureId === item.id ? "" : item.id)}
+                      expanded={expandedTreasureId === rowKey(item.id, index)}
+                      onToggle={() => setExpandedTreasureId(expandedTreasureId === rowKey(item.id, index) ? null : rowKey(item.id, index))}
                     />
-                    {expandedTreasureId === item.id && (
+                    {expandedTreasureId === rowKey(item.id, index) && (
                       <div className="adm-drawer p-3">
                         <div className="flex flex-wrap items-end gap-3">
                           <div className="min-w-[260px] flex-1"><Field label="图片 URL" value={item.imageUrl} onChange={(value) => update((draft) => { draft.treasures![index].imageUrl = value; })} /></div>
@@ -2759,7 +2780,7 @@ export default function AdminApp() {
                               void removeAndSave(
                                 (draft) => { draft.treasures = (draft.treasures || []).filter((_, i) => i !== index); },
                                 [item.imageUrl],
-                                () => { if (expandedTreasureId === item.id) setExpandedTreasureId(""); },
+                                () => { if (expandedTreasureId === rowKey(item.id, index)) setExpandedTreasureId(null); },
                               );
                             }}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-red-300 hover:border-red-500"
@@ -2798,14 +2819,14 @@ export default function AdminApp() {
                   </div>
                 </Section>
                 {(data.musicTracks || []).map((track: MusicTrack, index: number) => (
-                  <EditorRow key={track.id || index} expanded={expandedMusicId === track.id}>
+                  <EditorRow key={rowKey(track.id, index)} expanded={expandedMusicId === rowKey(track.id, index)}>
                     <MusicSummary
                       track={track}
                       index={index}
-                      expanded={expandedMusicId === track.id}
-                      onToggle={() => setExpandedMusicId(expandedMusicId === track.id ? "" : track.id)}
+                      expanded={expandedMusicId === rowKey(track.id, index)}
+                      onToggle={() => setExpandedMusicId(expandedMusicId === rowKey(track.id, index) ? null : rowKey(track.id, index))}
                     />
-                    {expandedMusicId === track.id && (
+                    {expandedMusicId === rowKey(track.id, index) && (
                       <div className="adm-drawer p-3">
                         <div className="grid gap-3 md:grid-cols-2">
                           <Field label="歌曲名称" value={track.title} onChange={(value) => update((draft) => { draft.musicTracks![index].title = value; })} />
@@ -2886,7 +2907,7 @@ export default function AdminApp() {
                               void removeAndSave(
                                 (draft) => { draft.musicTracks = (draft.musicTracks || []).filter((_, i) => i !== index); },
                                 [track.audioUrl, track.coverUrl],
-                                () => { if (expandedMusicId === track.id) setExpandedMusicId(""); },
+                                () => { if (expandedMusicId === rowKey(track.id, index)) setExpandedMusicId(null); },
                               );
                             }}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-red-300 hover:border-red-500"
