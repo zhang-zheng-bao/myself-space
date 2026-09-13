@@ -9,6 +9,152 @@
   display: none;
 }
 
+/*
+ * 后台内容区滚动容器。
+ *
+ * 为什么需要 scrollbar-gutter：后台每一栏的内容长短差别很大（「站点资料」很短，
+ * 「弹幕设置」很长），来回切栏时纵向滚动条会反复出现 / 消失。滚动条一出现，
+ * 可视宽度就少掉十几像素，居中的标题和内容会整体横向跳一下 —— 这就是那个「布局会改变」的
+ * bug。scrollbar-gutter: stable 让滚动槽常驻，宽度不再变化，跳动从根上消失。
+ *
+ * 后台的滚动条收在 main 里（不是文档级），所以这条规则只影响后台，前台的全屏
+ * 沉浸式布局不受影响。
+ */
+.admin-scroll {
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain; /* 滚到底不要把整页带跑 */
+  /* 标准属性：Firefox 全系、Chrome 121+。Windows 默认浅色滚动条放在暗色后台里很跳。 */
+  scrollbar-width: thin;
+  scrollbar-color: #3f3f46 transparent; /* zinc-700 / 透明轨道 */
+}
+
+/* Safari 等仍走 webkit 伪元素的浏览器（Chrome 121+ 会忽略这些，由上面的标准属性接手）。 */
+.admin-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.admin-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.admin-scroll::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 9999px;
+}
+
+.admin-scroll::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
+  background-clip: content-box;
+}
+
+/*
+ * 兜底：不认 scrollbar-gutter 的老浏览器（Safari < 18.2）退化为「滚动条常显」，
+ * 同样保证宽度恒定。overflow-y 本来就是 auto，这里只是改成常显。
+ */
+@supports not (scrollbar-gutter: stable) {
+  .admin-scroll {
+    overflow-y: scroll;
+  }
+}
+
+/* ==========================================================================
+ * 后台信息层级基元 —— 禁止「框套框」
+ *
+ * 毛病：原来几乎每一层都手写了一遍 `rounded-* + border`，于是变成「卡片里套卡片、
+ * 卡片里再套卡片」。边框本来是稀缺资源，被层层复用之后每层边框的分量被拉平了 ——
+ * 内层看起来和外层一样重要，用户看不出哪一层才是主结构；横向空间也被一层层内边距啃掉。
+ *
+ * 硬不变量（以后改后台请遵守，tmp/verify-admin-denest.cjs 会来量）：
+ *   **同一条元素链上最多只出现一个「完整的框」。**
+ *   完整的框 = 至少 3 条边有可见描边，且圆角 >= 6px。
+ *
+ * 于是每个层级各管一种表达手段，谁都不许再要一整圈边框：
+ *   1. 栏目级  .adm-card   —— 全后台唯一的那种「框」：一圈 1px 描边 + 圆角。
+ *   2. 子分组  .adm-panel  —— **没有边框**，只有色调 + 圆角，读起来是「一块区域」。
+ *   3. 条目    .adm-row    —— **没有边框**。可点/分组靠「3px 左侧色条 + 底色」表达；
+ *                            展开时左侧色条变 emerald（珍藏 amber），底色跟着微微提亮。
+ *   4. 展开区  .adm-drawer —— 只有一条 border-top 分隔线 + 一层暗罩，是条目的下半截，
+ *                            不是第二张卡片。
+ *   5. 提示    .adm-note*  —— 只有左侧 2px 色条 + 语义底色。
+ *
+ * 暗色主题「越亮 = 越靠前」，深度顺序：
+ *   页面 #09090b  <  .adm-card  <  .adm-panel  <  .adm-row  >  .adm-drawer（暗罩下沉）
+ *
+ * 唯一例外：表单控件（input / textarea / select / button / 包着文件选择框的 label）
+ * 保留自己的描边 —— 它们是「控件」不是「容器」，控件需要清晰边界，跟框套框无关。
+ * ========================================================================== */
+
+/* 层级 1：栏目卡片。全后台唯一的那种「框」。 */
+.adm-card {
+  border-radius: 0.875rem;
+  border: 1px solid rgb(39 39 42 / 0.7); /* zinc-800/70 */
+  background-color: rgb(255 255 255 / 0.026);
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.35);
+}
+
+/* 层级 2：分组面。只有色调和圆角，**没有边框** —— 读起来是「一块区域」，
+   而不是「框里面又嵌了一个框」。 */
+.adm-panel {
+  border-radius: 0.75rem;
+  background-color: rgb(255 255 255 / 0.032);
+}
+
+/* 层级 2：状态提示。语义（警告 / 正常）由左侧 2px 色条承担，
+   替代原来「琥珀色 1px 边框 + 半透明底」的整块描边。 */
+.adm-note {
+  border-radius: 0.5rem;
+  border-left: 2px solid var(--adm-note-rule, rgb(113 113 122 / 0.7));
+  background-color: var(--adm-note-bg, rgb(255 255 255 / 0.03));
+  padding: 0.5rem 0.75rem;
+}
+
+.adm-note-warn {
+  --adm-note-rule: rgb(251 191 36 / 0.8);
+  --adm-note-bg: rgb(251 191 36 / 0.08);
+}
+
+.adm-note-info {
+  --adm-note-rule: rgb(52 211 153 / 0.8);
+  --adm-note-bg: rgb(52 211 153 / 0.07);
+}
+
+/* 层级 3：列表条目。把「摘要行 + 展开出来的编辑区」收成一个整体。
+   关键：这里**故意不写 border**。条目一旦有了整圈描边，它待在 .adm-card 里就立刻
+   变成「框套框」；所以改用左侧 3px 色条 + 底色来表达边界和状态。 */
+.adm-row {
+  overflow: hidden;
+  border-radius: 0.75rem;
+  border-left: 3px solid var(--adm-row-rule, rgb(63 63 70 / 0.9)); /* zinc-700/90 */
+  background-color: rgb(255 255 255 / 0.03);
+  transition: background-color 0.2s ease, border-left-color 0.2s ease;
+}
+
+.adm-row:hover {
+  border-left-color: rgb(113 113 122); /* zinc-500 */
+  background-color: rgb(255 255 255 / 0.05);
+}
+
+.adm-row[data-expanded="true"] {
+  border-left-color: rgb(52 211 153); /* emerald-400 */
+  background-color: rgb(52 211 153 / 0.05);
+}
+
+.adm-row[data-expanded="true"][data-tone="amber"] {
+  border-left-color: rgb(245 158 11); /* amber-500 */
+  background-color: rgb(245 158 11 / 0.05);
+}
+
+/* 层级 4：列表条目里的编辑区。它不是卡片，是摘要行的下半截：
+   外框由 .adm-row 的色条 + 圆角充当，这里只补一条分隔线和一层暗罩，
+   让它「凹」进去，跟上面亮一点的摘要行拼成一个整体。 */
+.adm-drawer {
+  border-top: 1px solid rgb(39 39 42 / 0.75);
+  background-color: rgb(0 0 0 / 0.2);
+}
+
 /* Custom Range Input Styling for a sleek, premium media progress track */
 input[type="range"] {
   -webkit-appearance: none;
