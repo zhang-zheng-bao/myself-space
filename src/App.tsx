@@ -22,7 +22,7 @@ import {
   X,
 } from "lucide-react";
 import AdminApp from "./AdminApp";
-import { FloatingSentencesConfig, GalleryItem, MusicTrack, PortfolioData, ResumeProfile, TreasureItem, Work } from "./types";
+import { FloatingSentencesConfig, GalleryItem, MusicTrack, PortfolioData, ResumeProfile, TreasureItem, Work, defaultPageCopy } from "./types";
 
 type TabKey = "intro" | "resume" | "works" | "ai" | "prospects" | "treasures" | "contact";
 
@@ -45,14 +45,6 @@ const workCategories = [
 ];
 
 const galleryCategoryOrder = ["应用", "原型图", "Agent", "剪辑"];
-const defaultPageCopy = {
-  resume: "“纸上得来终觉浅，绝知此事要躬行。”一页履历，照见实践。",
-  works: "“文章合为时而著，歌诗合为事而作。”作品因想法而生。",
-  aiZone: "“苟日新，日日新，又日新。”与 AI 共作，另辟一片试验田。",
-  gallery: "“横看成岭侧成峰，远近高低各不同。”截图留住侧影。",
-  treasures: "“此情可待成追忆，只是当时已惘然。”珍藏美好，岁月留香。",
-  contact: "“海内存知己，天涯若比邻。”愿在此处相逢。",
-};
 
 const emptyPortfolioData: PortfolioData = {
   profile: { name: "", avatar: "", tagline: "", intro: "", quote: "", resumePdfUrl: "", musicAutoplay: false, pageCopy: {} },

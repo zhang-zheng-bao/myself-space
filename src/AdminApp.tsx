@@ -29,7 +29,7 @@ import {
   UserRound,
   Video,
 } from "lucide-react";
-import { Experience, GalleryItem, MusicTrack, PortfolioData, ResumeProfile, TreasureItem, Work, WorkLink } from "./types";
+import { Experience, GalleryItem, MusicTrack, PortfolioData, ResumeProfile, TreasureItem, Work, WorkLink, defaultPageCopy } from "./types";
 
 const emptyWork: Work = {
   id: "",
@@ -248,15 +248,6 @@ function buildEditableLyrics(editable: EditableLyrics) {
 function hasEnhancedLyricTimeline(value?: string) {
   return /<((?:(?:\d{1,2}:)?\d{1,2}:)?\d{1,2}(?:[.,:]\d{1,3})?)>/.test(String(value || ""));
 }
-
-const defaultPageCopy = {
-  resume: "“纸上得来终觉浅，绝知此事要躬行。”一页履历，照见实践。",
-  works: "“文章合为时而著，歌诗合为事而作。”作品因想法而生。",
-  aiZone: "“苟日新，日日新，又日新。”与 AI 共作，另辟一片试验田。",
-  gallery: "“横看成岭侧成峰，远近高低各不同。”截图留住侧影。",
-  treasures: "“此情可待成追忆，只是当时已惘然。”珍藏美好，岁月留香。",
-  contact: "“海内存知己，天涯若比邻。”愿在此处相逢。",
-};
 
 const emptyPortfolioData: PortfolioData = {
   profile: { name: "", avatar: "", tagline: "", intro: "", quote: "", resumePdfUrl: "", musicAutoplay: false, pageCopy: {} },
@@ -2216,12 +2207,12 @@ export default function AdminApp() {
                 <div className="space-y-3 border-t border-zinc-800/60 pt-4">
                   <div className="text-xs font-semibold text-zinc-300">页面诗句说明</div>
                   <div className="grid gap-3 md:grid-cols-2">
-                    <Field label="个人简历说明" value={data.profile.pageCopy?.resume} onChange={(value) => update((draft) => { draft.profile.pageCopy = { ...defaultPageCopy, ...(draft.profile.pageCopy || {}), resume: value }; })} textarea />
-                    <Field label="创意合集说明" value={data.profile.pageCopy?.works} onChange={(value) => update((draft) => { draft.profile.pageCopy = { ...defaultPageCopy, ...(draft.profile.pageCopy || {}), works: value }; })} textarea />
-                    <Field label="AI 专区说明" value={data.profile.pageCopy?.aiZone} onChange={(value) => update((draft) => { draft.profile.pageCopy = { ...defaultPageCopy, ...(draft.profile.pageCopy || {}), aiZone: value }; })} textarea />
-                    <Field label="工程截图说明" value={data.profile.pageCopy?.gallery} onChange={(value) => update((draft) => { draft.profile.pageCopy = { ...defaultPageCopy, ...(draft.profile.pageCopy || {}), gallery: value }; })} textarea />
-                    <Field label="我的珍藏说明" value={data.profile.pageCopy?.treasures} onChange={(value) => update((draft) => { draft.profile.pageCopy = { ...defaultPageCopy, ...(draft.profile.pageCopy || {}), treasures: value }; })} textarea />
-                    <Field label="联系方式说明" value={data.profile.pageCopy?.contact} onChange={(value) => update((draft) => { draft.profile.pageCopy = { ...defaultPageCopy, ...(draft.profile.pageCopy || {}), contact: value }; })} textarea />
+                    <Field label="个人简历说明" value={data.profile.pageCopy?.resume} onChange={(value) => update((draft) => { editPageCopy(draft, { resume: value }); })} textarea />
+                    <Field label="创意合集说明" value={data.profile.pageCopy?.works} onChange={(value) => update((draft) => { editPageCopy(draft, { works: value }); })} textarea />
+                    <Field label="AI 专区说明" value={data.profile.pageCopy?.aiZone} onChange={(value) => update((draft) => { editPageCopy(draft, { aiZone: value }); })} textarea />
+                    <Field label="工程截图说明" value={data.profile.pageCopy?.gallery} onChange={(value) => update((draft) => { editPageCopy(draft, { gallery: value }); })} textarea />
+                    <Field label="我的珍藏说明" value={data.profile.pageCopy?.treasures} onChange={(value) => update((draft) => { editPageCopy(draft, { treasures: value }); })} textarea />
+                    <Field label="联系方式说明" value={data.profile.pageCopy?.contact} onChange={(value) => update((draft) => { editPageCopy(draft, { contact: value }); })} textarea />
                   </div>
                 </div>
                 <SaveCurrentButton label="保存站点资料" />

@@ -57,6 +57,25 @@ export interface Profile {
   };
 }
 
+/**
+ * 各栏目「说明文字」的默认文案。
+ *
+ * 前后台共用这一份：前台渲染时用它兜底，后台编辑表单也用它铺底。
+ * 之前 App.tsx 与 AdminApp.tsx 各自写了一份完全相同的字面量，
+ * 改文案只改一边就会让前后台对不上 —— 所以收拢到这里，只留一个来源。
+ *
+ * 用 `satisfies` 而不是类型标注：标注会把 6 个键都放宽成 `string | undefined`，
+ * 而 `App.tsx` 里它是默认参数值（`description = defaultPageCopy.gallery`），需要窄类型。
+ */
+export const defaultPageCopy = {
+  resume: "“纸上得来终觉浅，绝知此事要躬行。”一页履历，照见实践。",
+  works: "“文章合为时而著，歌诗合为事而作。”作品因想法而生。",
+  aiZone: "“苟日新，日日新，又日新。”与 AI 共作，另辟一片试验田。",
+  gallery: "“横看成岭侧成峰，远近高低各不同。”截图留住侧影。",
+  treasures: "“此情可待成追忆，只是当时已惘然。”珍藏美好，岁月留香。",
+  contact: "“海内存知己，天涯若比邻。”愿在此处相逢。",
+} satisfies NonNullable<Profile["pageCopy"]>;
+
 export interface Experience {
   id: string;
   period: string;
