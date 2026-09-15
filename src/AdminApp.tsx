@@ -1016,6 +1016,131 @@ function WorkPreview({ work }: { work: Work }) {
   );
 }
 
+/**
+ * 帧选视频某一帧做封面（宝：视频/图片支持拖拽上传外，还可以帧选视频某一帧制作封面）。
+ *
+ * 为什么值得单独做：视频作品在前台是缩略图 + 播放器，缩略图默认取 images[0]。
+ * 没有这个工具，作者只能自己截图再传 —— 而浏览器里逐帧找画面本来就该由页面做。
+ *
+ * 两个容易错的点，都写在这儿免得后人重踩：
+ *   1. `crossOrigin="anonymous"` 是**承重的**。少了它，跨域视频画进 canvas 会把
+ *      canvas 标记为 tainted，`toBlob` 抛 SecurityError。COS 的 CORS 是
+ *      AllowedOrigin ["*"] + 允许 GET，所以带这行就能正常读像素。
+ *   2. 滑杆拖动时要 `pause()`，否则拖到哪帧都会被播放位置覆盖回去，手感像坏了。
+ */
+function FrameGrabber({
+  videoUrl,
+  onCaptured,
+  capturing,
+}: {
+  videoUrl: string;
+  /** 拿到的 PNG File 交给调用方 —— 由它走 uploadMediaFile，别在这里自己上传。 */
+  onCaptured: (file: File) => void;
+  capturing?: boolean;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [duration, setDuration] = useState(0);
+  const [at, setAt] = useState(0);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const seekTo = (next: number) => {
+    const video = videoRef.current;
+    setAt(next);
+    if (!video) return;
+    // 拖动时先暂停，不然播放会立刻把 currentTime 推走，滑杆弹回去。
+    if (!video.paused) video.pause();
+    try {
+      video.currentTime = next;
+    } catch {
+      /* 极端情况下（时长还没解析出来）赋值会抛，忽略即可 */
+    }
+  };
+
+  const capture = async () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return;
+    setBusy(true);
+    setError("");
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("当前浏览器不支持 canvas 取帧");
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      const blob = await new Promise<Blob | null>((resolve) => {
+        // PNG：抽帧是用来当封面的，别引入 JPEG 的二次压缩噪声。
+        canvas.toBlob((b) => resolve(b), "image/png");
+      });
+      if (!blob) throw new Error("取帧失败，请换一帧再试");
+
+      // 文件名带上秒数，传到 COS 后能看出这一帧是从哪来的。
+      const name = "frame-" + at.toFixed(2).replace(".", "_") + "s.png";
+      onCaptured(new File([blob], name, { type: "image/png" }));
+    } catch (err: any) {
+      // 最典型的就是跨域 taint（SecurityError）—— 把原因说清楚，别只报「失败」。
+      const msg = String(err && err.message ? err.message : err);
+      setError(/tainted|SecurityError/i.test(msg)
+        ? "这一帧读不出来：视频地址不允许跨域读取像素。换成直链或先下载再上传。"
+        : msg);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <video
+        ref={videoRef}
+        src={videoUrl}
+        // 承重：不加这行，canvas 会被 taint，toBlob 直接抛 SecurityError。
+        crossOrigin="anonymous"
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={(event) => {
+          const video = event.currentTarget;
+          setDuration(Number.isFinite(video.duration) ? video.duration : 0);
+          setReady(true);
+        }}
+        onError={() => setError("视频加载失败，检查地址是否可访问。")}
+        className="max-h-[220px] w-full rounded-lg bg-black object-contain"
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="range"
+          min={0}
+          max={duration || 0}
+          step={0.05}
+          value={at}
+          disabled={!ready || !duration}
+          onChange={(event) => seekTo(Number(event.target.value))}
+          className="h-1 min-w-[160px] flex-1 accent-emerald-300"
+          aria-label="选择帧"
+        />
+        <span className="w-24 shrink-0 text-right font-mono text-[11px] text-zinc-400">
+          {at.toFixed(2)} / {duration ? duration.toFixed(2) : "--"} s
+        </span>
+        <button
+          type="button"
+          onClick={() => { void capture(); }}
+          disabled={!ready || busy || capturing}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-200 hover:border-emerald-500 disabled:opacity-50"
+        >
+          {busy || capturing ? <Loader2 className="animate-spin" size={13} /> : <ImagePlus size={13} />}
+          用这一帧做封面
+        </button>
+      </div>
+      <p className="text-[10px] leading-5 text-zinc-500">
+        拖动滑杆挑画面，点「用这一帧做封面」会上传成 PNG 并放到图集第一位（第一位即前台封面）。
+      </p>
+      {error && <p className="text-[11px] leading-5 text-amber-300">{error}</p>}
+    </div>
+  );
+}
+
 function WorkImagesEditor({
   images,
   onChange,
@@ -1388,6 +1513,12 @@ function WorkListEditor({
   const [pendingMigrateId, setPendingMigrateId] = useState<string | null>(null);
   const [migrating, setMigrating] = useState(false);
 
+  /**
+   * 哪一行的「选帧做封面」面板是展开的（按 index；null = 都收起）。
+   * 同时只允许开一个：抽帧要拉着整段视频找画面，开多个既费流量也没意义。
+   */
+  const [frameGrabIndex, setFrameGrabIndex] = useState<number | null>(null);
+
   // 当前该弹窗的那一条在 items 里的下标。用 rowKey 反查而不是直接存 id ——
   // 历史数据可能没有 id，那种条目只有位置能定位它。
   // 这个「唯一的编辑位」是后台的不变量：所有栏目同一时刻只会开着一条。
@@ -1538,6 +1669,8 @@ function WorkListEditor({
       {modalIndex >= 0 && (() => {
         const work = items[modalIndex];
         const index = modalIndex;
+        // 视频才有画面可抽；音频和外链都没有，入口只在 video 时出现。
+        const mediaKind = getMediaKind(work.videoUrl);
         return (
           <EditorModal
             title={work.title?.trim() || "未命名" + noun}
@@ -1595,8 +1728,37 @@ function WorkListEditor({
                           update((draft) => { readItems(draft)[index].videoUrl = url; });
                         })} />
                       </label>
+                      {/*
+                       * 抽帧入口只在「真的是视频」时出现：音频没有画面，
+                       * 外链（YouTube 之类）也读不到像素，给了按钮只会点了报错。
+                       */}
+                      {mediaKind === "video" && (
+                        <button
+                          type="button"
+                          onClick={() => setFrameGrabIndex(frameGrabIndex === index ? null : index)}
+                          aria-expanded={frameGrabIndex === index}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-emerald-500"
+                        >
+                          <Images size={16} /> {frameGrabIndex === index ? "收起选帧" : "选一帧做封面"}
+                        </button>
+                      )}
                       <span className="text-[10px] text-zinc-500">换文件会自动删掉旧的那个；「清除」只是从页面移除，不动云端文件。</span>
                     </div>
+                    {mediaKind === "video" && frameGrabIndex === index && (
+                      <div className="mt-3 rounded-lg bg-white/[0.03] p-3">
+                        <FrameGrabber
+                          videoUrl={work.videoUrl!}
+                          onCaptured={(file) => {
+                            // 抽出来的帧走和图片上传完全一样的那条链路（压缩/上限/进度/COS 签名）。
+                            void uploadFile(file, (url) => updateAndSave((draft) => {
+                              const current = readItems(draft)[index].images || [];
+                              // 插到最前面 = 顺手设为封面（第一张即封面），省掉一次「设封面」点击。
+                              readItems(draft)[index].images = [url, ...current];
+                            }));
+                          }}
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
               </section>
