@@ -22,7 +22,8 @@ import {
   X,
 } from "lucide-react";
 import AdminApp from "./AdminApp";
-import { FloatingSentencesConfig, GalleryItem, MusicTrack, PortfolioData, ResumeProfile, TreasureItem, Work, defaultPageCopy } from "./types";
+import { startVisitTracking } from "./tracking";
+import { FloatingSentencesConfig, GalleryItem, MusicTrack, PortfolioData, ResumeProfile, SectionKey, TreasureItem, Work, defaultPageCopy, isSectionVisible, normalizeSectionOrder } from "./types";
 
 type TabKey = "intro" | "resume" | "works" | "ai" | "prospects" | "treasures" | "contact";
 
@@ -31,7 +32,7 @@ const navItems: { key: TabKey; label: string; sub: string }[] = [
   { key: "resume", label: "个人简历", sub: "CURRICULUM" },
   { key: "works", label: "作品展示", sub: "PORTFOLIO" },
   { key: "ai", label: "AI专区", sub: "AI ZONE" },
-  { key: "prospects", label: "工程截图", sub: "GALLERY" },
+  { key: "prospects", label: "应用技能", sub: "SKILLS" },
   { key: "treasures", label: "我的珍藏", sub: "TREASURES" },
   { key: "contact", label: "联系方式", sub: "CONTACT" },
 ];
@@ -81,17 +82,19 @@ function normalizeData(data: PortfolioData): PortfolioData {
  * 只有管理员在后台显式关闭（写入 false）才隐藏；缺省 undefined 视为展示，
  * 因此历史数据无需迁移也不会被误隐藏。导航过滤与图片预载都走这一个判断，
  * 避免两处规则各写一遍后彼此不一致。
+ *
+ * 现在它是 isSectionVisible 的一层薄封装 —— 判定规则（含 sectionVisible 新键
+ * 优先、旧键兜底）统一收在 types.ts，这里只负责「拿 data 取珍藏那一格」。
  */
 function isTreasuresVisible(data: PortfolioData) {
-  return data.profile.pageCopy?.treasuresVisible !== false;
+  return isSectionVisible(data.profile.pageCopy, "treasures");
 }
 
 /**
- * 「AI 专区」栏目是否在前台展示。约定与 isTreasuresVisible 完全一致：
- * 只有管理员在后台显式关闭（写入 false）才隐藏，缺省 undefined 一律视为展示。
+ * 「AI 专区」栏目是否在前台展示。约定与 isTreasuresVisible 完全一致。
  */
 function isAiZoneVisible(data: PortfolioData) {
-  return data.profile.pageCopy?.aiZoneVisible !== false;
+  return isSectionVisible(data.profile.pageCopy, "ai");
 }
 
 function categoryLabel(category: string) {
@@ -950,9 +953,9 @@ function ResumePane({ data }: { data: PortfolioData }) {
           </div>
         </div>
       ) : profiles.length > 0 ? (
-        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂未上传{zhText(active.position)}简历 PDF</p><p className="mt-3 text-sm leading-7 text-zinc-400">请进入后台 `/admin`，在“站点资料 → 简历展示”里为这个岗位上传 PDF，保存后这里会自动展示。</p></div>
+        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂未上传{zhText(active.position)}简历 PDF</p><p className="mt-3 text-sm leading-7 text-zinc-400">请进入后台 `/admin`，在“个人简历 → 简历展示”里为这个岗位上传 PDF，保存后这里会自动展示。</p></div>
       ) : (
-        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂未配置简历</p><p className="mt-3 text-sm leading-7 text-zinc-400">请进入后台 `/admin`，在“站点资料 → 简历展示”中新增岗位并上传 PDF 简历。</p></div>
+        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂未配置简历</p><p className="mt-3 text-sm leading-7 text-zinc-400">请进入后台 `/admin`，在“个人简历 → 简历展示”中新增岗位并上传 PDF 简历。</p></div>
       )}
     </div>
   );
@@ -1092,11 +1095,11 @@ function WorksPane({
 function GalleryPane({
   items,
   onSelect,
-  eyebrow = "工程留影 / PROJECT SCREENSHOTS",
-  title = "工程截图",
+  eyebrow = "应用技能 / APPLIED SKILLS",
+  title = "应用技能",
   description = defaultPageCopy.gallery,
-  emptyTitle = "暂无工程截图",
-  emptyDescription = "请在后台“工程截图”中上传图片并填写简介。",
+  emptyTitle = "暂无应用技能",
+  emptyDescription = "请进入后台 /admin，在「应用技能」中上传图片并填写简介。",
 }: {
   items: GalleryItem[];
   onSelect: (item: GalleryItem) => void;
@@ -1359,22 +1362,48 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
+  /*
+   * 站点检测：每次打开前台页面记一条访问（IP/归属地由服务端补，设备与环境由
+   * tracking.ts 采集），离开时补交停留时长。
+   *
+   * 放在这里而不是 App 组件顶部，是因为 /admin 那条分支在函数开头就 return 了，
+   * 走后台时根本不会注册这个 effect —— 后台自己的访问不该被算进前台访客里。
+   *
+   * 关于「同一个用户」：visitorKey 存在 localStorage，同一个浏览器重复访问会归到
+   * 同一位访客，后台就能把他的多次访问按时间串成一条时间线。
+   *
+   * 失败不影响浏览：tracking 内部全部吞异常，这里不需要 try/catch 也不做 loading。
+   */
+  useEffect(() => startVisitTracking(), []);
+
   const pageCopy = { ...defaultPageCopy, ...(data.profile.pageCopy || {}) };
   const floatingSentencesConfig = useMemo(() => resolveFloatingSentencesConfig(data.profile.pageCopy?.floatingSentences, activeTab), [data.profile.pageCopy?.floatingSentences, activeTab]);
 
-  // 后台开关决定「我的珍藏」与「AI 专区」是否出现在前台。隐藏时连导航入口一起摘掉，
+  // 后台「模块管理」决定前台导航的顺序与显隐。隐藏时连导航入口一起摘掉，
   // 而不是把空页面留在那里。
   //
-  // 这里不需要额外的兜底副作用：站点只在挂载时取一次数据，而 activeTab 初值恒为
-  // "intro"、选中项初值恒为 null，所以开关关闭时不可能停在被隐藏的栏目上。
-  const treasuresVisible = isTreasuresVisible(data);
-  const aiZoneVisible = isAiZoneVisible(data);
-  const visibleNavItems = useMemo(
-    () => navItems.filter((item) => (
-      (item.key !== "treasures" || treasuresVisible) && (item.key !== "ai" || aiZoneVisible)
-    )),
-    [treasuresVisible, aiZoneVisible],
-  );
+  // 顺序与显隐统一由 types.ts 的 normalizeSectionOrder / isSectionVisible 决定 ——
+  // 那两个函数对残缺 / 过期 / 被改坏的 sectionOrder 都有兜底，最坏结果只是顺序不完美，
+  // 绝不会把栏目弄丢。
+  //
+  const visibleNavItems = useMemo(() => {
+    const byKey = new Map(navItems.map((item) => [item.key as string, item]));
+    return normalizeSectionOrder(data.profile.pageCopy?.sectionOrder)
+      .filter((key) => isSectionVisible(data.profile.pageCopy, key))
+      .map((key) => byKey.get(key))
+      .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  }, [data.profile.pageCopy]);
+  const sectionShown = (key: SectionKey) => isSectionVisible(data.profile.pageCopy, key);
+
+  // 「自我介绍」也能被后台关掉之后，activeTab 的初值 "intro" 就可能指向一个已隐藏的
+  // 栏目 —— 那时既没有它的导航项，页面也不该留着它的内容。所以这里兜一下：
+  // 落到第一个还开着的栏目上；一个都不剩就什么都不切，交给下面的空态接住。
+  useEffect(() => {
+    if (isSectionVisible(data.profile.pageCopy, activeTab)) return;
+    const fallback = normalizeSectionOrder(data.profile.pageCopy?.sectionOrder)
+      .find((key) => isSectionVisible(data.profile.pageCopy, key));
+    if (fallback) setActiveTab(fallback);
+  }, [data.profile.pageCopy, activeTab]);
 
   if (!portfolioReady) return <InitialLoader />;
 
@@ -1404,13 +1433,26 @@ export default function App() {
           </header>
           {mobileMenuOpen && <div className="absolute left-6 right-6 top-20 z-30 flex flex-col space-y-3 rounded-xl border border-zinc-800 bg-zinc-950 p-5 shadow-2xl md:hidden">{visibleNavItems.map((item) => <button key={item.key} onClick={() => { setActiveTab(item.key); setMobileMenuOpen(false); }} className={`flex w-full flex-col justify-start rounded-xl p-3 px-4 text-left transition-all ${activeTab === item.key ? "border border-zinc-700 bg-zinc-900 text-white" : "text-zinc-300 hover:bg-zinc-900/50"}`}><span className="font-serif text-base font-bold tracking-widest">{item.label}</span><span className={`mt-1 font-mono text-[10px] uppercase tracking-widest ${activeTab === item.key ? "text-emerald-300/85" : "text-zinc-500"}`}>{item.sub}</span></button>)}</div>}
           <div className="flex-1">
-            {activeTab === "intro" && <div className="space-y-10"><div className="space-y-4"><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">墨香独白 / MONOLOGUE BODY</span><h2 className="font-serif text-3xl leading-normal tracking-tight text-white md:text-4xl">自我评价</h2><p className="text-[15px] font-light leading-8 text-zinc-100/90 md:text-[17px] md:leading-9">{zhText(data.profile.intro)}</p></div><div className="space-y-8 border-t border-zinc-900/60 pt-8"><span className="mb-3 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">尘埃之迹 / PERSONAL PATH TIMELINE</span><div className="relative space-y-8 before:absolute before:inset-y-1 before:left-2 before:w-[1.5px] before:bg-zinc-900">{data.experiences.map((exp) => <article key={exp.id} className="group relative pl-8"><div className="absolute left-[4px] top-[9px] h-2.5 w-2.5 rounded-full border-2 border-zinc-950 bg-zinc-800 transition-colors duration-300 group-hover:bg-zinc-300" /><div className="mb-2 grid gap-2 text-center md:grid-cols-3 md:items-center"><span className="justify-self-center font-mono text-xs font-semibold tracking-wider text-emerald-300/80 md:justify-self-start md:text-sm">{zhText(exp.period)}</span><span className="justify-self-center font-serif text-base font-medium text-white md:text-lg">{zhText(exp.role)}</span><span className="justify-self-center font-sans text-xs text-zinc-400 md:justify-self-end md:text-right md:text-sm">@ {zhText(exp.company)}</span></div><p className="text-[15px] font-light leading-7 text-zinc-200/90">{zhText(exp.desc)}</p></article>)}</div></div></div>}
-            {activeTab === "works" && <WorksPane items={data.works} description={pageCopy.works} onSelect={setSelectedWork} categoryOrder={workCategories} />}
-            {activeTab === "ai" && aiZoneVisible && <WorksPane items={data.profile.pageCopy?.aiWorks || []} description={pageCopy.aiZone} onSelect={setSelectedAiWork} eyebrow="与 AI 共作 / AI ZONE EXHIBITS" title="AI 专区" emptyTitle="暂无 AI 作品" emptyDescription="请进入后台 /admin，在「AI 专区」中新增作品并保存。" />}
-            {activeTab === "prospects" && <GalleryPane items={data.gallery || []} onSelect={setSelectedGallery} description={pageCopy.gallery} />}
-            {activeTab === "treasures" && treasuresVisible && <TreasurePane items={data.treasures || []} onSelect={setSelectedTreasure} description={pageCopy.treasures} />}
-            {activeTab === "resume" && <ResumePane data={data} />}
-            {activeTab === "contact" && <ContactPane data={data} />}
+            {visibleNavItems.length === 0 ? (
+              <div className="flex min-h-[42vh] flex-col items-center justify-center text-center">
+                <p className="font-serif text-xl tracking-wide text-white">站点正在整理中</p>
+                <p className="mt-3 text-sm leading-6 text-zinc-400">
+                  所有栏目都被隐藏了，暂时没有可以展示的内容。
+                  <br />
+                  进后台 <span className="font-mono text-zinc-300">/admin</span> 的「模块管理」重新打开需要的栏目即可。
+                </p>
+              </div>
+            ) : (
+              <>
+            {activeTab === "intro" && sectionShown("intro") && <div className="space-y-10"><div className="space-y-4"><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">墨香独白 / MONOLOGUE BODY</span><h2 className="font-serif text-3xl leading-normal tracking-tight text-white md:text-4xl">自我评价</h2><p className="text-[15px] font-light leading-8 text-zinc-100/90 md:text-[17px] md:leading-9">{zhText(data.profile.intro)}</p></div><div className="space-y-8 border-t border-zinc-900/60 pt-8"><span className="mb-3 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">尘埃之迹 / PERSONAL PATH TIMELINE</span><div className="relative space-y-8 before:absolute before:inset-y-1 before:left-2 before:w-[1.5px] before:bg-zinc-900">{data.experiences.map((exp) => <article key={exp.id} className="group relative pl-8"><div className="absolute left-[4px] top-[9px] h-2.5 w-2.5 rounded-full border-2 border-zinc-950 bg-zinc-800 transition-colors duration-300 group-hover:bg-zinc-300" /><div className="mb-2 grid gap-2 text-center md:grid-cols-3 md:items-center"><span className="justify-self-center font-mono text-xs font-semibold tracking-wider text-emerald-300/80 md:justify-self-start md:text-sm">{zhText(exp.period)}</span><span className="justify-self-center font-serif text-base font-medium text-white md:text-lg">{zhText(exp.role)}</span><span className="justify-self-center font-sans text-xs text-zinc-400 md:justify-self-end md:text-right md:text-sm">@ {zhText(exp.company)}</span></div><p className="text-[15px] font-light leading-7 text-zinc-200/90">{zhText(exp.desc)}</p></article>)}</div></div></div>}
+            {activeTab === "works" && sectionShown("works") && <WorksPane items={data.works} description={pageCopy.works} onSelect={setSelectedWork} categoryOrder={workCategories} />}
+            {activeTab === "ai" && sectionShown("ai") && <WorksPane items={data.profile.pageCopy?.aiWorks || []} description={pageCopy.aiZone} onSelect={setSelectedAiWork} eyebrow="与 AI 共作 / AI ZONE EXHIBITS" title="AI 专区" emptyTitle="暂无 AI 作品" emptyDescription="请进入后台 /admin，在「AI 专区」中新增作品并保存。" />}
+            {activeTab === "prospects" && sectionShown("prospects") && <GalleryPane items={data.gallery || []} onSelect={setSelectedGallery} description={pageCopy.gallery} />}
+            {activeTab === "treasures" && sectionShown("treasures") && <TreasurePane items={data.treasures || []} onSelect={setSelectedTreasure} description={pageCopy.treasures} />}
+            {activeTab === "resume" && sectionShown("resume") && <ResumePane data={data} />}
+            {activeTab === "contact" && sectionShown("contact") && <ContactPane data={data} />}
+              </>
+            )}
           </div>
         </section>
       </div>

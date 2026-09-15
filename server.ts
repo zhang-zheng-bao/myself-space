@@ -116,6 +116,169 @@ function hmacSha256Hex(key: crypto.BinaryLike, value: string) {
   return crypto.createHmac("sha256", key).update(value, "utf8").digest("hex");
 }
 
+/* ------------------------------------------------------------------ 站点检测 */
+
+type UaInfo = {
+  deviceType: string;
+  browser: string;
+  browserVersion: string;
+  os: string;
+  osVersion: string;
+  engine: string;
+};
+
+/**
+ * 极简 UA 解析。刻意不引第三方包：
+ * 依赖越少，部署面越小；这里只需要把「设备类型 / 浏览器 / 系统 / 引擎」认出来。
+ * 判定顺序很关键——Edg 必须先于 Chrome，否则 Edge 会被认成 Chrome。
+ */
+function parseUserAgent(uaRaw: string): UaInfo {
+  const ua = uaRaw || "";
+  const pick = (re: RegExp) => {
+    const r = ua.match(re);
+    return r ? r[1] || "" : "";
+  };
+
+  if (/bot|crawler|spider|slurp|bingpreview|facebookexternalhit|headlesschrome|python-requests|curl\//i.test(ua)) {
+    const name =
+      pick(/(Googlebot|Bingbot|Baiduspider|YandexBot|DuckDuckBot|Applebot|SemrushBot|AhrefsBot|PetalBot|Sogou web spider|360Spider|Bytespider|GPTBot|ClaudeBot|CCBot|PerplexityBot|facebookexternalhit)/i) ||
+      "Bot";
+    return { deviceType: "爬虫", browser: name, browserVersion: "", os: "-", osVersion: "", engine: "" };
+  }
+
+  let engine = "";
+  if (/Trident\//.test(ua)) engine = "Trident";
+  else if (/AppleWebKit\//.test(ua)) engine = /Chrome\/|Chromium\/|Edg\//.test(ua) ? "Blink" : "WebKit";
+  else if (/Gecko\/|Firefox\//.test(ua)) engine = "Gecko";
+
+  let browser = "未知";
+  let browserVersion = "";
+  const browsers: [RegExp, string][] = [
+    [/Edg(?:e|A|iOS)?\/([\d.]+)/, "Edge"],
+    [/OPR\/([\d.]+)/, "Opera"],
+    [/MicroMessenger\/([\d.]+)/, "微信内置浏览器"],
+    [/QQBrowser\/([\d.]+)/, "QQ 浏览器"],
+    [/UCBrowser\/([\d.]+)/, "UC 浏览器"],
+    [/Quark\/([\d.]+)/, "夸克"],
+    [/(?:CriOS)\/([\d.]+)/, "Chrome (iOS)"],
+    [/(?:FxiOS)\/([\d.]+)/, "Firefox (iOS)"],
+    [/Firefox\/([\d.]+)/, "Firefox"],
+    [/Chrome\/([\d.]+)/, "Chrome"],
+    [/Version\/([\d.]+).*Safari/, "Safari"],
+    [/MSIE\s([\d.]+)/, "IE"],
+    [/rv:([\d.]+).*Trident/, "IE"],
+  ];
+  for (const [re, name] of browsers) {
+    const v = pick(re);
+    if (v) {
+      browser = name;
+      browserVersion = v;
+      break;
+    }
+  }
+
+  let os = "未知";
+  let osVersion = "";
+  if (/Windows NT 10\.0/.test(ua)) os = "Windows 10/11";
+  else if (/Windows NT 6\.3/.test(ua)) os = "Windows 8.1";
+  else if (/Windows NT 6\.1/.test(ua)) os = "Windows 7";
+  else if (/Windows/.test(ua)) os = "Windows";
+  else if (/Android[ /]([\d.]+)/.test(ua)) {
+    os = "Android";
+    osVersion = pick(/Android[ /]([\d.]+)/);
+  } else if (/(?:iPhone|iPad|iPod).*?OS ([\d_]+)/.test(ua)) {
+    os = "iOS";
+    osVersion = pick(/(?:iPhone|iPad|iPod).*?OS ([\d_]+)/).replace(/_/g, ".");
+  } else if (/Mac OS X ([\d_.]+)/.test(ua)) {
+    os = "macOS";
+    osVersion = pick(/Mac OS X ([\d_.]+)/).replace(/_/g, ".");
+  } else if (/CrOS/.test(ua)) os = "ChromeOS";
+  else if (/HarmonyOS/.test(ua)) os = "HarmonyOS";
+  else if (/Linux/.test(ua)) os = "Linux";
+
+  const isTablet = /iPad|Tablet|PlayBook|Silk/i.test(ua) || (/Android/i.test(ua) && !/Mobile/i.test(ua));
+  const isPhone = /Mobi|iPhone|iPod|Windows Phone|Android.*Mobile/i.test(ua);
+  const deviceType = isTablet ? "平板" : isPhone ? "手机" : "桌面";
+
+  return { deviceType, browser, browserVersion, os, osVersion, engine };
+}
+
+/** 取真实客户端 IP：trust proxy 已开，X-Forwarded-For 的第一段就是访客。 */
+function clientIp(req: Request) {
+  const raw = String(req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim();
+  const ip = raw.replace(/^::ffff:/, "");
+  return ip === "::1" ? "127.0.0.1" : ip;
+}
+
+function isPrivateIp(ip: string) {
+  if (!ip) return true;
+  if (/^(127\.|10\.|192\.168\.|169\.254\.|::1$|fc|fd|fe80)/i.test(ip)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(ip)) return true;
+  return false;
+}
+
+type GeoInfo = { country: string; region: string; city: string; isp: string; raw: unknown };
+
+const geoCache = new Map<string, { at: number; value: GeoInfo | null }>();
+const GEO_TTL_MS = 6 * 60 * 60 * 1000;
+
+async function fetchJson(url: string, ms = 4000): Promise<any> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  try {
+    const r = await fetch(url, { signal: ctl.signal, headers: { Accept: "application/json" } });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * IP 归属地。走多家免费接口串行兜底，并做 6 小时内存缓存（含「查不到」的负缓存，
+ * 免得对内网/保留地址反复发请求）。整个函数永不抛异常，查不到就返回 null。
+ */
+export async function lookupIpGeo(ip: string): Promise<GeoInfo | null> {
+  if (!ip || isPrivateIp(ip)) return null;
+
+  const hit = geoCache.get(ip);
+  if (hit && Date.now() - hit.at < GEO_TTL_MS) return hit.value;
+
+  let info: GeoInfo | null = null;
+
+  const a = await fetchJson(
+    `http://ip-api.com/json/${encodeURIComponent(ip)}?lang=zh-CN&fields=status,country,regionName,city,isp,query`,
+  );
+  if (a && a.status === "success") {
+    info = { country: a.country || "", region: a.regionName || "", city: a.city || "", isp: a.isp || "", raw: a };
+  }
+
+  if (!info) {
+    const b = await fetchJson(`https://ipapi.co/${encodeURIComponent(ip)}/json/`);
+    if (b && b.country_name) {
+      info = { country: b.country_name || "", region: b.region || "", city: b.city || "", isp: b.org || "", raw: b };
+    }
+  }
+
+  if (!info) {
+    const c = await fetchJson(`https://ipwho.is/${encodeURIComponent(ip)}`);
+    if (c && c.success !== false && c.country) {
+      info = {
+        country: c.country || "",
+        region: c.region || "",
+        city: c.city || "",
+        isp: (c.connection && c.connection.isp) || "",
+        raw: c,
+      };
+    }
+  }
+
+  geoCache.set(ip, { at: Date.now(), value: info });
+  return info;
+}
+
 async function callTencentAsr(action: string, payload: JsonRecord) {
   const credential = getTencentApiCredential();
   if (!credential) {
@@ -1181,6 +1344,311 @@ async function startServer() {
       }
 
       res.json({ success: failed.length === 0, deleted, skipped: urls.length - keys.length, failed });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /* ======================================================================
+   * 站点检测（访问记录）
+   * ----------------------------------------------------------------------
+   * 写入端 /api/track 是公开接口：前台每次加载页面时上报一次，服务端补上
+   * 真实 IP（trust proxy + X-Forwarded-For）、UA 解析结果与归属地。
+   * 读取/管理端全部挂在 requireAdmin 后面。
+   * 设计原则：记录失败绝不能影响访客浏览——所有分支都以「吞掉异常」收尾。
+   * ==================================================================== */
+
+  const TRACK_WINDOW_MS = 60_000;
+  const TRACK_MAX_PER_WINDOW = 40;
+  const trackHits = new Map<string, number[]>();
+
+  function trackAllowed(ip: string) {
+    const now = Date.now();
+    const hits = (trackHits.get(ip) || []).filter((t) => now - t < TRACK_WINDOW_MS);
+    if (hits.length >= TRACK_MAX_PER_WINDOW) {
+      trackHits.set(ip, hits);
+      return false;
+    }
+    hits.push(now);
+    trackHits.set(ip, hits);
+    if (trackHits.size > 5000) {
+      for (const [k, v] of trackHits) {
+        if (!v.some((t) => now - t < TRACK_WINDOW_MS)) trackHits.delete(k);
+      }
+    }
+    return true;
+  }
+
+  app.post("/api/track", async (req, res) => {
+    try {
+      if (!supabase) return res.json({ ok: false, reason: "supabase-not-configured" });
+
+      const ip = clientIp(req);
+      if (!trackAllowed(ip)) return res.status(429).json({ ok: false, reason: "too-many-requests" });
+
+      const body = req.body || {};
+      const visitorKey = String(body.visitorKey || "").trim().slice(0, 80);
+      if (!visitorKey) return res.status(400).json({ error: "visitorKey required" });
+
+      const c = body.client || {};
+      const ua = String(req.headers["user-agent"] || "").slice(0, 500);
+      const info = parseUserAgent(ua);
+      const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+      const str = (v: unknown, max: number) => String(v ?? "").slice(0, max);
+
+      const { data, error } = await supabase
+        .from("portfolio_visits")
+        .insert({
+          visitor_key: visitorKey,
+          session_id: str(body.sessionId, 80),
+          ip,
+          device_type: info.deviceType,
+          browser: info.browser,
+          browser_version: info.browserVersion,
+          os: info.os,
+          os_version: info.osVersion,
+          engine: info.engine,
+          user_agent: ua,
+          path: str(c.path, 300),
+          referrer: str(c.referrer, 500),
+          screen: str(c.screen, 40),
+          viewport: str(c.viewport, 40),
+          pixel_ratio: num(c.pixelRatio),
+          color_depth: num(c.colorDepth),
+          timezone: str(c.timezone, 80),
+          timezone_offset: num(c.timezoneOffset),
+          language: str(c.language, 40),
+          languages: str(c.languages, 200),
+          platform: str(c.platform, 80),
+          cpu_cores: num(c.cpuCores),
+          device_memory: num(c.deviceMemory),
+          touch_points: num(c.touchPoints),
+          gpu: str(c.gpu, 200),
+          cookie_enabled: typeof c.cookieEnabled === "boolean" ? c.cookieEnabled : null,
+          dnt: str(c.dnt, 20),
+          fingerprint: str(body.fingerprint, 64),
+        })
+        .select("id")
+        .single();
+
+      if (error) return res.status(500).json({ error: error.message });
+      const visitId: number | null = data?.id ?? null;
+
+      // 归属地 + 访客聚合放到响应之后，不让访客多等一毫秒。
+      void (async () => {
+        let country = "";
+        let region = "";
+        let city = "";
+        let isp = "";
+
+        try {
+          const geo = await lookupIpGeo(ip);
+          if (geo) {
+            country = geo.country;
+            region = geo.region;
+            city = geo.city;
+            isp = geo.isp;
+            if (visitId != null) {
+              await supabase
+                .from("portfolio_visits")
+                .update({ ip_geo: geo.raw as never, country, region, city, isp })
+                .eq("id", visitId);
+            }
+          }
+        } catch {
+          /* 归属地查不到就留空，记录本身不受影响 */
+        }
+
+        try {
+          const nowIso = new Date().toISOString();
+          // 先保证访客行存在（并发下 PK 冲突直接忽略），再自增计数。
+          await supabase
+            .from("portfolio_visitors")
+            .upsert({ visitor_key: visitorKey }, { onConflict: "visitor_key", ignoreDuplicates: true });
+
+          const { data: row } = await supabase
+            .from("portfolio_visitors")
+            .select("visit_count,page_views")
+            .eq("visitor_key", visitorKey)
+            .maybeSingle();
+
+          await supabase
+            .from("portfolio_visitors")
+            .update({
+              last_seen: nowIso,
+              visit_count: Number(row?.visit_count || 0) + 1,
+              page_views: Number(row?.page_views || 0) + 1,
+              last_ip: ip,
+              last_country: country,
+              last_region: region,
+              last_city: city,
+              last_isp: isp,
+              last_device: info.deviceType,
+              last_browser: info.browser,
+              last_os: info.os,
+            })
+            .eq("visitor_key", visitorKey);
+        } catch {
+          /* 聚合失败不影响单次记录 */
+        }
+      })();
+
+      res.json({ ok: true, visitId });
+    } catch (err: any) {
+      // 检测接口永远不要让前台看到 5xx
+      res.json({ ok: false, reason: err?.message || "track-failed" });
+    }
+  });
+
+  app.post("/api/track/dwell", async (req, res) => {
+    try {
+      if (!supabase) return res.json({ ok: false });
+      const body = req.body || {};
+      const rawMs = Number(body.dwellMs);
+      const dwellMs = Number.isFinite(rawMs) ? Math.max(0, Math.min(Math.round(rawMs), 6 * 60 * 60 * 1000)) : 0;
+      const visitIdNum = Number(body.visitId);
+      if (!Number.isFinite(visitIdNum)) return res.status(400).json({ error: "visitId required" });
+
+      const { data } = await supabase
+        .from("portfolio_visits")
+        .update({ dwell_ms: dwellMs })
+        .eq("id", visitIdNum)
+        .select("visitor_key")
+        .maybeSingle();
+
+      const key = data?.visitor_key || String(body.visitorKey || "").slice(0, 80);
+      if (key) {
+        const { data: row } = await supabase
+          .from("portfolio_visitors")
+          .select("total_dwell_ms")
+          .eq("visitor_key", key)
+          .maybeSingle();
+        await supabase
+          .from("portfolio_visitors")
+          .update({ total_dwell_ms: Number(row?.total_dwell_ms || 0) + dwellMs })
+          .eq("visitor_key", key);
+      }
+
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.json({ ok: false, reason: err?.message || "dwell-failed" });
+    }
+  });
+
+  app.get("/api/admin/visits", requireAdmin, async (req, res) => {
+    try {
+      if (!supabase) {
+        return res.json({ visitors: [], visits: [], stats: { visitors: 0, visits: 0, today: 0 }, configured: false, reason: "supabase-missing" });
+      }
+
+      // 「表还没建」不等于「出错」：schema.sql 还没跑过时 PostgREST 会回一句
+      // 「Could not find the table ... in the schema cache」，直接把这句话丢给用户
+      // 是没法行动的。识别出来，改成 configured:false + reason，让后台给一句能照做的事。
+      const missingTable = (m?: string) => /could not find the table|does not exist|schema cache|relation .* does not exist/i.test(m || "");
+      const emptyPayload = (reason: string) => ({
+        visitors: [],
+        visits: [],
+        stats: { visitors: 0, visits: 0, today: 0 },
+        configured: false,
+        reason,
+      } as const);
+
+      const limit = Math.min(Math.max(Number(req.query.limit) || 300, 1), 2000);
+      const onlyKey = String(req.query.visitorKey || "").trim();
+
+      let vq = supabase.from("portfolio_visits").select("*").order("created_at", { ascending: false }).limit(limit);
+      if (onlyKey) vq = vq.eq("visitor_key", onlyKey);
+      const { data: visits, error: vErr } = await vq;
+      if (vErr) {
+        if (missingTable(vErr.message)) return res.json(emptyPayload("tables-missing"));
+        return res.status(500).json({ error: vErr.message });
+      }
+
+      let pq = supabase.from("portfolio_visitors").select("*").order("last_seen", { ascending: false }).limit(1000);
+      if (onlyKey) pq = pq.eq("visitor_key", onlyKey);
+      const { data: visitors, error: pErr } = await pq;
+      if (pErr) {
+        if (missingTable(pErr.message)) return res.json(emptyPayload("tables-missing"));
+        return res.status(500).json({ error: pErr.message });
+      }
+
+      const sinceIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { count: totalVisits } = await supabase
+        .from("portfolio_visits")
+        .select("id", { count: "exact", head: true });
+      const { count: todayVisits } = await supabase
+        .from("portfolio_visits")
+        .select("id", { count: "exact", head: true })
+        .gte("created_at", sinceIso);
+
+      res.json({
+        visitors: visitors || [],
+        visits: visits || [],
+        stats: {
+          visitors: visitors?.length || 0,
+          visits: totalVisits || 0,
+          today: todayVisits || 0,
+        },
+        configured: true,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/admin/visits", requireAdmin, async (req, res) => {
+    try {
+      if (!supabase) return res.status(400).json({ error: "Supabase 未配置" });
+      const body = req.body || {};
+      const visitorKey = String(body.visitorKey || "").trim().slice(0, 80);
+      if (!visitorKey) return res.status(400).json({ error: "visitorKey required" });
+
+      const patch: Record<string, unknown> = {};
+      if (typeof body.label === "string") patch.label = body.label.slice(0, 60);
+      if (typeof body.blocked === "boolean") patch.blocked = body.blocked;
+      if (Object.keys(patch).length === 0) return res.status(400).json({ error: "nothing to update" });
+
+      const { error } = await supabase.from("portfolio_visitors").update(patch).eq("visitor_key", visitorKey);
+      if (error) {
+        if (/could not find the table|does not exist|schema cache/i.test(error.message)) {
+          return res.status(400).json({ error: "检测数据表还没建：请先在 Supabase 里执行 supabase/schema.sql" });
+        }
+        return res.status(500).json({ error: error.message });
+      }
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 清理：给了一堆 visitorKey 就删这批，否则 all=true 清空全部。
+  app.post("/api/admin/visits/clear", requireAdmin, async (req, res) => {
+    try {
+      if (!supabase) return res.status(400).json({ error: "Supabase 未配置" });
+      const body = req.body || {};
+      const keys: string[] = Array.isArray(body.visitorKeys)
+        ? body.visitorKeys.map((k: unknown) => String(k).slice(0, 80)).filter(Boolean).slice(0, 500)
+        : [];
+      const all = body.all === true;
+      if (!all && keys.length === 0) return res.status(400).json({ error: "visitorKeys or all required" });
+
+      let visitsQ = supabase.from("portfolio_visits").delete();
+      let visitorsQ = supabase.from("portfolio_visitors").delete();
+      if (all) {
+        // PostgREST 的 delete 必须带过滤条件，否则会被拒；这里用一个恒真条件。
+        visitsQ = visitsQ.not("visitor_key", "is", null);
+        visitorsQ = visitorsQ.not("visitor_key", "is", null);
+      } else {
+        visitsQ = visitsQ.in("visitor_key", keys);
+        visitorsQ = visitorsQ.in("visitor_key", keys);
+      }
+
+      const { error: vErr } = await visitsQ;
+      if (vErr) return res.status(500).json({ error: vErr.message });
+      const { error: pErr } = await visitorsQ;
+      if (pErr) return res.status(500).json({ error: pErr.message });
+
+      res.json({ ok: true, cleared: all ? "all" : keys.length });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

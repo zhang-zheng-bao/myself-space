@@ -1,5 +1,28 @@
 @import "tailwindcss";
 
+/*
+ * 全站去圆角（宝：组件不需要圆角，都统一移除）。
+ *
+ * 为什么改这里而不是去删 200 处 className：
+ *   1) rounded-* 在源码里出现 200 次，逐个删既容易漏、又让 JSX 变得认不出原样；
+ *   2) 这里改的是**尺度类**（小/中/大/超大），一处收口，以后新写的代码自动跟着走。
+ *
+ * **rounded-full 故意不动** —— 它管的不是「圆角」而是「圆形」：
+ * 头像、播放器唱片、进度条、开关轨道与圆钮、状态小圆点、声波条全靠它。
+ * 把它一起归零，头像会变成方块、开关会变成一根长条，那是坏掉而不是变直角。
+ *
+ * 这些规则写在 @import 之后、且不在任何 @layer 里：Tailwind v4 的工具类是
+ * 不带 layer 直接吐出来的，同为无 layer 规则时按源码顺序定胜负，所以后写的这条赢。
+ */
+.rounded,
+.rounded-md,
+.rounded-lg,
+.rounded-xl,
+.rounded-2xl,
+.rounded-3xl {
+  border-radius: 0;
+}
+
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
@@ -153,6 +176,64 @@
 .adm-drawer {
   border-top: 1px solid rgb(39 39 42 / 0.75);
   background-color: rgb(0 0 0 / 0.2);
+}
+
+/* ==========================================================================
+   「二级弹窗」——列表条目的完整编辑器。
+   ==========================================================================
+   为什么要有它：把完整编辑表单塞在列表行下面，一行就能撑到 1000px+，
+   列表读起来是一团糊。改成点开弹窗后，列表恒是「一屏扫完」的摘要，
+   表单在独立图层里呼吸。
+   
+   它是**新的一层表面**（position: fixed），不是卡片里套的框：
+   弹窗面板自己就是这一层的「那一个框」，里面的分组一律用
+   .adm-panel / .adm-row / .adm-note（都无整圈描边），所以不违反
+   「禁止框套框」。判定脚本遇到 fixed 祖先会停止向上找框 —— 几何上
+   fixed 元素本来就不在祖先的坐标系统里。
+   ========================================================================== */
+.adm-modal-backdrop {
+  background-color: rgb(0 0 0 / 0.72);
+  backdrop-filter: blur(6px);
+}
+
+/* 弹窗的最外层定位壳。
+   关键的一条：margin 必须是 0 —— 弹窗常常作为列表的兄弟节点插进去，
+   而父级多半带 space-y-*，那些 margin-block 会把 fixed 遮罩往下顶十几像素，
+   于是页面顶部露出一条没被遮住的缝。这里显式清零，别依赖调用点的 className。 */
+.adm-modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  margin: 0;
+}
+
+.adm-modal {
+  /* 这一层的唯一一个「框」：1px 描边 + 大圆角 + 抬起来的阴影。 */
+  border-radius: 1rem;
+  border: 1px solid rgb(39 39 42 / 0.9);
+  background-color: #0c0c0e;
+  box-shadow: 0 24px 64px -12px rgb(0 0 0 / 0.85);
+}
+
+/* 有文件被拖到弹窗上。只调描边颜色和阴影 —— 一旦改成加宽描边或换尺寸，
+   松手瞬间弹窗会「跳」一下，正是后台布局最忌讳的那种抖动。 */
+.adm-modal[data-drag="true"] {
+  border-color: rgb(52 211 153 / 0.8);
+  box-shadow: 0 0 0 1px rgb(52 211 153 / 0.35), 0 24px 64px -12px rgb(0 0 0 / 0.85);
+}
+
+/* 弹窗内部的滚动容器，同样守住「滚动只发生在一个容器里」。 */
+.adm-modal-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.adm-modal-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.adm-modal-scroll::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background-color: rgb(63 63 70 / 0.9);
 }
 
 /* Custom Range Input Styling for a sleek, premium media progress track */

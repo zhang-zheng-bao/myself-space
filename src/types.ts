@@ -54,6 +54,22 @@ export interface Profile {
      * 全部键的展开式处理，新键可以原样往返）。
      */
     treasuresVisible?: boolean;
+    /**
+     * 前台栏目的展示顺序。存的是栏目的 key（见 sectionKeys）。
+     *
+     * 缺省 = 用 sectionKeys 的固有顺序。读取时会把「数组里没提到的 key」按固有顺序
+     * 补在后面，所以这个数组即使残缺、过期、或者混进了不认识的 key，前台也不会
+     * 丢栏目 —— 顶多顺序不完美。后台每次移动都会写一份完整数组。
+     */
+    sectionOrder?: string[];
+    /**
+     * 每个前台栏目是否展示，形如 { works: false }。
+     *
+     * 约定同 aiZoneVisible / treasuresVisible：只有显式 false 才隐藏，缺省视为展示。
+     * 读取优先级：sectionVisible[key] -> 旧键（aiZoneVisible / treasuresVisible）-> 展示。
+     * 保留旧键是为了兼容已上线的数据，后台写入时会同时更新两边。
+     */
+    sectionVisible?: Record<string, boolean>;
   };
 }
 
@@ -71,10 +87,90 @@ export const defaultPageCopy = {
   resume: "“纸上得来终觉浅，绝知此事要躬行。”一页履历，照见实践。",
   works: "“文章合为时而著，歌诗合为事而作。”作品因想法而生。",
   aiZone: "“苟日新，日日新，又日新。”与 AI 共作，另辟一片试验田。",
-  gallery: "“横看成岭侧成峰，远近高低各不同。”截图留住侧影。",
+  gallery: "“操千曲而后晓声，观千剑而后识器。”所学皆可施展。",
   treasures: "“此情可待成追忆，只是当时已惘然。”珍藏美好，岁月留香。",
   contact: "“海内存知己，天涯若比邻。”愿在此处相逢。",
 } satisfies NonNullable<Profile["pageCopy"]>;
+
+/* ---------------------------------------------------------------------------
+ * 前台栏目清单（前后台共用）
+ *
+ * 这是「模块」这个概念的唯一来源：前台用它排导航、按它取页面说明文案；后台的
+ * 「模块管理」用它渲染每一行（开关 / 上下移 / 新增入口 / 页首文案）。两边都从
+ * 这里读，就不会出现「后台加了一个模块、前台不认识」的情况。
+ * ------------------------------------------------------------------------ */
+
+export type SectionKey = "intro" | "resume" | "works" | "ai" | "prospects" | "treasures" | "contact";
+
+/** 栏目 key 的固有顺序（sectionOrder 缺省时就用它）。 */
+export const sectionKeys: SectionKey[] = ["intro", "resume", "works", "ai", "prospects", "treasures", "contact"];
+
+export interface SectionMeta {
+  key: SectionKey;
+  /** 前台导航上的名字，也是后台「模块管理」里的名字。 */
+  label: string;
+  /** 导航上的英文小字。 */
+  sub: string;
+  /** 对应 pageCopy 里的「页首诗句 / 说明」字段；没有就代表这个栏目不吃文案。 */
+  copyKey?: keyof typeof defaultPageCopy;
+  /** 有值 = 这个模块能「新增条目」，后台那一行会出现新增按钮。 */
+  content?: "resume" | "work" | "aiWork" | "gallery" | "treasure";
+  /**
+   * 旧版的独立开关键。改开关时两边一起写，老数据照样读得懂；
+   * 将来数据都迁移过一轮后可以再删。
+   */
+  legacyVisibleKey?: "aiZoneVisible" | "treasuresVisible";
+  /** 一句话说明这个模块装的是什么，后台「模块管理」里显示在名字下面。 */
+  hint: string;
+}
+
+export const sectionCatalog: SectionMeta[] = [
+  { key: "intro", label: "自我介绍", sub: "BIOGRAPHY", hint: "首屏：头像、一句话签名、闲言碎语，以及个人经历时间线。" },
+  { key: "resume", label: "个人简历", sub: "CURRICULUM", copyKey: "resume", content: "resume", hint: "按岗位分标签展示简历 PDF；前台按后台顺序生成选项卡。" },
+  { key: "works", label: "作品展示", sub: "PORTFOLIO", copyKey: "works", content: "work", hint: "主要作品列表，按分类筛选，点击弹出详情。" },
+  { key: "ai", label: "AI专区", sub: "AI ZONE", copyKey: "aiZone", content: "aiWork", legacyVisibleKey: "aiZoneVisible", hint: "与 AI 共作的作品，渲染方式与「作品展示」一致。" },
+  { key: "prospects", label: "应用技能", sub: "SKILLS", copyKey: "gallery", content: "gallery", hint: "成果截图墙，点击放大看细节。" },
+  { key: "treasures", label: "我的珍藏", sub: "TREASURES", copyKey: "treasures", content: "treasure", legacyVisibleKey: "treasuresVisible", hint: "一些舍不得删的图。" },
+  { key: "contact", label: "联系方式", sub: "CONTACT", copyKey: "contact", hint: "微信 / QQ / 邮箱 / GitHub，留空的条目不显示。" },
+];
+
+export function sectionMeta(key: string): SectionMeta | undefined {
+  return sectionCatalog.find((item) => item.key === key);
+}
+
+/**
+ * 把 sectionOrder 归一化成一份完整、去重、只含已知 key 的顺序数组。
+ *
+ * 容错点：数据可能来自老版本（没有这个键）、被手工改坏（重复、错字、残缺）。
+ * 任何异常都只能影响顺序，绝不能把栏目弄丢 —— 所以最后一定把没提到的 key
+ * 按固有顺序补在尾部。
+ */
+export function normalizeSectionOrder(order?: string[]): SectionKey[] {
+  const seen = new Set<string>();
+  const out: SectionKey[] = [];
+  for (const raw of Array.isArray(order) ? order : []) {
+    const key = String(raw);
+    if (!sectionKeys.includes(key as SectionKey) || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key as SectionKey);
+  }
+  for (const key of sectionKeys) if (!seen.has(key)) out.push(key);
+  return out;
+}
+
+/**
+ * 某个前台栏目是否展示。
+ *
+ * 读取优先级：sectionVisible[key] → 旧键（aiZoneVisible / treasuresVisible）→ 展示。
+ * 缺省一律视为展示 —— 老数据没有这些键，不能因此把栏目误隐藏。
+ */
+export function isSectionVisible(pageCopy: Profile["pageCopy"], key: SectionKey): boolean {
+  const explicit = pageCopy?.sectionVisible?.[key];
+  if (typeof explicit === "boolean") return explicit;
+  const legacyKey = sectionMeta(key)?.legacyVisibleKey;
+  if (legacyKey && typeof pageCopy?.[legacyKey] === "boolean") return pageCopy[legacyKey] === true;
+  return true;
+}
 
 export interface Experience {
   id: string;
@@ -174,4 +270,84 @@ export interface PortfolioData {
   treasures?: TreasureItem[];
   musicTracks?: MusicTrack[];
   contact?: ContactInfo;
+}
+
+/* ---------------------------------------------------------------------------
+ * 站点检测（访问记录）
+ *
+ * 这两个类型只是 Supabase 两张表的镜像，字段名与列名逐一对应 —— 接口是
+ * select("*") 直出的，不做驼峰转换，所以这里保持 snake_case，不「美化」它。
+ * 站点内容走 PortfolioData，访问记录走这两个，两者互不相干：访问记录不参与
+ * 「编辑-保存」流程，是只读+少量标注的独立数据集。
+ * ------------------------------------------------------------------------ */
+
+/** 一次页面加载 = 一条访问记录。 */
+export interface VisitRecord {
+  id: number;
+  visitor_key: string;
+  session_id?: string;
+  ip?: string;
+  ip_geo?: Record<string, unknown> | null;
+  country?: string;
+  region?: string;
+  city?: string;
+  isp?: string;
+  device_type?: string;
+  browser?: string;
+  browser_version?: string;
+  os?: string;
+  os_version?: string;
+  engine?: string;
+  user_agent?: string;
+  path?: string;
+  referrer?: string;
+  screen?: string;
+  viewport?: string;
+  pixel_ratio?: number | null;
+  color_depth?: number | null;
+  timezone?: string;
+  timezone_offset?: number | null;
+  language?: string;
+  languages?: string;
+  platform?: string;
+  cpu_cores?: number | null;
+  device_memory?: number | null;
+  touch_points?: number | null;
+  gpu?: string;
+  cookie_enabled?: boolean | null;
+  dnt?: string;
+  fingerprint?: string;
+  dwell_ms?: number | null;
+  created_at: string;
+}
+
+/** 一位访客（同一浏览器）的聚合行，visitor_key 是主键。 */
+export interface VisitorRecord {
+  visitor_key: string;
+  first_seen: string;
+  last_seen: string;
+  visit_count: number;
+  page_views: number;
+  total_dwell_ms: number;
+  label?: string;
+  blocked?: boolean;
+  last_ip?: string;
+  last_country?: string;
+  last_region?: string;
+  last_city?: string;
+  last_isp?: string;
+  last_device?: string;
+  last_browser?: string;
+  last_os?: string;
+}
+
+/** GET /api/admin/visits 的响应。 */
+export interface VisitsPayload {
+  visitors: VisitorRecord[];
+  visits: VisitRecord[];
+  stats: { visitors: number; visits: number; today: number };
+  /** 后端是否具备可写可读的存储（Supabase 已连 + 检测表已建） */
+  configured: boolean;
+  /** configured 为 false 时的原因："supabase-missing" | "tables-missing" */
+  reason?: string;
 }
