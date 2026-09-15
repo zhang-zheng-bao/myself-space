@@ -969,19 +969,112 @@ function getMediaKind(url?: string) {
   return "link";
 }
 
+/**
+ * 视频预览 / VIDEO —— 独立模块（宝：视频预览不该挤在「前台效果」里）。
+ *
+ * 比例**跟着视频本身走**：
+ * 视频源比例千奇百怪（竖屏 9:16、方屏 1:1、宽银幕 21:9），硬套一个 16:9 的框
+ * 就一定会在两侧或上下留黑边 —— 那既是「框套框」，也让人误以为视频有问题。
+ * 所以这里读一次元数据拿真实宽高比，把它写到 `aspect-ratio` 上。
+ *
+ * **别在同一个元素上同时要「铺满宽度」「按比例」「限高」**（踩过）：
+ * 三者冲突时浏览器**保宽弃比例** —— 元素被压成 823×420（1.96）而源是 1.78，
+ * 画面**横向拉伸**，比黑边更难看。探针的「渲染比例 == 源比例」那条断言就是抓这个的。
+ *
+ * 正解：**外层容器定形，内层 video 填满**。
+ * 外层是个没有内容固有尺寸的普通 `div`，吃 `aspect-ratio` + `max-h` +
+ * `w-auto max-w-full`（**关键：宽度不写死**）—— 宽度不是硬约束，浏览器才能在
+ * 「尽量宽」与「高度 ≤ 420」之间按比例求解。内层 `video` 只写 `h-full w-full
+ * object-contain`，不参与比例计算 ⇒ 既不拉伸、也不缩回固有像素宽、更不会在两侧
+ * 留出容器底色。竖屏被 420 卡住后自动收窄，`mx-auto` 居中。
+ */
+function WorkVideoPanel({ work }: { work: Work }) {
+  // 元数据没到位时先按 16:9 占位，避免加载瞬间高度跳一下。
+  const [ratio, setRatio] = useState("16 / 9");
+  const mediaKind = getMediaKind(work.videoUrl);
+
+  if (!work.videoUrl) return null;
+
+  if (mediaKind === "audio") {
+    return <audio src={work.videoUrl} controls className="h-8 w-full" />;
+  }
+
+  if (mediaKind === "link") {
+    return (
+      <a href={work.videoUrl} target="_blank" rel="noreferrer" className="block truncate text-xs text-emerald-300 hover:text-emerald-200">
+        {work.videoUrl}
+      </a>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {/*
+       * 关键：**外层定形、内层填充**，而且外层不能同时被「铺满宽度」和「封顶高度」夹住。
+       *
+       * 三种写法都试过，前两种都有病：
+       *  ① `<video className="w-full max-h-[420px]" style={{aspectRatio}}>` ——
+       *     三段约束冲突时浏览器**保宽弃比例**，823×420（1.96）而源 1.78 ⇒ 横向拉伸。
+       *  ② `<video className="w-auto max-w-full max-h-[420px]">` ——
+       *     尺寸回落到**固有像素宽**（320px），在 847px 的模块里两侧露底 = 黑边。
+       *  ③ 现在：外层 div 用 `max-h` + `max-w-full`，**宽度写成 `auto`**，
+       *     再给 `aspect-ratio`（内联，因为值是运行时算的）。这样宽度不是硬约束，
+       *     浏览器按比例求解：宽银幕铺满可用宽度且不超高；竖屏被 420 卡住后自动收窄，
+       *     两侧露的是模块底色、而不是视频自己画的黑边（`mx-auto` 让窄的居中）。
+       *     内层 video 只写 `h-full w-full object-contain`，不参与比例计算 ⇒ 永不变形。
+       *
+       * 反面教材就是 ① 和 ② —— 探针里「渲染比例 == 源比例」那条断言存在的意义。
+       */}
+      <div
+        className="mx-auto block max-h-[420px] w-auto max-w-full"
+        style={{ aspectRatio: ratio }}
+      >
+        <video
+          // key 带上地址：换视频时重新挂载，免得沿用上一条的 aspect-ratio。
+          key={work.videoUrl}
+          src={work.videoUrl}
+          controls
+          playsInline
+          preload="metadata"
+          onLoadedMetadata={(event) => {
+            const video = event.currentTarget;
+            if (video.videoWidth > 0 && video.videoHeight > 0) {
+              setRatio(video.videoWidth + " / " + video.videoHeight);
+            }
+          }}
+          className="h-full w-full rounded-lg object-contain"
+        />
+      </div>
+      <p className="text-[10px] leading-5 text-zinc-500">按视频原始比例显示，不套 16:9 的框。</p>
+    </div>
+  );
+}
+
+/**
+ * 前台效果 / PREVIEW —— **只放封面缩略图与文案**。
+ *
+ * 宝：视频预览不该混在这个模块里，要单独一个模块；而且预览比例要跟着视频本身走。
+ * 所以这里只留「缩略图 + 标题 / 分类 / 简介 / 标签」这一组，
+ * 播放器搬到下面独立的「视频预览 / VIDEO」模块（见 WorkVideoPanel）。
+ */
 function WorkPreview({ work }: { work: Work }) {
   const firstImage = work.images?.find(Boolean);
-  const mediaKind = getMediaKind(work.videoUrl);
 
   return (
     // 预览区是前台成品的样子，属于「只读镜像」，用左侧色条标明范围即可，不再加边框。
-    <div className="space-y-3 border-l-2 border-zinc-700/50 pl-3">
+    <div className="border-l-2 border-zinc-700/50 pl-3">
+      {/*
+       * 封面**不套 16:9 的黑框**（宝：无黑边展示）。封面比例本身可能是 4:3、1:1、
+       * 甚至竖屏，套 `aspect-video` + `bg-black` 就必然上下或左右留黑边。
+       * 这里把宽高上限交给容器（固定列宽 180px），图片自己用 `object-contain` 按
+       * 原始比例落进去，容器底色用面板色而不是纯黑 —— 留白也是「留槽色」，看着不像黑边。
+       */}
       <div className="grid gap-3 lg:grid-cols-[180px_1fr]">
-        <div className="overflow-hidden rounded-lg bg-white/[0.04]">
+        <div className="flex h-[101px] items-center justify-center overflow-hidden rounded-lg bg-white/[0.04]">
           {firstImage ? (
-            <img src={firstImage} alt={work.title || "作品预览"} className="aspect-video h-full w-full object-contain bg-black" />
+            <img src={firstImage} alt={work.title || "作品预览"} className="max-h-full w-auto max-w-full rounded-md object-contain" />
           ) : (
-            <div className="flex aspect-video items-center justify-center text-[11px] text-zinc-600">暂无图片</div>
+            <span className="text-[11px] text-zinc-600">暂无图片</span>
           )}
         </div>
         <div className="min-w-0 space-y-2">
@@ -1000,18 +1093,6 @@ function WorkPreview({ work }: { work: Work }) {
           )}
         </div>
       </div>
-      {work.videoUrl && mediaKind === "audio" && <audio src={work.videoUrl} controls className="h-8 w-full max-w-md" />}
-      {work.videoUrl && mediaKind === "video" && (
-        <div className="max-w-lg">
-          <span className="mb-1 block text-[10px] text-zinc-500">视频预览</span>
-          <video src={work.videoUrl} controls playsInline className="max-h-[200px] w-full rounded-lg bg-black object-contain" />
-        </div>
-      )}
-      {work.videoUrl && mediaKind === "link" && (
-        <a href={work.videoUrl} target="_blank" rel="noreferrer" className="block truncate text-xs text-emerald-300 hover:text-emerald-200">
-          {work.videoUrl}
-        </a>
-      )}
     </div>
   );
 }
@@ -1761,6 +1842,17 @@ function WorkListEditor({
                     )}
                   </div>
                 </div>
+              </section>
+
+              {/*
+               * 视频预览独立成一个模块（宝：视频预览不该挤在「前台效果」里，
+               * 而且要单独给一个模块、比例跟着视频本身走）。
+               * 位置放在媒体之后、链接之前 —— 挨着它的来源字段。
+               * 纯音频 / 外链也在这里收口，所以 MEDIA 里不再重复放播放器。
+               */}
+              <section className="adm-panel space-y-3 p-3">
+                <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-500">视频预览 / VIDEO</p>
+                <WorkVideoPanel work={work} />
               </section>
 
               <section className="adm-panel space-y-3 p-3">
