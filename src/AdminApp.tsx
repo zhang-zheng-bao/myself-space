@@ -1,4 +1,5 @@
 import React, { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Activity,
   ArrowDown,
@@ -13,6 +14,7 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  Feather,
   FileText,
   Gem,
   HardDrive,
@@ -36,8 +38,9 @@ import {
   UserRound,
   Video,
   X,
+  ZoomIn,
 } from "lucide-react";
-import { Experience, GalleryItem, MusicTrack, PortfolioData, ResumeProfile, SectionKey, TreasureItem, VisitRecord, VisitorRecord, VisitsPayload, Work, WorkLink, defaultPageCopy, isSectionVisible, normalizeSectionOrder, sectionMeta } from "./types";
+import { Experience, GalleryItem, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, VisitRecord, VisitorRecord, VisitsPayload, Work, WorkLink, defaultPageCopy, isSectionVisible, normalizeSectionOrder, sectionMeta } from "./types";
 
 const emptyWork: Work = {
   id: "",
@@ -71,6 +74,13 @@ const emptyGalleryItem: GalleryItem = {
 const emptyTreasureItem: TreasureItem = {
   id: "",
   imageUrl: "",
+};
+
+const emptyPoem: Poem = {
+  id: "",
+  title: "",
+  text: "",
+  note: "",
 };
 
 const emptyMusicTrack: MusicTrack = {
@@ -393,6 +403,7 @@ function setSectionCopy(draft: PortfolioData, key: SectionKey, value: string) {
     case "ai": editPageCopy(draft, { aiZone: value }); return;
     case "prospects": editPageCopy(draft, { gallery: value }); return;
     case "treasures": editPageCopy(draft, { treasures: value }); return;
+    case "poems": editPageCopy(draft, { poems: value }); return;
     case "contact": editPageCopy(draft, { contact: value }); return;
     default: return;
   }
@@ -406,6 +417,7 @@ function sectionCopyValue(pageCopy: PortfolioData["profile"]["pageCopy"], key: S
     case "ai": return pageCopy?.aiZone;
     case "prospects": return pageCopy?.gallery;
     case "treasures": return pageCopy?.treasures;
+    case "poems": return pageCopy?.poems;
     case "contact": return pageCopy?.contact;
     default: return undefined;
   }
@@ -1059,6 +1071,9 @@ function WorkVideoPanel({ work }: { work: Work }) {
  */
 function WorkPreview({ work }: { work: Work }) {
   const firstImage = work.images?.find(Boolean);
+  // 封面也能点开放大（宝：作品选了图片却没法放大）。预览里的封面被压到 180px 宽，
+  // 恰恰是最需要看清的一张 —— 它决定前台列表长什么样。
+  const [zoom, setZoom] = useState(false);
 
   return (
     // 预览区是前台成品的样子，属于「只读镜像」，用左侧色条标明范围即可，不再加边框。
@@ -1070,13 +1085,23 @@ function WorkPreview({ work }: { work: Work }) {
        * 原始比例落进去，容器底色用面板色而不是纯黑 —— 留白也是「留槽色」，看着不像黑边。
        */}
       <div className="grid gap-3 lg:grid-cols-[180px_1fr]">
-        <div className="flex h-[101px] items-center justify-center overflow-hidden rounded-lg bg-white/[0.04]">
-          {firstImage ? (
+        {firstImage ? (
+          <button
+            type="button"
+            onClick={() => setZoom(true)}
+            className="group relative flex h-[101px] items-center justify-center overflow-hidden rounded-lg bg-white/[0.04]"
+            aria-label="放大预览封面"
+          >
             <img src={firstImage} alt={work.title || "作品预览"} className="max-h-full w-auto max-w-full rounded-md object-contain" />
-          ) : (
+            <span className="absolute inset-0 flex items-center justify-center bg-black/55 opacity-0 transition group-hover:opacity-100">
+              <ZoomIn size={18} className="text-white" />
+            </span>
+          </button>
+        ) : (
+          <div className="flex h-[101px] items-center justify-center overflow-hidden rounded-lg bg-white/[0.04]">
             <span className="text-[11px] text-zinc-600">暂无图片</span>
-          )}
-        </div>
+          </div>
+        )}
         <div className="min-w-0 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <span className="truncate text-sm font-semibold text-white">{work.title || "未命名作品"}</span>
@@ -1093,6 +1118,15 @@ function WorkPreview({ work }: { work: Work }) {
           )}
         </div>
       </div>
+
+      {zoom && firstImage && (
+        <ImageLightbox
+          images={work.images || []}
+          index={(work.images || []).indexOf(firstImage)}
+          onIndexChange={() => {}}
+          onClose={() => setZoom(false)}
+        />
+      )}
     </div>
   );
 }
@@ -1222,6 +1256,130 @@ function FrameGrabber({
   );
 }
 
+/**
+ * 图片放大预览（lightbox）。
+ *
+ * 宝：作品里选了图片却没法放大看 —— 图集里的缩略图只有 96×64，
+ * `object-cover` 又把画面裁掉一圈，根本认不出自己选的是哪张，
+ * 想核对「第一张是不是前台封面」只能靠猜。
+ *
+ * 所以这里给缩略图加一个「点开放大」的图层。几个刻意的取舍：
+ *   - **压在编辑弹窗之上**（`.adm-lightbox-layer` 是 z-60，弹窗是 z-50），
+ *     否则点开看不到东西，还会把弹窗的按钮一起抢走点击。
+ *   - 用 `object-contain` 而不是 `object-cover`：这一层存在的意义就是**看全**，
+ *     裁掉边角就白做了。底色用接近纯黑但不纯黑（`#0a0a0c`），
+ *     让图片边界看得出来，又不至于像块黑补丁。
+ *   - 图片来源可能没加载成功（地址填错/失效）⇒ 给一个 onError 兜底文案，
+ *     否则打开是一片空白，看着像组件坏了。
+ *   - 关闭方式三种齐全（遮罩 / Esc / 右上角 ✕），与 `EditorModal` 的手感一致。
+ *   - 左右两侧是**兄弟缩略图**，可以直接翻页对比 —— 选封面时最常做的就是这个。
+ */
+function ImageLightbox({
+  images,
+  index,
+  onIndexChange,
+  onClose,
+}: {
+  images: string[];
+  index: number;
+  onIndexChange: (index: number) => void;
+  onClose: () => void;
+}) {
+  const usable = (images || []).filter(Boolean);
+  // 传进来的 index 是原数组下标，这里换算成「有效图」的位置，免得空串占位算进去。
+  const current = (images || [])[index];
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [current]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onClose();
+      }
+    };
+    // 用 capture 抢在 `EditorModal` 的 Esc 之前处理：不然按 Esc 会先关掉
+    // 底下的编辑弹窗，放大层反而留在屏幕上（那画面很怪）。
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+
+  if (!current) return null;
+
+  const validIndex = usable.indexOf(current);
+
+  /* 用 portal 挂到 body：放大层会作为弹窗滚动容器的子孙被渲染，而
+     `position: fixed` 一旦遇到带 transform / filter / contain 的祖先就会被
+     拉回那个祖先的坐标系统，遮不住全屏。今天后台这条链上没有这种祖先，
+     但那是「碰巧」——portal 让这件事变成「保证」。 */
+  return createPortal(
+    <div className="adm-lightbox-layer flex flex-col items-center justify-center gap-3 p-4 md:p-8">
+      <button
+        type="button"
+        className="adm-modal-backdrop absolute inset-0 cursor-zoom-out"
+        onClick={onClose}
+        aria-label="关闭图片预览"
+        tabIndex={-1}
+      />
+      <div className="relative z-10 flex max-h-full min-h-0 w-full flex-col items-center gap-3">
+        <div className="flex w-full items-center justify-between gap-3">
+          <span className="truncate text-xs text-zinc-400">
+            第 {validIndex + 1} / {usable.length} 张{validIndex === 0 ? "（前台封面）" : ""}
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-500 hover:text-white"
+            aria-label="关闭"
+          >
+            <X size={14} /> 关闭
+          </button>
+        </div>
+
+        {failed ? (
+          <p className="rounded-lg border border-amber-600/40 bg-amber-950/20 px-4 py-3 text-xs text-amber-200">
+            这张图加载失败，地址可能是失效的。回到图集检查一下这个 URL。
+          </p>
+        ) : (
+          <img
+            src={current}
+            alt="图片放大预览"
+            referrerPolicy="no-referrer"
+            onError={() => setFailed(true)}
+            className="max-h-[70vh] w-auto max-w-full rounded-lg border border-zinc-700/70 object-contain"
+            style={{ backgroundColor: "#0a0a0c" }}
+          />
+        )}
+
+        <p className="max-w-full truncate px-2 text-[10px] text-zinc-500">{current}</p>
+
+        {usable.length > 1 && (
+          <div className="flex max-w-full flex-wrap justify-center gap-2">
+            {usable.map((url, thumbIndex) => (
+              <button
+                key={`${url}-${thumbIndex}`}
+                type="button"
+                onClick={() => onIndexChange((images || []).indexOf(url))}
+                className={
+                  "h-12 w-16 shrink-0 overflow-hidden rounded-md border transition " +
+                  (url === current ? "border-emerald-400" : "border-zinc-700 hover:border-zinc-500")
+                }
+                aria-label={`看第 ${thumbIndex + 1} 张`}
+              >
+                <img src={url} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function WorkImagesEditor({
   images,
   onChange,
@@ -1232,6 +1390,8 @@ function WorkImagesEditor({
   onRemove?: (url: string) => void;
 }) {
   const normalizedImages = images || [];
+  // -1 = 没开。存的是**原数组下标**，这样删除/新增后不会错位到别的图上。
+  const [zoomIndex, setZoomIndex] = useState(-1);
 
   return (
     <div>
@@ -1245,9 +1405,19 @@ function WorkImagesEditor({
         {normalizedImages.map((item, index) => (
           <div key={index} className="flex gap-2 rounded-lg bg-white/[0.03] p-2">
             {item ? (
-              <div className="h-16 w-24 shrink-0 overflow-hidden rounded-md bg-black">
+              /* 缩略图本身是个按钮 —— 96×64 加 object-cover 裁掉一圈，
+                 光看它认不出选的是哪张，所以「点开放大」得是主交互。 */
+              <button
+                type="button"
+                onClick={() => setZoomIndex(index)}
+                className="group relative h-16 w-24 shrink-0 overflow-hidden rounded-md bg-black"
+                aria-label={`放大预览第 ${index + 1} 张图片`}
+              >
                 <img src={item} alt={`作品图片 ${index + 1}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
-              </div>
+                <span className="absolute inset-0 flex items-center justify-center bg-black/55 opacity-0 transition group-hover:opacity-100">
+                  <ZoomIn size={16} className="text-white" />
+                </span>
+              </button>
             ) : (
               <div className="flex h-16 w-24 shrink-0 items-center justify-center rounded-md bg-white/[0.05] text-[10px] text-zinc-600">空白</div>
             )}
@@ -1276,10 +1446,21 @@ function WorkImagesEditor({
                 >
                   {index === 0 ? "封面" : "设封面"}
                 </button>
+                {item && (
+                  <button
+                    type="button"
+                    onClick={() => setZoomIndex(index)}
+                    className="inline-flex items-center gap-1 rounded border border-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400 hover:border-zinc-600 hover:text-zinc-200"
+                  >
+                    <ZoomIn size={11} /> 放大
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     onRemove?.(item);
                     onChange(normalizedImages.filter((_, itemIndex) => itemIndex !== index));
+                    // 删掉的正是正在放大的那张 ⇒ 关掉，否则会停在空索引上。
+                    if (zoomIndex === index) setZoomIndex(-1);
                   }}
                   className="rounded border border-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500 hover:border-red-500 hover:text-red-300"
                   type="button"
@@ -1292,6 +1473,15 @@ function WorkImagesEditor({
           </div>
         ))}
       </div>
+
+      {zoomIndex >= 0 && normalizedImages[zoomIndex] && (
+        <ImageLightbox
+          images={normalizedImages}
+          index={zoomIndex}
+          onIndexChange={setZoomIndex}
+          onClose={() => setZoomIndex(-1)}
+        />
+      )}
     </div>
   );
 }
@@ -2007,6 +2197,53 @@ function TreasureSummary({ item, index, active, onEdit, onDelete }: {
   );
 }
 
+/**
+ * 「诗与惆怅」栏目的列表摘要行。
+ *
+ * 摘要里放正文首句是刻意的：诗没有缩略图可认，标题又常常留空，只有原文能让人
+ * 一眼认出是哪一首。
+ */
+function PoemSummary({ item, index, active, onEdit, onDelete }: {
+  item: Poem;
+  index: number;
+  active: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const preview = (item.text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || "";
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onEdit}
+      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onEdit(); } }}
+      className="grid w-full cursor-pointer gap-3 p-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-rose-300/40 md:grid-cols-[1fr_auto] md:items-center"
+    >
+      <div className="min-w-0">
+        <span className="text-sm font-semibold text-white">
+          {item.title ? item.title : "诗 " + (index + 1)}
+        </span>
+        <p className="mt-0.5 truncate font-serif text-xs text-zinc-400">
+          {preview || "（还没有正文）"}
+        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5 justify-self-start md:justify-self-end">
+        <span className="rounded-lg bg-white/[0.07] px-2.5 py-1 text-xs text-zinc-300">
+          {active ? "编辑中…" : "编辑"}
+        </span>
+        <button
+          type="button"
+          aria-label={"删除诗「" + (index + 1) + "」"}
+          onClick={(event) => { event.stopPropagation(); onDelete(); }}
+          className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-400 transition-colors duration-200 hover:border-red-500 hover:text-red-300"
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ExperienceSummary({ exp, index, active, onEdit, onDelete }: {
   exp: Experience;
   index: number;
@@ -2266,6 +2503,7 @@ export default function AdminApp() {
   const [expandedResumeId, setExpandedResumeId] = useState<string | null>(null);
   const [expandedGalleryId, setExpandedGalleryId] = useState<string | null>(null);
   const [expandedTreasureId, setExpandedTreasureId] = useState<string | null>(null);
+  const [expandedPoemId, setExpandedPoemId] = useState<string | null>(null);
   const [expandedMusicId, setExpandedMusicId] = useState<string | null>(null);
   // 「模块管理」打开的是哪一个模块的页首文案弹窗。存 SectionKey 而不是下标 ——
   // 上下移之后下标会变，key 不会。
@@ -2284,6 +2522,7 @@ export default function AdminApp() {
   const experienceModalIndex = indexByRowKey(data.experiences || [], expandedExperienceId);
   const galleryModalIndex = indexByRowKey(data.gallery || [], expandedGalleryId);
   const treasureModalIndex = indexByRowKey(data.treasures || [], expandedTreasureId);
+  const poemModalIndex = indexByRowKey(data.profile.pageCopy?.poemList || [], expandedPoemId);
   const musicModalIndex = indexByRowKey(data.musicTracks || [], expandedMusicId);
 
   const [expandedFloatingId, setExpandedFloatingId] = useState("");
@@ -2385,6 +2624,7 @@ export default function AdminApp() {
       { key: "ai", label: "AI专区", icon: Sparkles },
       { key: "gallery", label: "应用技能", icon: Images },
       { key: "treasures", label: "我的珍藏", icon: Gem },
+      { key: "poems", label: "诗与惆怅", icon: Feather },
       { key: "music", label: "音乐播放", icon: Music },
       { key: "contact", label: "联系方式", icon: AtSign },
       { key: "floating", label: "弹幕设置", icon: MessagesSquare },
@@ -2420,6 +2660,7 @@ export default function AdminApp() {
       case "ai": return (data.profile.pageCopy?.aiWorks || []).length;
       case "prospects": return (data.gallery || []).length;
       case "treasures": return (data.treasures || []).length;
+      case "poems": return (data.profile.pageCopy?.poemList || []).length;
       default: return null;
     }
   }
@@ -3962,6 +4203,113 @@ export default function AdminApp() {
                           <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-zinc-500">图片预览 / PREVIEW</p>
                           <img src={item.imageUrl} alt="珍藏预览" className="max-h-[42vh] w-full rounded-lg bg-black object-contain" />
                         </section>
+                      )}
+                    </EditorModal>
+                  );
+                })()}
+              </>
+            )}
+
+            {active === "poems" && (
+              <>
+                <Section
+                  title="诗与惆怅"
+                  description="前台「诗与惆怅」栏目里的作品，按这里的顺序一首首铺开。页首文案在「模块管理」里。"
+                  action={
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = uid("poem");
+                        addDraft(
+                          (draft) => { draft.profile.pageCopy!.poemList = [...(draft.profile.pageCopy!.poemList || []), { ...emptyPoem, id }]; },
+                          () => setExpandedPoemId(id),
+                        );
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-zinc-300 hover:border-zinc-600"
+                    >
+                      <Plus size={15} /> 新增一首
+                    </button>
+                  }
+                >
+                  <p className="text-sm leading-5 text-zinc-400">
+                    共 {(data.profile.pageCopy?.poemList || []).length} 首。正文换行即分段，五言 / 七言 / 词 / 现代诗由前台自动排版。
+                  </p>
+                </Section>
+                {(data.profile.pageCopy?.poemList || []).map((item: Poem, index: number) => {
+                  const active = expandedPoemId === rowKey(item.id, index);
+                  return (
+                    <EditorRow key={rowKey(item.id, index)} expanded={active} tone="amber">
+                      <PoemSummary
+                        item={item}
+                        index={index}
+                        active={active}
+                        onEdit={() => setExpandedPoemId(rowKey(item.id, index))}
+                        onDelete={() => {
+                          void removeAndSave(
+                            (draft) => { draft.profile.pageCopy!.poemList = (draft.profile.pageCopy!.poemList || []).filter((_, i) => i !== index); },
+                            [],
+                            () => setExpandedPoemId(null),
+                          );
+                        }}
+                      />
+                    </EditorRow>
+                  );
+                })}
+
+                {poemModalIndex >= 0 && (() => {
+                  const item = (data.profile.pageCopy?.poemList || [])[poemModalIndex];
+                  const index = poemModalIndex;
+                  return (
+                    <EditorModal
+                      title={"诗 " + (index + 1)}
+                      onClose={() => setExpandedPoemId(null)}
+                      footer={<SaveCurrentButton label="保存全部" />}
+                    >
+                      <section className="adm-panel space-y-3 p-3">
+                        <Field label="题目（可留空）" value={item.title} onChange={(value) => update((draft) => { draft.profile.pageCopy!.poemList![index].title = value; })} />
+                        <Field label="正文（换行分段）" value={item.text} textarea onChange={(value) => update((draft) => { draft.profile.pageCopy!.poemList![index].text = value; })} />
+                        <Field label="落款（可留空）" value={item.note || ""} onChange={(value) => update((draft) => { draft.profile.pageCopy!.poemList![index].note = value; })} />
+                        {/* 封面：和作品一样可以上传。替换时先删旧的，免得 COS 里越攒越多孤儿文件。 */}
+                        <div className="flex flex-wrap items-end gap-3">
+                          <div className="min-w-[260px] flex-1"><Field label="封面图 URL（可留空）" value={item.imageUrl || ""} onChange={(value) => update((draft) => { draft.profile.pageCopy!.poemList![index].imageUrl = value; })} /></div>
+                          <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-2 text-xs text-zinc-300 hover:border-zinc-600">
+                            <ImagePlus size={16} /> 上传封面
+                            <input className="hidden" type="file" accept="image/*" onChange={(event) => upload(event, (url) => {
+                              const previous = item.imageUrl;
+                              if (previous) void deleteMedia([previous]);
+                              update((draft) => { draft.profile.pageCopy!.poemList![index].imageUrl = url; });
+                            })} />
+                          </label>
+                          {item.imageUrl ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const previous = item.imageUrl;
+                                update((draft) => { draft.profile.pageCopy!.poemList![index].imageUrl = ""; });
+                                if (previous) void deleteMedia([previous]);
+                              }}
+                              className="rounded-lg border border-zinc-800 px-2.5 py-2 text-xs text-zinc-400 hover:border-red-500 hover:text-red-300"
+                            >
+                              移除封面
+                            </button>
+                          ) : null}
+                        </div>
+                      </section>
+                      {item.imageUrl ? (
+                        <section className="adm-panel mt-3 p-3">
+                          <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-zinc-500">封面预览 / COVER</p>
+                          <img src={item.imageUrl} alt="封面预览" className="max-h-[36vh] w-full rounded-lg bg-black object-contain" />
+                        </section>
+                      ) : null}
+                      {item.text.trim() ? (
+                        <section className="adm-panel mt-3 p-3">
+                          <p className="mb-3 font-mono text-[10px] uppercase tracking-widest text-zinc-500">前台排版预览 / PREVIEW</p>
+                          {item.title ? <h3 className="mb-4 text-center font-serif text-lg tracking-[0.2em] text-white">{item.title}</h3> : null}
+                          <pre className="whitespace-pre-wrap text-center font-serif text-base leading-loose text-zinc-200">{item.text}</pre>
+                          {item.note ? <p className="mt-5 text-right font-mono text-[11px] text-zinc-500">—— {item.note}</p> : null}
+                        </section>
+                      ) : (
+                        <p className="mt-3 rounded-lg border border-dashed border-zinc-800 px-3 py-6 text-center text-xs text-zinc-500">写下正文后这里会出现排版预览。</p>
                       )}
                     </EditorModal>
                   );

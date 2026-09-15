@@ -12,6 +12,7 @@ export interface Profile {
     aiZone?: string;
     gallery?: string;
     treasures?: string;
+    poems?: string;
     contact?: string;
     /**
      * 旧版的两份固定简历。保留是为了兼容线上已有数据；新数据请用 resumeProfiles。
@@ -42,6 +43,16 @@ export interface Profile {
      * 存在 pageCopy 这个 JSON 列里，避免为它新开一张 Supabase 表。
      */
     aiWorks?: Work[];
+    /**
+     * 「诗与惆怅」栏目的诗。和 aiWorks 一样存在 pageCopy 这个 JSON 列里，不另开表 ——
+     * 诗只有文字、没有媒体要签名，塞进 JSON 最省事，也省掉用户手工执行一次建表 SQL。
+     * normalizePageCopy 是「展开保留全部键」的处理方式，所以这个新键能原样往返。
+     *
+     * 注意和上面的 `poems?: string` 不是一回事：那个是栏目标题下面那句页首文案，
+     * 这里是诗本身。两个都叫 poems 会撞名（同名不同类型直接编译不过），
+     * 所以文案留在 poems、内容叫 poemList。
+     */
+    poemList?: Poem[];
     floatingSentences?: FloatingSentencesConfig;
     /**
      * 前台是否展示「我的珍藏」栏目（由管理员后台的开关控制）。
@@ -89,6 +100,7 @@ export const defaultPageCopy = {
   aiZone: "“苟日新，日日新，又日新。”与 AI 共作，另辟一片试验田。",
   gallery: "“操千曲而后晓声，观千剑而后识器。”所学皆可施展。",
   treasures: "“此情可待成追忆，只是当时已惘然。”珍藏美好，岁月留香。",
+  poems: "“文章本天成，妙手偶得之。”偶得的句子，记在这里。",
   contact: "“海内存知己，天涯若比邻。”愿在此处相逢。",
 } satisfies NonNullable<Profile["pageCopy"]>;
 
@@ -100,10 +112,10 @@ export const defaultPageCopy = {
  * 这里读，就不会出现「后台加了一个模块、前台不认识」的情况。
  * ------------------------------------------------------------------------ */
 
-export type SectionKey = "intro" | "resume" | "works" | "ai" | "prospects" | "treasures" | "contact";
+export type SectionKey = "intro" | "resume" | "works" | "ai" | "prospects" | "treasures" | "poems" | "contact";
 
 /** 栏目 key 的固有顺序（sectionOrder 缺省时就用它）。 */
-export const sectionKeys: SectionKey[] = ["intro", "resume", "works", "ai", "prospects", "treasures", "contact"];
+export const sectionKeys: SectionKey[] = ["intro", "resume", "works", "ai", "prospects", "treasures", "poems", "contact"];
 
 export interface SectionMeta {
   key: SectionKey;
@@ -114,7 +126,7 @@ export interface SectionMeta {
   /** 对应 pageCopy 里的「页首诗句 / 说明」字段；没有就代表这个栏目不吃文案。 */
   copyKey?: keyof typeof defaultPageCopy;
   /** 有值 = 这个模块能「新增条目」，后台那一行会出现新增按钮。 */
-  content?: "resume" | "work" | "aiWork" | "gallery" | "treasure";
+  content?: "resume" | "work" | "aiWork" | "gallery" | "treasure" | "poem";
   /**
    * 旧版的独立开关键。改开关时两边一起写，老数据照样读得懂；
    * 将来数据都迁移过一轮后可以再删。
@@ -131,6 +143,7 @@ export const sectionCatalog: SectionMeta[] = [
   { key: "ai", label: "AI专区", sub: "AI ZONE", copyKey: "aiZone", content: "aiWork", legacyVisibleKey: "aiZoneVisible", hint: "与 AI 共作的作品，渲染方式与「作品展示」一致。" },
   { key: "prospects", label: "应用技能", sub: "SKILLS", copyKey: "gallery", content: "gallery", hint: "成果截图墙，点击放大看细节。" },
   { key: "treasures", label: "我的珍藏", sub: "TREASURES", copyKey: "treasures", content: "treasure", legacyVisibleKey: "treasuresVisible", hint: "一些舍不得删的图。" },
+  { key: "poems", label: "诗与惆怅", sub: "POEMS", copyKey: "poems", content: "poem", hint: "自己写下的诗与断句，按后台顺序铺成一首一张卡。" },
   { key: "contact", label: "联系方式", sub: "CONTACT", copyKey: "contact", hint: "微信 / QQ / 邮箱 / GitHub，留空的条目不显示。" },
 ];
 
@@ -242,6 +255,27 @@ export interface TreasureItem {
   imageUrl: string;
 }
 
+/**
+ * 一首诗 / 一段断句。
+ *
+ * `text` 是唯一必填的正文字段，用换行分段 —— 前台按行渲染，并复用「闲诗」
+ * 那套按行宽自动排版的逻辑（`detectPoetryFormat`），所以五言/七言/词/现代
+ * 都能排得像样，不需要作者手动加空格。
+ *
+ * 和作品一样带封面：诗也可以配一张图，前台排在正文上方。
+ */
+export interface Poem {
+  id: string;
+  /** 题目。可以留空 —— 只有断句没题目的时候，前台就不渲染标题那一行。 */
+  title: string;
+  /** 正文。换行 = 分段，前台的排版逻辑会按字数判断体裁。 */
+  text: string;
+  /** 封面图地址。和作品封面同一套上传/签名处理；留空则只显示文字。 */
+  imageUrl?: string;
+  /** 落款：写下的时间、地点、或给谁的。留空则不显示。 */
+  note?: string;
+}
+
 export interface FloatingSentencesConfig {
   enabled?: boolean;
   speed?: number;
@@ -268,6 +302,7 @@ export interface PortfolioData {
   works: Work[];
   gallery?: GalleryItem[];
   treasures?: TreasureItem[];
+  poems?: Poem[];
   musicTracks?: MusicTrack[];
   contact?: ContactInfo;
 }

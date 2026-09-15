@@ -1,27 +1,19 @@
 @import "tailwindcss";
 
 /*
- * 全站去圆角（宝：组件不需要圆角，都统一移除）。
+ * 这里**不要**再加任何覆盖 rounded-* 的规则。
  *
- * 为什么改这里而不是去删 200 处 className：
- *   1) rounded-* 在源码里出现 200 次，逐个删既容易漏、又让 JSX 变得认不出原样；
- *   2) 这里改的是**尺度类**（小/中/大/超大），一处收口，以后新写的代码自动跟着走。
+ * 曾经有一条 `.rounded, .rounded-md, .rounded-lg, ... { border-radius: 0 }`，
+ * 想「一处收口」把全站圆角去掉。那是错的，已删除（宝：我不要圆角全被删掉）：
+ *   - JSX 里明明写着 `rounded-xl`，渲染出来却是直角 —— 代码在说谎，
+ *     后人读代码以为有圆角、看页面又没有，只能靠猜；
+ *   - 它连组件库基元（.adm-card / .adm-panel / .adm-modal-layer 等）里的
+ *     border-radius 一起压掉，而这些基元本该自己决定长什么样；
+ *   - 想调某个组件的圆角时，改 className 完全无效，得先知道有这么一条全局规则 ——
+ *     这种「改不动」的隐藏状态比多写几个类名昂贵得多。
  *
- * **rounded-full 故意不动** —— 它管的不是「圆角」而是「圆形」：
- * 头像、播放器唱片、进度条、开关轨道与圆钮、状态小圆点、声波条全靠它。
- * 把它一起归零，头像会变成方块、开关会变成一根长条，那是坏掉而不是变直角。
- *
- * 这些规则写在 @import 之后、且不在任何 @layer 里：Tailwind v4 的工具类是
- * 不带 layer 直接吐出来的，同为无 layer 规则时按源码顺序定胜负，所以后写的这条赢。
+ * 圆角由各元素自己的工具类决定。要统一风格就统一改 className，别再写全局覆盖。
  */
-.rounded,
-.rounded-md,
-.rounded-lg,
-.rounded-xl,
-.rounded-2xl,
-.rounded-3xl {
-  border-radius: 0;
-}
 
 .no-scrollbar {
   -ms-overflow-style: none;
@@ -234,6 +226,18 @@
 .adm-modal-scroll::-webkit-scrollbar-thumb {
   border-radius: 9999px;
   background-color: rgb(63 63 70 / 0.9);
+}
+
+/* 图片放大预览（lightbox）。
+   它必须**压在编辑弹窗之上** —— .adm-modal-layer 是 z-50，所以这里取 60。
+   和弹窗一样是 fixed 定位的「新一层表面」：只有一个完整框（外面那张图），
+   内部不再套框，所以不违反「禁止框套框」。
+   margin: 0 同样承重（lightbox 会作为弹窗的子孙插进去，父级的 space-y-* 会顶出缝）。 */
+.adm-lightbox-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  margin: 0;
 }
 
 /* Custom Range Input Styling for a sleek, premium media progress track */
