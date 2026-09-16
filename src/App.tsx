@@ -145,19 +145,23 @@ function getFileExtension(url: string, label?: string) {
   return match?.[1] || "";
 }
 
+// 能在弹层里原地预览的扩展名。其余（doc/xls/xlsx/ppt/zip/rar…）后台接不住，
+// 前台就别给「预览」按钮 —— 点了只会看到一句「不支持」，不如直接引导下载。
+const INLINE_PREVIEWABLE = new Set(["pdf", "docx", "csv", "tsv", "txt", "md", "markdown", "json", "log", "yml", "yaml"]);
+
 function getWorkLinkMeta(link: { label?: string; url: string; kind?: string; fileName?: string }) {
   const ext = getFileExtension(link.url, link.fileName || link.label);
-  const office = ["doc", "docx", "xls", "xlsx", "ppt", "pptx"];
   const isAttachment = link.kind === "attachment" || Boolean(ext);
-  const previewUrl = office.includes(ext)
-    ? `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(link.url)}`
-    : link.url;
+  const label = link.label || link.fileName || getFileNameFromUrl(link.url) || "查看文件";
+  // 预览走**本站同源**中转路由，浏览器插件、第三方域名一概不碰。
+  // 这样 iframe 才能嵌进来，且内网/本地部署照样能用。
+  const previewUrl = `/api/media/attachment-preview?url=${encodeURIComponent(link.url)}&name=${encodeURIComponent(label)}`;
   return {
     ext,
     isAttachment,
-    canPreview: isAttachment,
+    canPreview: isAttachment && INLINE_PREVIEWABLE.has(ext),
     previewUrl,
-    label: link.label || link.fileName || getFileNameFromUrl(link.url) || "查看文件",
+    label,
   };
 }
 
@@ -872,9 +876,88 @@ function ImageLightbox({ images, index, onChange, onClose }: {
   );
 }
 
+/**
+ * 作品附件的**原地预览弹层**。
+ *
+ * 为什么是弹层 + iframe 而不是新标签页：
+ *   - 附件存在 COS 上，直接 `href` 过去，PDF 会被浏览器丢进自己的阅读器（外站、新页面），
+ *     doc/docx 更是根本不渲染、只能靠 Microsoft 的在线预览器 —— 那个是**另一个域**，
+ *     还要求文件公网可达，本地/内网部署直接废掉。
+ *   - 所以统一走本站同源路由 `/api/media/attachment-preview`，把 iframe 嵌回来，
+ *     用户在原来这一页就能看，也不会有新开窗口/新标签的跳转。
+ *
+ * 滚动：iframe 内部撑满并自带滚动条，长文档（尤其是 Word 转出来的 HTML）
+ * 可以整份连续滚到底，不会只卡在第一页。
+ */
+function AttachmentPreviewModal({
+  src,
+  title,
+  downloadUrl,
+  onClose,
+}: {
+  src: string;
+  title: string;
+  downloadUrl: string;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 md:p-6" role="dialog" aria-modal="true" aria-label={`预览 ${title}`}>
+      <button className="absolute inset-0 bg-black/92 backdrop-blur-md" onClick={onClose} aria-label="关闭预览" />
+      <div className="relative flex h-full max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-900 bg-zinc-950 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <FileText size={14} className="shrink-0 text-emerald-300/80" />
+            <span className="min-w-0 truncate text-xs text-zinc-200">{zhText(title)}</span>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <a href={downloadUrl} target="_blank" rel="noopener noreferrer" download className="inline-flex items-center gap-1 rounded border border-zinc-800 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-600 hover:text-white">
+              <Download size={11} /> 下载
+            </a>
+            <button onClick={onClose} className="rounded-full border border-zinc-800 bg-zinc-900/80 p-1.5 text-zinc-300 hover:text-white" aria-label="关闭">
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+        <div className="relative flex-1 overflow-hidden bg-zinc-900">
+          {loading && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-zinc-950">
+              <span className="font-mono text-[11px] tracking-widest text-zinc-500">正在加载文档…</span>
+            </div>
+          )}
+          {/* 高度撑满 + overflow-auto：文档整份在框内滚动，不再只露第一页。 */}
+          <iframe
+            src={src}
+            title={`预览 ${title}`}
+            onLoad={() => setLoading(false)}
+            className="h-full w-full overflow-auto border-0 bg-white"
+          />
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
   const [imageIndex, setImageIndex] = useState(0);
   const [zoomed, setZoomed] = useState(false);
+  // 原地预览的那份附件（存 meta 而不是 id —— 老数据不一定有 id）。
+  const [previewing, setPreviewing] = useState<{ src: string; title: string; downloadUrl: string } | null>(null);
   const images = work.images || [];
   const currentImage = images[imageIndex];
   return (
@@ -951,7 +1034,15 @@ function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
                         {meta.ext && <span className="rounded border border-zinc-800 px-1.5 py-0.5 text-[10px] uppercase text-zinc-500">{meta.ext}</span>}
                       </div>
                       <div className="flex shrink-0 gap-2">
-                        {meta.canPreview && <a href={meta.previewUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded border border-zinc-800 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-600 hover:text-white"><ExternalLink size={11} /> 预览</a>}
+                        {meta.canPreview && (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewing({ src: meta.previewUrl, title: meta.label, downloadUrl: link.url })}
+                            className="inline-flex items-center gap-1 rounded border border-zinc-800 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-600 hover:text-white"
+                          >
+                            <ZoomIn size={11} /> 预览
+                          </button>
+                        )}
                         <a href={link.url} target="_blank" rel="noopener noreferrer" download className="inline-flex items-center gap-1 rounded border border-zinc-800 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-600 hover:text-white"><Download size={11} /> 下载</a>
                       </div>
                     </div>
@@ -964,6 +1055,14 @@ function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
       </div>
       {zoomed && currentImage && (
         <ImageLightbox images={images} index={imageIndex} onChange={setImageIndex} onClose={() => setZoomed(false)} />
+      )}
+      {previewing && (
+        <AttachmentPreviewModal
+          src={previewing.src}
+          title={previewing.title}
+          downloadUrl={previewing.downloadUrl}
+          onClose={() => setPreviewing(null)}
+        />
       )}
     </div>
   );

@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 import multer from "multer";
 import COS from "cos-nodejs-sdk-v5";
+import mammoth from "mammoth";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { WebSocket } from "ws";
 import { createServer as createViteServer } from "vite";
@@ -910,6 +911,111 @@ async function getCosObjectBuffer(cos: COS, key: string) {
   });
 }
 
+/**
+ * 附件预览页的外壳。**自包含、零外部请求** —— 弹层里的 iframe 不该再去拉 CDN，
+ * 也不该被 COS 的防盗链/CSP 影响。
+ *
+ * `sandbox` 由前台 iframe 指定；这里不写脚本，纯静态 HTML + 内联样式。
+ */
+function escapeHtml(value: string) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * 预览页统一用深色，和站点一致；`<body>` 只负责排版，滚动由外层弹层控制，
+ * 所以这里**不设固定高度**，让内容自然撑开（前台弹层再给它 overflow-auto）。
+ */
+function previewShell(title: string, inner: string) {
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 30px 60px;
+    background: #09090b; color: #e4e4e7;
+    font: 400 15px/1.85 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  .doc { max-width: 860px; margin: 0 auto; }
+  .doc h1 { font-size: 25px; line-height: 1.5; margin: 0 0 20px; color: #fafafa; font-weight: 600; }
+  .doc h2 { font-size: 20px; line-height: 1.5; margin: 30px 0 12px; color: #fafafa; font-weight: 600; }
+  .doc h3 { font-size: 17px; line-height: 1.5; margin: 24px 0 10px; color: #fafafa; font-weight: 600; }
+  .doc h4, .doc h5, .doc h6 { font-size: 15px; margin: 20px 0 8px; color: #fafafa; font-weight: 600; }
+  .doc p { margin: 0 0 14px; }
+  .doc a { color: #6ee7b7; }
+  .doc ul, .doc ol { margin: 0 0 16px; padding-left: 26px; }
+  .doc li { margin: 4px 0; }
+  .doc img { max-width: 100%; height: auto; border-radius: 8px; margin: 10px 0; background: #000; }
+  .doc table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14px; }
+  .doc table td, .doc table th { border: 1px solid #27272a; padding: 8px 11px; text-align: left; vertical-align: top; }
+  .doc table th { background: #18181b; font-weight: 600; color: #fafafa; }
+  .doc blockquote { margin: 14px 0; padding: 2px 0 2px 16px; border-left: 3px solid #3f3f46; color: #a1a1aa; }
+  .doc hr { border: 0; border-top: 1px solid #27272a; margin: 26px 0; }
+  .doc pre, .preview-pre {
+    margin: 0; padding: 18px; background: #131316; border: 1px solid #27272a; border-radius: 8px;
+    font: 400 13px/1.75 ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace;
+    color: #d4d4d8; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
+  }
+  .doc code { background: #18181b; border: 1px solid #27272a; border-radius: 4px; padding: 1px 5px;
+    font: 400 13px ui-monospace, SFMono-Regular, Consolas, monospace; }
+  .doc pre code { background: none; border: 0; padding: 0; }
+  .empty-note { color: #71717a; font-size: 14px; }
+</style>
+</head>
+<body><div class="doc">${inner}</div></body>
+</html>`;
+}
+
+/** 有内容可读时的预览页；空文档给一句提示，别让用户对着空白页发愣。 */
+function previewHtmlPage(name: string, inner: string) {
+  const body = inner && inner.trim()
+    ? inner
+    : `<p class="empty-note">这份文档没有可显示的正文内容。</p>`;
+  return previewShell(name || "附件预览", body);
+}
+
+/** 不能用预览时的人话提示（老格式 / 找不到 / 转换失败）。 */
+function previewMessagePage(message: string) {
+  return previewShell(
+    "无法预览",
+    `<p style="margin:0 0 10px;font-size:16px;color:#fafafa;font-weight:600">暂时看不了这份文件</p>
+     <p class="empty-note" style="margin:0">${escapeHtml(message)}</p>`,
+  );
+}
+
+/**
+ * csv / tsv → 一个朴素表格。
+ *
+ * 只处理**纯文本**的两种。xlsx 不能走这里：它本身是 zip 二进制，
+ * 按 UTF-8 解出来是乱码。要么上专门的解析库，要么老实引导下载 ——
+ * 现在选后者，别给用户一张乱码表。
+ *
+ * 也不做完整 CSV 规范（引号转义、跨行字段），够用即可：附件预览是「看一眼」的场景。
+ */
+function previewTableFromDelimited(text: string, delimiter: string) {
+  const rows = text.split(/\r?\n/).filter((line) => line.length > 0).slice(0, 2000);
+  if (!rows.length) return "";
+  const cells = rows.map((line) => line.split(delimiter));
+  const head = cells[0];
+  const bodyRows = cells.slice(1);
+  const thead = `<thead><tr>${head.map((c) => `<th>${escapeHtml(c.trim())}</th>`).join("")}</tr></thead>`;
+  const tbody = `<tbody>${bodyRows
+    .map((row) => `<tr>${head.map((_, i) => `<td>${escapeHtml((row[i] || "").trim())}</td>`).join("")}</tr>`)
+    .join("")}</tbody>`;
+  return `<table>${thead}${tbody}</table>`;
+}
+
+
 async function ensureStorageBucket(supabase: SupabaseClient) {
   const bucket = process.env.SUPABASE_STORAGE_BUCKET || "portfolio-media";
   const fileSizeLimit = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
@@ -1171,6 +1277,87 @@ async function startServer() {
       res.json(await fetchPortfolioData(supabase));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * 作品附件预览 —— 同源输出，供前台在弹层里原地 iframe 展示。
+   *
+   * 为什么必须由服务端中转：附件存在 COS 上，直接给浏览器的后果是
+   *   1. PDF → 浏览器在自己的阅读器里打开（外站、新页面）；
+   *   2. doc/docx/xls/... → 浏览器根本不会渲染，只能跳 Microsoft 的
+   *      view.officeapps.live.com 在线预览器 —— 那是**另一个域**，
+   *      新标签页 + 必须公网可达，本地/内网部署直接失效。
+   * 所以这里把文件取回来自己转，统一从本站域下发出，弹层里 iframe 就能原地显示。
+   *
+   * 支持：
+   *   - pdf    → 原样流（Content-Type: application/pdf，inline），浏览器内嵌阅读器可翻页滚动
+   *   - docx   → mammoth 转 HTML（正文/标题/列表/表格/内嵌图片）
+   *   - csv/tsv → 转成一个朴素表格
+   *   - txt/md 等文本 → 直读
+   *   - 其余（doc/xls/xlsx/ppt/zip/rar…）→ 明确回「不支持在线预览」，前台引导下载
+   */
+  app.get("/api/media/attachment-preview", async (req, res) => {
+    const fail = (code: number, message: string) => {
+      res.status(code);
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.send(previewMessagePage(message));
+    };
+
+    try {
+      const key = getCosObjectKey(String(req.query.url || ""));
+      if (!cos || !key.startsWith("portfolio/")) return fail(404, "找不到这个附件。");
+
+      const name = String(req.query.name || key.split("/").pop() || "");
+      const ext = (name.match(/\.([a-z0-9]{1,8})$/i)?.[1] || key.match(/\.([a-z0-9]{1,8})$/i)?.[1] || "").toLowerCase();
+      if (!ext) return fail(415, "无法识别这个附件的类型。");
+
+      // PDF 走原路：直接把字节流出去，交给浏览器内嵌阅读器（可滚动翻页）。
+      if (ext === "pdf") {
+        const pdf = await getCosObjectBuffer(cos, key);
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", "inline");
+        res.setHeader("Cache-Control", "private, max-age=300");
+        return res.send(pdf);
+      }
+
+      if (ext === "docx") {
+        const buffer = await getCosObjectBuffer(cos, key);
+        const result = await mammoth.convertToHtml(
+          { buffer },
+          {
+            // 内嵌图片转 data URI —— 否则 mammoth 会吐 <img src="data:..."> 之外的空引用，
+            // 弹层里就是一堆碎图。附件本身就在 COS 上，内联进来最省事也最稳。
+            convertImage: mammoth.images.imgElement((image) =>
+              image.read("base64").then((data) => ({ src: `data:${image.contentType};base64,${data}` })),
+            ),
+          },
+        );
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.setHeader("Cache-Control", "private, max-age=300");
+        return res.send(previewHtmlPage(name, result.value));
+      }
+
+      // 注意：xlsx 故意不在这里。它本身是 zip 二进制，按 UTF-8 解出来是乱码，
+      // 宁可不预览也不能给用户看一张烂表 —— 让它落到下面的 415 分支引导下载。
+      if (["csv", "tsv"].includes(ext)) {
+        const text = (await getCosObjectBuffer(cos, key)).toString("utf8");
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.setHeader("Cache-Control", "private, max-age=300");
+        return res.send(previewHtmlPage(name, previewTableFromDelimited(text, ext === "tsv" ? "\t" : ",")));
+      }
+
+      if (["txt", "md", "markdown", "json", "log", "yml", "yaml"].includes(ext)) {
+        const text = (await getCosObjectBuffer(cos, key)).toString("utf8").slice(0, 400_000);
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.setHeader("Cache-Control", "private, max-age=300");
+        return res.send(previewHtmlPage(name, `<pre class="preview-pre">${escapeHtml(text)}</pre>`));
+      }
+
+      // 老格式与压缩包：浏览器和我们都转不了，给一句人话 + 引导去下载。
+      return fail(415, `「${name}」是 .${ext} 格式，浏览器无法在线预览。请用下方「下载」打开。`);
+    } catch (err: any) {
+      return fail(500, `附件预览失败：${err?.message || "未知错误"}`);
     }
   });
 
