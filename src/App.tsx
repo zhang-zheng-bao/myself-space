@@ -1261,7 +1261,14 @@ function WorksPane({
 }) {
   const [filter, setFilter] = useState("all");
   const filters = useMemo(() => {
-    if (categoryOrder) return categoryOrder.filter((item) => item.key !== "all");
+    // categoryOrder 是**固定词表**（作品展示用它来定顺序），不代表当前一定有内容。
+    // 所以还要按实际数据过滤一遍：否则一首诗都没有时，「闲诗」这个筛选按钮照旧
+    // 挂着，点进去是空白 —— 用户会以为自己的数据丢了。
+    // （AI 专区不传 categoryOrder，走下面那条按数据自动生成的分支，本来就没这问题。）
+    if (categoryOrder) {
+      const present = new Set(items.map((item) => item.category).filter(Boolean));
+      return categoryOrder.filter((item) => item.key !== "all" && present.has(item.key));
+    }
     return Array.from(new Set(items.map((item) => item.category).filter(Boolean)))
       .map((key) => ({ key, label: categoryLabel(key) }));
   }, [items, categoryOrder]);

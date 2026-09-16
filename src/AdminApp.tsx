@@ -2705,19 +2705,28 @@ export default function AdminApp() {
   }
 
   useEffect(() => {
+    // 这次初始探测是**不可信**的：它在挂载那一刻发出去，如果服务器慢（真服务器要
+    // 等 Supabase 拉数据），它的响应可能在用户**已经登录成功之后**才回来，
+    // 于是 `setAuthenticated(false)` 把刚点亮的登录状态又按回去 —— 症状是
+    // 「输入正确的账号密码、接口也回 success:true，但页面还停在登录框」。
+    // 所以：只有当用户还没登录过时才允许它写 authenticated。
+    let cancelled = false;
     Promise.all([
       fetch("/api/admin/session").then((res) => res.json()),
       fetch("/api/portfolio").then((res) => res.json()),
     ])
       .then(([session, portfolio]) => {
-        setAuthenticated(Boolean(session.authenticated));
+        if (cancelled) return;
+        // 只有当「这次探测说没登录」而「本地已经登录成功」时，才不许它覆盖。
+        setAuthenticated((current) => current || Boolean(session.authenticated));
         setSupabaseConfigured(Boolean(session.supabaseConfigured));
         setMaxUploadSizeMb(Number(session.maxUploadSizeMb || 50));
         setStorageProvider(session.storageProvider || "supabase");
         setData(normalize(portfolio));
       })
       .catch(() => setStatus("初始化失败，请检查服务"))
-      .finally(() => setLoading(false));
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   function update(mutator: (draft: PortfolioData) => void) {
@@ -2756,6 +2765,8 @@ export default function AdminApp() {
         setStatus(json.error || "登录失败");
         return;
       }
+      // 登录成功就是权威结论。初始探测那个 effect 可能还在飞，
+      // 它回来时若发现本地已登录就不会再按回 false（见那边的注释）。
       setAuthenticated(true);
       setPhone("");
       setPassword("");

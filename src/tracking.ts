@@ -15,8 +15,17 @@
 /** visitorKey 落在 localStorage：同一个浏览器 = 同一位访客。 */
 const VISITOR_KEY_STORAGE = "myspace_visitor_key";
 
-/** visited 标记，防止 React 严格模式的双次挂载在开发环境下记两条。 */
-const SESSION_MARK = "myspace_visit_marked";
+/**
+ * StrictMode 双挂载守卫。**故意用模块级变量，不用 sessionStorage。**
+ *
+ * React 严格模式下 effect 会跑两次（挂载 → 卸载 → 再挂载），不拦会记两条。
+ * 但守卫的寿命必须正好等于「这一次页面加载」：
+ *   - 用 sessionStorage 会**跨刷新存活**（同一个标签页刷新时 sessionStorage 保留），
+ *     于是访客按 F5 就再也不上报了 —— 刷新明明是一次新的页面加载，却被吞掉。
+ *   - 模块级变量在每次页面加载时重新求值（刷新 = 新模块实例），正好覆盖
+ *     StrictMode 的两次 effect，又不会拦掉真实的刷新。
+ */
+let markedThisPageLoad = false;
 
 function randomHex(bytes = 16) {
   const buffer = new Uint8Array(bytes);
@@ -155,13 +164,9 @@ export function startVisitTracking(): () => void {
   const client = collectClient();
   const visitorKey = getVisitorKey();
 
-  try {
-    // 同一次浏览器会话只记一条：React 严格模式下 effect 会跑两次。
-    if (window.sessionStorage.getItem(SESSION_MARK)) return () => {};
-    window.sessionStorage.setItem(SESSION_MARK, "1");
-  } catch {
-    /* sessionStorage 不可用就照常上报，宁多记一条也不要空着 */
-  }
+  // 同一次页面加载只记一条：React 严格模式下 effect 会跑两次（见 markedThisPageLoad）。
+  if (markedThisPageLoad) return () => {};
+  markedThisPageLoad = true;
 
   const sessionId = randomHex(8);
 

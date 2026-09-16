@@ -822,6 +822,19 @@ function normalizePageCopy(pageCopy: JsonRecord | undefined, transform: (url?: s
     ));
   }
 
+  // 诗与惆怅的封面。**必须在这里一起归一化**：poemList 是 pageCopy 里除
+  // resumePdfs / resumeProfiles / aiWorks 之外的第四个媒体载体，漏掉它的后果和
+  // 漏掉 aiWorks 一样 —— 读取时签名 URL 原样发给前端（到期就 403 裂图），
+  // 写入时把带签名的临时地址持久化进 JSON，之后永久失效。
+  // 所有 pageCopy 媒体都只能走这条「读时签名、写时脱签名」的通道。
+  if (Array.isArray(copy.poemList)) {
+    copy.poemList = copy.poemList.map((item) => (
+      item && typeof item === "object"
+        ? { ...(item as JsonRecord), imageUrl: transform(String((item as JsonRecord).imageUrl || "")) }
+        : item
+    ));
+  }
+
   // AI 专区作品，字段结构与作品一致，媒体地址的转换方式也照抄作品那条路径。
   if (Array.isArray(copy.aiWorks)) {
     copy.aiWorks = copy.aiWorks.map((item) => {
@@ -1509,9 +1522,20 @@ async function startServer() {
       const visitIdNum = Number(body.visitId);
       if (!Number.isFinite(visitIdNum)) return res.status(400).json({ error: "visitId required" });
 
+      // 客户端送上来的是**增量**（见 src/tracking.ts: flushDwell 只发上次之后
+      // 新增的可见时长），所以这里必须累加，不能覆盖 —— 覆盖的话，一次访问里
+      // 只要发生了第二次 visibilitychange，这条访问的停留就只剩最后一段，
+      // 而后台「停留 X」读的正是 visit.dwell_ms（AdminApp 那行），于是数字偏小。
+      // 访客累计那一列本来就是加的，两列口径必须一致。
+      const { data: existing } = await supabase
+        .from("portfolio_visits")
+        .select("dwell_ms")
+        .eq("id", visitIdNum)
+        .maybeSingle();
+
       const { data } = await supabase
         .from("portfolio_visits")
-        .update({ dwell_ms: dwellMs })
+        .update({ dwell_ms: Number(existing?.dwell_ms || 0) + dwellMs })
         .eq("id", visitIdNum)
         .select("visitor_key")
         .maybeSingle();
