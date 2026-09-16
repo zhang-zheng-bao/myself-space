@@ -81,6 +81,17 @@ export interface Profile {
      * 保留旧键是为了兼容已上线的数据，后台写入时会同时更新两边。
      */
     sectionVisible?: Record<string, boolean>;
+    /**
+     * 是否隐藏首页左栏的**个人头像**。
+     *
+     * 约定同 sectionVisible / treasuresVisible：只有显式 `false` 才隐藏，
+     * 缺省（undefined）一律视为展示 —— 老数据不用迁移。
+     *
+     * 注意命名是 `hide*` 而不是 `avatarVisible`：宝的原话是「不展示头像的开关」，
+     * 后台那个 checkbox 勾上 = 隐藏。字段名跟「勾上」这个动作同向，
+     * 免得后台和前台之间要做一次 `!value` 的反转（那种地方最容易写反）。
+     */
+    hideAvatar?: boolean;
   };
 }
 

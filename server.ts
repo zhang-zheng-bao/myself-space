@@ -140,10 +140,24 @@ function parseUserAgent(uaRaw: string): UaInfo {
     return r ? r[1] || "" : "";
   };
 
-  if (/bot|crawler|spider|slurp|bingpreview|facebookexternalhit|headlesschrome|python-requests|curl\//i.test(ua)) {
+  // 真爬虫（带名字的 search bot / 抓取库）走这条捷径。
+  // **注意 `headlesschrome` 曾经也在这个列表里** —— 那是个错误：无头 Chrome 就是
+  // 一个正常浏览器内核，把它当爬虫会让所有 Playwright / 自动化访问直接 return，
+  // 于是 browser / OS / 引擎 全是空的，后台整列显示「爬虫」。
+  // 现在只把它标注成「无头」标记，后面照常解析 UA。
+  const isHeadless = /headlesschrome|HeadlessChrome/i.test(ua);
+  const isScripted = /python-requests|curl\/|Go-http-client|okhttp|axios\/|node-fetch|wget\//i.test(ua);
+
+  if (/bot|crawler|spider|slurp|bingpreview|facebookexternalhit/i.test(ua)) {
     const name =
       pick(/(Googlebot|Bingbot|Baiduspider|YandexBot|DuckDuckBot|Applebot|SemrushBot|AhrefsBot|PetalBot|Sogou web spider|360Spider|Bytespider|GPTBot|ClaudeBot|CCBot|PerplexityBot|facebookexternalhit)/i) ||
       "Bot";
+    return { deviceType: "爬虫", browser: name, browserVersion: "", os: "-", osVersion: "", engine: "" };
+  }
+
+  // 脚本直连（没有浏览器内核）：也算「爬虫」，但标出是脚本而不是搜索引擎。
+  if (isScripted) {
+    const name = /curl\//i.test(ua) ? "curl" : /wget\//i.test(ua) ? "wget" : isHeadless ? "Headless Chrome" : "脚本请求";
     return { deviceType: "爬虫", browser: name, browserVersion: "", os: "-", osVersion: "", engine: "" };
   }
 
@@ -199,7 +213,10 @@ function parseUserAgent(uaRaw: string): UaInfo {
 
   const isTablet = /iPad|Tablet|PlayBook|Silk/i.test(ua) || (/Android/i.test(ua) && !/Mobile/i.test(ua));
   const isPhone = /Mobi|iPhone|iPod|Windows Phone|Android.*Mobile/i.test(ua);
-  const deviceType = isTablet ? "平板" : isPhone ? "手机" : "桌面";
+  const baseType = isTablet ? "平板" : isPhone ? "手机" : "桌面";
+  // 无头浏览器是「自动化访问」，不是真人。但它的 browser / OS 仍然可信，
+  // 所以只加一个后缀标记，不把它整个降级成「爬虫」（那会丢掉全部有用信息）。
+  const deviceType = isHeadless ? `${baseType}（无头）` : baseType;
 
   return { deviceType, browser, browserVersion, os, osVersion, engine };
 }
@@ -1587,14 +1604,49 @@ async function startServer() {
       if (!trackAllowed(ip)) return res.status(429).json({ ok: false, reason: "too-many-requests" });
 
       const body = req.body || {};
-      const visitorKey = String(body.visitorKey || "").trim().slice(0, 80);
-      if (!visitorKey) return res.status(400).json({ error: "visitorKey required" });
+      const clientKey = String(body.visitorKey || "").trim().slice(0, 80);
+      if (!clientKey) return res.status(400).json({ error: "visitorKey required" });
 
       const c = body.client || {};
       const ua = String(req.headers["user-agent"] || "").slice(0, 500);
       const info = parseUserAgent(ua);
       const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
       const str = (v: unknown, max: number) => String(v ?? "").slice(0, max);
+      const fps = str(body.fingerprint, 64);
+
+      /**
+       * 访客身份归一化 —— 这是「同一台设备被记成几十个访客」的修复点。
+       *
+       * 原来的身份 = 前台 localStorage 里的随机 key。问题是**无痕窗口 / 清过站点数据 /
+       * 每次新开的自动化浏览器每次都会生成全新的 key**，于是同一台电脑在后台看起来
+       * 是几十个不同的人（实测：5 个真实指纹挂出 76 个 visitor_key）。
+       *
+       * 指纹（屏幕 / 显卡 / 时区 / CPU 核数 / UA …）在无痕下**依然是稳定的**，
+       * 所以这里做一次归并：只要指纹能对上一位老访客，就沿用那位老访客的 key，
+       * 把这次访问记到他名下，而不是新建一个「陌生人」。
+       *
+       * 保守处：指纹为空（拿不到 WebGL 等）时**完全按老逻辑走**，绝不让空指纹
+       * 把所有人合并成同一个访客 —— 那比重复记录更糟。
+       */
+      let visitorKey = clientKey;
+      let mergedFrom: string | null = null;
+      if (fps) {
+        try {
+          const { data: twin } = await supabase
+            .from("portfolio_visits")
+            .select("visitor_key")
+            .eq("fingerprint", fps)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (twin?.visitor_key && twin.visitor_key !== clientKey) {
+            visitorKey = twin.visitor_key;
+            mergedFrom = clientKey;
+          }
+        } catch {
+          /* 归并查询失败就退回原始 key，不能因为统计把记录写丢 */
+        }
+      }
 
       const { data, error } = await supabase
         .from("portfolio_visits")
@@ -1626,7 +1678,7 @@ async function startServer() {
           gpu: str(c.gpu, 200),
           cookie_enabled: typeof c.cookieEnabled === "boolean" ? c.cookieEnabled : null,
           dnt: str(c.dnt, 20),
-          fingerprint: str(body.fingerprint, 64),
+          fingerprint: fps,
         })
         .select("id")
         .single();
@@ -1693,7 +1745,10 @@ async function startServer() {
         }
       })();
 
-      res.json({ ok: true, visitId });
+      // 把归一化之后的 key 回给前台：无痕窗口里前台本来每次都会生成新 key，
+      // 收到这个值后它会**改用自己的 localStorage 存成这个规范 key**，
+      // 于是连同一个无痕窗口内的后续上报都不会再飘。
+      res.json({ ok: true, visitId, visitorKey, mergedFrom });
     } catch (err: any) {
       // 检测接口永远不要让前台看到 5xx
       res.json({ ok: false, reason: err?.message || "track-failed" });

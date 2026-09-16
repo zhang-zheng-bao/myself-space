@@ -17,6 +17,7 @@ import {
   Feather,
   FileText,
   Gem,
+  GripVertical,
   HardDrive,
   ImagePlus,
   Images,
@@ -24,6 +25,7 @@ import {
   LayoutGrid,
   LayoutList,
   Link as LinkIcon,
+  ListChecks,
   Loader2,
   LogOut,
   MapPin,
@@ -1646,7 +1648,7 @@ function EditorModal({
   );
 }
 
-function WorkSummary({ work, index, active, leading, onEdit, onDelete }: {
+function WorkSummary({ work, index, active, leading, selecting, checked, onEdit, onDelete }: {
   work: Work;
   index: number;
   /** 该条目的编辑弹窗是否正开着 —— 只影响左侧色条与按钮文案。 */
@@ -1657,6 +1659,13 @@ function WorkSummary({ work, index, active, leading, onEdit, onDelete }: {
    * 不是弹窗的能力，别再往 EditorModal 的 footer 里加同类按钮。
    */
   leading?: React.ReactNode;
+  /**
+   * 多选模式。打开后整行的点击语义变成「勾选这条」，右侧的「编辑」提示
+   * 也相应换成勾选状态 —— 否则用户点哪儿都是开弹窗，一条都选不上。
+   */
+  selecting?: boolean;
+  /** 多选模式下这条是否被勾中。selecting 为假时无意义。 */
+  checked?: boolean;
   onEdit: () => void;
   /** 删除这一条。确认框由调用方负责 —— 摘要只负责把点击递出去。 */
   onDelete: () => void;
@@ -1666,9 +1675,11 @@ function WorkSummary({ work, index, active, leading, onEdit, onDelete }: {
   // 注意：这里只渲染摘要行本身，外框由调用方的 <EditorRow> 提供 —— 别再在这里加边框。
   // 外层不能用 <button>：里面还要放「删除」按钮，button 套 button 是非法 HTML，
   // 浏览器会把内层那个踢出来，行结构就散了。用 div + role/tabIndex 接管键盘可达性。
+  // 多选模式下角色换成 checkbox，屏幕阅读器才不会把「勾选」念成「编辑」。
   return (
     <div
-      role="button"
+      role={selecting ? "checkbox" : "button"}
+      aria-checked={selecting ? Boolean(checked) : undefined}
       tabIndex={0}
       onClick={onEdit}
       onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onEdit(); } }}
@@ -1696,17 +1707,32 @@ function WorkSummary({ work, index, active, leading, onEdit, onDelete }: {
       </div>
       <div className="flex shrink-0 items-center gap-1.5 justify-self-start md:justify-self-end">
         {leading}
-        <span className="rounded-lg bg-white/[0.07] px-2.5 py-1 text-xs text-zinc-300">
-          {active ? "编辑中…" : "编辑"}
-        </span>
-        <button
-          type="button"
-          aria-label={"删除作品「" + (work.title || "未命名作品") + "」"}
-          onClick={(event) => { event.stopPropagation(); onDelete(); }}
-          className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-400 transition-colors duration-200 hover:border-red-500 hover:text-red-300"
-        >
-          <Trash2 size={13} />
-        </button>
+        {selecting ? (
+          <span
+            className={
+              "rounded-lg px-2.5 py-1 text-xs " +
+              (checked ? "bg-emerald-400/15 text-emerald-200" : "bg-white/[0.07] text-zinc-400")
+            }
+          >
+            {checked ? "已选中" : "未选中"}
+          </span>
+        ) : (
+          <span className="rounded-lg bg-white/[0.07] px-2.5 py-1 text-xs text-zinc-300">
+            {active ? "编辑中…" : "编辑"}
+          </span>
+        )}
+        {/* 多选模式下不给「删除」—— 那时候删除应该由底部「批量删除」统一做，
+            行内再留一个单删按钮会让人分不清删的是一条还是一批。 */}
+        {!selecting && (
+          <button
+            type="button"
+            aria-label={"删除作品「" + (work.title || "未命名作品") + "」"}
+            onClick={(event) => { event.stopPropagation(); onDelete(); }}
+            className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-400 transition-colors duration-200 hover:border-red-500 hover:text-red-300"
+          >
+            <Trash2 size={13} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -1739,6 +1765,8 @@ function WorkListEditor({
   migrate,
   renderSaveButton,
   itemNoun,
+  reorder,
+  onStatus,
 }: {
   items: Work[];
   title: string;
@@ -1777,12 +1805,109 @@ function WorkListEditor({
   renderSaveButton: () => React.ReactNode;
   /** 弹窗标题与按钮文案里的名词，作品媒体是「作品」，AI 专区是「AI 作品」。 */
   itemNoun?: string;
+  /**
+   * 拖动排序：给一个「把 from 挪到 to」的执行器。
+   * 不传就整个拖动能力关闭（行的左侧不会出现手柄）——
+   * 只有作品列表开这个，别的列表将来复用不受影响。
+   */
+  reorder?: (from: number, to: number) => Promise<void>;
+  /**
+   * 底部状态条。批量操作与拖动排序都要报一句结果，而 setStatus 是后台外壳的
+   * 闭包（WorkListEditor 拿不到），所以从外面传进来。
+   */
+  onStatus?: (message: string) => void;
 }) {
   const noun = itemNoun || "作品";
 
   // 迁移是「挪走」，先在原地确认再动手，避免误点把作品从当前栏目弄丢。
   const [pendingMigrateId, setPendingMigrateId] = useState<string | null>(null);
   const [migrating, setMigrating] = useState(false);
+
+  /* ---------------------------------------------------------------- 批量操作 */
+  /**
+   * 多选模式。**默认关着** —— 平时的点击是「打开这条的编辑弹窗」，
+   * 只有进了多选才把点击解释成「勾选」。这个切换是必须的：
+   * 如果平时点击就是勾选，那单条编辑就没有入口了。
+   */
+  const [selecting, setSelecting] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  /** 批量确认：null 表示没有；"delete" 或 "migrate" 表示正在确认哪一种。 */
+  const [bulkConfirm, setBulkConfirm] = useState<null | "delete" | "migrate">(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  /** 条目身份在**每次渲染**都要用同一条规则算，且顺序不能变（删除/迁移都按下标）。 */
+  const keyOf = (work: Work, index: number) => rowKey(work.id, index);
+
+  const selectedIndexes = selectedKeys
+    .map((k) => items.findIndex((work, index) => keyOf(work, index) === k))
+    .filter((i) => i >= 0);
+
+  const toggleSelected = (key: string) => {
+    setSelectedKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  };
+
+  const exitSelecting = () => {
+    setSelecting(false);
+    setSelectedKeys([]);
+    setBulkConfirm(null);
+  };
+
+  /**
+   * 批量删除。与单条删除的区别只有一处：素材要**先收集再一次性删**，
+   * 而且必须走 removeAndSave 那条路（它会真的删 COS 文件）。
+   * 下标从大到小删，避免先删前面的把后面那些的位置挪掉。
+   */
+  const runBulkDelete = async () => {
+    const indexes = [...selectedIndexes].sort((a, b) => b - a);
+    if (indexes.length === 0) return;
+    const media = indexes.flatMap((i) => collectWorkMedia(items[i]));
+    const titles = indexes.map((i) => items[i].title || `第 ${i + 1} 个`).join("、");
+    setBulkBusy(true);
+    await removeAndSave(
+      (draft) => {
+        const list = [...readItems(draft)];
+        for (const i of indexes) list.splice(i, 1);
+        writeItems(draft, list);
+      },
+      media,
+      () => { setExpandedId(null); exitSelecting(); onStatus?.(`已批量删除 ${indexes.length} 条：${titles}`); },
+    );
+    setBulkBusy(false);
+  };
+
+  /** 批量迁移：沿用单条迁移的迁移器，逐条跑 —— 每条都是一次独立的落库。 */
+  const runBulkMigrate = async () => {
+    if (!migrate || selectedIndexes.length === 0) return;
+    // 迁移会把条目从当前列表摘掉，所以从大到小处理，下标才不会错位。
+    const targets = [...selectedIndexes].sort((a, b) => b - a);
+    setBulkBusy(true);
+    let done = 0;
+    for (const i of targets) {
+      // 每次都从**当前最新**的列表里取，因为上一条已经把它后面的位置改了。
+      const ok = await migrate.run(items[i], i);
+      if (ok) done += 1;
+    }
+    setBulkBusy(false);
+    exitSelecting();
+    onStatus?.(`已批量迁移 ${done} 条，素材一并带过去。`);
+  };
+
+  /* ---------------------------------------------------------------- 拖动排序 */
+  /** 正被拖的那条的下标；null = 没在拖。 */
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  /** 当前悬停到的目标下标，用来画插入提示线。 */
+  const [dragOver, setDragOver] = useState<number | null>(null);
+  const [reordering, setReordering] = useState(false);
+
+  const dropTo = async (to: number) => {
+    const from = dragFrom;
+    setDragFrom(null);
+    setDragOver(null);
+    if (!reorder || from === null || from === to) return;
+    setReordering(true);
+    await reorder(from, to);
+    setReordering(false);
+  };
 
   /**
    * 哪一行的「选帧做封面」面板是展开的（按 index；null = 都收起）。
@@ -1832,64 +1957,242 @@ function WorkListEditor({
         title={title}
         description={hint}
         action={
-          addLabel ? (
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {/* 多选模式的总开关。放在这里而不是行上 —— 行上已经有编辑/迁移/删除三个
+                动作，再加一个勾选框会让「点哪里是什么」变得很难猜。 */}
             <button
               type="button"
-              onClick={() => {
-                const id = uid("work");
-                addDraft(
-                  (draft) => { writeItems(draft, [...readItems(draft), { ...emptyDraft, id }]); },
-                  () => setExpandedId(id),
-                );
-              }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-zinc-300 hover:border-zinc-600"
+              aria-pressed={selecting}
+              onClick={() => (selecting ? exitSelecting() : setSelecting(true))}
+              className={
+                "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-sm transition-colors duration-200 " +
+                (selecting
+                  ? "border-emerald-400 text-emerald-200"
+                  : "border-zinc-800 text-zinc-300 hover:border-zinc-600")
+              }
             >
-              <Plus size={15} /> {addLabel}
+              <ListChecks size={15} /> {selecting ? "退出批量" : "批量操作"}
             </button>
-          ) : undefined
+            {addLabel ? (
+              <button
+                type="button"
+                onClick={() => {
+                  const id = uid("work");
+                  addDraft(
+                    (draft) => { writeItems(draft, [...readItems(draft), { ...emptyDraft, id }]); },
+                    () => setExpandedId(id),
+                  );
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-zinc-300 hover:border-zinc-600"
+              >
+                <Plus size={15} /> {addLabel}
+              </button>
+            ) : null}
+          </div>
         }
       />
+
+      {/*
+       * 批量操作条。只在多选模式下出现，固定讲清「选了几条」与两个危险动作。
+       * 删除 / 迁移都走两段式确认（bulkConfirm），因为这两件事都不可随手撤销。
+       */}
+      {selecting && (
+        <div className="adm-note adm-note-info flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-emerald-100/85">
+          <LogOut size={14} className="shrink-0" />
+          <span>
+            已选 <span className="font-semibold text-white">{selectedIndexes.length}</span> / {items.length} 条
+            {reorder ? <span className="text-emerald-200/70">（批量模式下拖动排序已暂停）</span> : null}
+          </span>
+          <button
+            type="button"
+            onClick={() => setSelectedKeys(items.map((work, index) => keyOf(work, index)))}
+            className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-600"
+          >
+            全选
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedKeys([])}
+            disabled={selectedKeys.length === 0}
+            className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-600 disabled:opacity-50"
+          >
+            清空
+          </button>
+
+          <span className="ml-auto flex flex-wrap items-center gap-2">
+            {migrate && (
+              bulkConfirm === "migrate" ? (
+                <>
+                  <span className="text-[11px] leading-5 text-emerald-100">
+                    把选中的 {selectedIndexes.length} 条一起迁移？素材原样带走，不删除。
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { void runBulkMigrate(); }}
+                    disabled={bulkBusy}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-300 px-2.5 py-1.5 text-xs font-semibold text-zinc-950 hover:bg-emerald-200 disabled:opacity-60"
+                  >
+                    {bulkBusy ? <Loader2 className="animate-spin" size={12} /> : <ArrowLeftRight size={12} />} 确认迁移
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBulkConfirm(null)}
+                    disabled={bulkBusy}
+                    className="rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 disabled:opacity-60"
+                  >
+                    取消
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setBulkConfirm("migrate")}
+                  disabled={selectedIndexes.length === 0}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-emerald-500/60 hover:text-emerald-200 disabled:opacity-50"
+                >
+                  <ArrowLeftRight size={12} /> {migrate.label}
+                </button>
+              )
+            )}
+
+            {bulkConfirm === "delete" ? (
+              <>
+                <span className="text-[11px] leading-5 text-rose-200">
+                  删除 {selectedIndexes.length} 条及其素材，不可恢复。
+                </span>
+                <button
+                  type="button"
+                  onClick={() => { void runBulkDelete(); }}
+                  disabled={bulkBusy}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-rose-400 px-2.5 py-1.5 text-xs font-semibold text-zinc-950 hover:bg-rose-300 disabled:opacity-60"
+                >
+                  {bulkBusy ? <Loader2 className="animate-spin" size={12} /> : <Trash2 size={12} />} 确认删除
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBulkConfirm(null)}
+                  disabled={bulkBusy}
+                  className="rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 disabled:opacity-60"
+                >
+                  取消
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setBulkConfirm("delete")}
+                disabled={selectedIndexes.length === 0}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-rose-500/60 hover:text-rose-200 disabled:opacity-50"
+              >
+                <Trash2 size={12} /> 批量删除
+              </button>
+            )}
+          </span>
+        </div>
+      )}
 
       <div className="space-y-3">
         {items.map((work, index) => {
           const active = expandedId === rowKey(work.id, index);
+          const key = keyOf(work, index);
+          const checked = selectedKeys.includes(key);
           return (
-            <EditorRow key={rowKey(work.id, index)} expanded={active}>
-              <WorkSummary
-                work={work}
-                index={index}
-                active={active}
-                leading={
-                  migrate ? (
-                    <button
-                      type="button"
-                      title={migrate.label}
-                      aria-label={migrate.label + "「" + (work.title || "未命名作品") + "」"}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        const key = rowKey(work.id, index);
-                        setPendingMigrateId(pendingMigrateId === key ? null : key);
-                      }}
-                      className={
-                        "rounded-lg border px-2 py-1 text-xs transition-colors duration-200 " +
-                        (pendingMigrateId === rowKey(work.id, index)
-                          ? "border-emerald-400 text-emerald-200"
-                          : "border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-white")
-                      }
-                    >
-                      <ArrowLeftRight size={13} />
-                    </button>
-                  ) : undefined
-                }
-                onEdit={() => setExpandedId(rowKey(work.id, index))}
-                onDelete={() => {
-                                    void removeAndSave(
-                    (draft) => { writeItems(draft, readItems(draft).filter((_, i) => i !== index)); },
-                    collectWorkMedia(work),
-                    () => setExpandedId(null),
-                  );
-                }}
-              />
+            <EditorRow key={key} expanded={active} tone={checked ? "emerald" : undefined}>
+              {/* 拖动排序的落点提示：一条细线，避免整行位移造成视觉抖动。 */}
+              {reorder && dragOver === index && dragFrom !== null && dragFrom !== index && (
+                <div className="h-0.5 w-full rounded bg-emerald-400/70" aria-hidden="true" />
+              )}
+              <div
+                className="flex items-stretch"
+                // 拖动只在「没进多选」时开放：两套交互叠在一起会互相抢点击。
+                {...(reorder && !selecting
+                  ? {
+                      draggable: true,
+                      onDragStart: (event: React.DragEvent) => {
+                        setDragFrom(index);
+                        event.dataTransfer.effectAllowed = "move";
+                        // Firefox 不给 dataTransfer 赋值就不触发 drag。
+                        event.dataTransfer.setData("text/plain", key);
+                      },
+                      onDragOver: (event: React.DragEvent) => {
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                        setDragOver(index);
+                      },
+                      onDragLeave: () => setDragOver((prev) => (prev === index ? null : prev)),
+                      onDrop: (event: React.DragEvent) => {
+                        event.preventDefault();
+                        void dropTo(index);
+                      },
+                      onDragEnd: () => { setDragFrom(null); setDragOver(null); },
+                    }
+                  : {})}
+              >
+                {reorder && !selecting && (
+                  <span
+                    aria-hidden="true"
+                    title="按住拖动可调整前台顺序"
+                    className="flex w-6 shrink-0 cursor-grab items-center justify-center text-zinc-600 active:cursor-grabbing"
+                  >
+                    <GripVertical size={15} />
+                  </span>
+                )}
+                {selecting && (
+                  <label className="flex w-8 shrink-0 cursor-pointer items-center justify-center">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleSelected(key)}
+                      aria-label={"选择「" + (work.title || "未命名作品") + "」"}
+                      className="h-4 w-4 accent-emerald-300"
+                    />
+                  </label>
+                )}
+                <div className="min-w-0 flex-1">
+                  <WorkSummary
+                    work={work}
+                    index={index}
+                    active={active}
+                    selecting={selecting}
+                    checked={checked}
+                    // 多选模式下整行的点击语义换成「勾选」，否则点哪儿都开弹窗、
+                    // 永远选不上。迁移按钮同样在这一模式下让位。
+                    leading={
+                      migrate && !selecting ? (
+                        <button
+                          type="button"
+                          title={migrate.label}
+                          aria-label={migrate.label + "「" + (work.title || "未命名作品") + "」"}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            const k = rowKey(work.id, index);
+                            setPendingMigrateId(pendingMigrateId === k ? null : k);
+                          }}
+                          className={
+                            "rounded-lg border px-2 py-1 text-xs transition-colors duration-200 " +
+                            (pendingMigrateId === rowKey(work.id, index)
+                              ? "border-emerald-400 text-emerald-200"
+                              : "border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-white")
+                          }
+                        >
+                          <ArrowLeftRight size={13} />
+                        </button>
+                      ) : undefined
+                    }
+                    onEdit={() => {
+                      if (selecting) toggleSelected(key);
+                      else setExpandedId(rowKey(work.id, index));
+                    }}
+                    onDelete={() => {
+                      void removeAndSave(
+                        (draft) => { writeItems(draft, readItems(draft).filter((_, i) => i !== index)); },
+                        collectWorkMedia(work),
+                        () => setExpandedId(null),
+                      );
+                    }}
+                  />
+                </div>
+              </div>
             </EditorRow>
           );
         })}
@@ -2100,20 +2403,30 @@ function WorkListEditor({
   );
 }
 
-function GallerySummary({ item, index, active, onEdit, onDelete }: {
+function GallerySummary({ item, index, active, selecting, checked, onEdit, onDelete }: {
   item: GalleryItem;
   index: number;
   /** 该条目的编辑弹窗是否正开着 —— 只影响左侧色条与按钮文案。 */
   active: boolean;
+  /**
+   * 是否处在多选模式。开了之后这一行的语义从「按钮」变成「勾选框」，
+   * 点整行 = 勾选/取消，右侧也换成「已选中/未选中」。
+   * 与音乐、作品列表是同一套约定：多选默认关，点行仍然开弹窗。
+   */
+  selecting?: boolean;
+  checked?: boolean;
   onEdit: () => void;
   /** 删除这一条。确认框由调用方负责。 */
   onDelete: () => void;
 }) {
   // 只渲染摘要行，外框由调用方的 <EditorRow> 提供。
   // 用 div + role/tabIndex 而不是 <button>：行内还要放「删除」按钮。
+  // role 随模式切换：多选时是 checkbox，否则是 button —— 读屏软件据此播报，
+  // 不能两种模式都用 button，否则勾选状态根本读不出来。
   return (
     <div
-      role="button"
+      role={selecting ? "checkbox" : "button"}
+      aria-checked={selecting ? Boolean(checked) : undefined}
       tabIndex={0}
       onClick={onEdit}
       onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onEdit(); } }}
@@ -2135,27 +2448,45 @@ function GallerySummary({ item, index, active, onEdit, onDelete }: {
         <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-400">{item.description || "暂无简介，点「编辑」补上。"}</p>
       </div>
       <div className="flex shrink-0 items-center gap-1.5 justify-self-start md:justify-self-end">
-        <span className="rounded-lg bg-white/[0.07] px-2.5 py-1 text-xs text-zinc-300">
-          {active ? "编辑中…" : "编辑"}
-        </span>
-        <button
-          type="button"
-          aria-label={"删除截图「" + (item.title || "未命名截图") + "」"}
-          onClick={(event) => { event.stopPropagation(); onDelete(); }}
-          className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-400 transition-colors duration-200 hover:border-red-500 hover:text-red-300"
-        >
-          <Trash2 size={13} />
-        </button>
+        {selecting ? (
+          <span
+            className={
+              "rounded-lg px-2.5 py-1 text-xs " +
+              (checked ? "bg-emerald-400/15 text-emerald-200" : "bg-white/[0.07] text-zinc-400")
+            }
+          >
+            {checked ? "已选中" : "未选中"}
+          </span>
+        ) : (
+          <span className="rounded-lg bg-white/[0.07] px-2.5 py-1 text-xs text-zinc-300">
+            {active ? "编辑中…" : "编辑"}
+          </span>
+        )}
+        {/* 多选模式下藏掉行内删除：批量删除才是那时的删除入口，
+            两个删除按钮同时在场会让人分不清删的是一个还是选中的那批。 */}
+        {!selecting && (
+          <button
+            type="button"
+            aria-label={"删除截图「" + (item.title || "未命名截图") + "」"}
+            onClick={(event) => { event.stopPropagation(); onDelete(); }}
+            className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-400 transition-colors duration-200 hover:border-red-500 hover:text-red-300"
+          >
+            <Trash2 size={13} />
+          </button>
+        )}
       </div>
     </div>
   );
 }
 
-function TreasureSummary({ item, index, active, onEdit, onDelete }: {
+function TreasureSummary({ item, index, active, selecting, checked, onEdit, onDelete }: {
   item: TreasureItem;
   index: number;
   /** 该条目的编辑弹窗是否正开着 —— 只影响左侧色条与按钮文案。 */
   active: boolean;
+  /** 多选模式。语义与 GallerySummary 完全一致（同一套约定）。 */
+  selecting?: boolean;
+  checked?: boolean;
   onEdit: () => void;
   /** 删除这一条。确认框由调用方负责。 */
   onDelete: () => void;
@@ -2164,7 +2495,8 @@ function TreasureSummary({ item, index, active, onEdit, onDelete }: {
   // 用 div + role/tabIndex 而不是 <button>：行内还要放「删除」按钮。
   return (
     <div
-      role="button"
+      role={selecting ? "checkbox" : "button"}
+      aria-checked={selecting ? Boolean(checked) : undefined}
       tabIndex={0}
       onClick={onEdit}
       onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onEdit(); } }}
@@ -2181,17 +2513,30 @@ function TreasureSummary({ item, index, active, onEdit, onDelete }: {
         <span className="text-sm font-semibold text-white">珍藏 {index + 1}</span>
       </div>
       <div className="flex shrink-0 items-center gap-1.5 justify-self-start md:justify-self-end">
-        <span className="rounded-lg bg-white/[0.07] px-2.5 py-1 text-xs text-zinc-300">
-          {active ? "编辑中…" : "编辑"}
-        </span>
-        <button
-          type="button"
-          aria-label={"删除珍藏「" + (index + 1) + "」"}
-          onClick={(event) => { event.stopPropagation(); onDelete(); }}
-          className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-400 transition-colors duration-200 hover:border-red-500 hover:text-red-300"
-        >
-          <Trash2 size={13} />
-        </button>
+        {selecting ? (
+          <span
+            className={
+              "rounded-lg px-2.5 py-1 text-xs " +
+              (checked ? "bg-emerald-400/15 text-emerald-200" : "bg-white/[0.07] text-zinc-400")
+            }
+          >
+            {checked ? "已选中" : "未选中"}
+          </span>
+        ) : (
+          <span className="rounded-lg bg-white/[0.07] px-2.5 py-1 text-xs text-zinc-300">
+            {active ? "编辑中…" : "编辑"}
+          </span>
+        )}
+        {!selecting && (
+          <button
+            type="button"
+            aria-label={"删除珍藏「" + (index + 1) + "」"}
+            onClick={(event) => { event.stopPropagation(); onDelete(); }}
+            className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-400 transition-colors duration-200 hover:border-red-500 hover:text-red-300"
+          >
+            <Trash2 size={13} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -2291,11 +2636,18 @@ function ExperienceSummary({ exp, index, active, onEdit, onDelete }: {
   );
 }
 
-function MusicSummary({ track, index, active, onEdit, onDelete }: {
+function MusicSummary({ track, index, active, selecting, checked, onEdit, onDelete }: {
   track: MusicTrack;
   index: number;
   /** 该条目的编辑弹窗是否正开着 —— 只影响左侧色条与按钮文案。 */
   active: boolean;
+  /**
+   * 多选模式。打开后整行的点击语义从「开弹窗」变成「勾选这条」，
+   * 与作品列表的 WorkSummary 保持同一套规则（见那边的注释）。
+   */
+  selecting?: boolean;
+  /** 多选模式下这条是否被勾中。selecting 为假时无意义。 */
+  checked?: boolean;
   onEdit: () => void;
   /** 删除这一条。确认框由调用方负责。 */
   onDelete: () => void;
@@ -2305,7 +2657,8 @@ function MusicSummary({ track, index, active, onEdit, onDelete }: {
   // 而且这一行里本来就嵌着 <audio controls>，button 包交互控件同样不合法。
   return (
     <div
-      role="button"
+      role={selecting ? "checkbox" : "button"}
+      aria-checked={selecting ? Boolean(checked) : undefined}
       tabIndex={0}
       onClick={onEdit}
       onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onEdit(); } }}
@@ -2331,17 +2684,32 @@ function MusicSummary({ track, index, active, onEdit, onDelete }: {
         {track.audioUrl && <audio src={track.audioUrl} controls className="mt-2 h-8 w-full max-w-xl" />}
       </div>
       <div className="flex shrink-0 items-center gap-1.5 justify-self-start md:justify-self-end">
-        <span className="rounded-lg bg-white/[0.07] px-2.5 py-1 text-xs text-zinc-300">
-          {active ? "编辑中…" : "编辑"}
-        </span>
-        <button
-          type="button"
-          aria-label={"删除音乐「" + (track.title || "未命名音乐") + "」"}
-          onClick={(event) => { event.stopPropagation(); onDelete(); }}
-          className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-400 transition-colors duration-200 hover:border-red-500 hover:text-red-300"
-        >
-          <Trash2 size={13} />
-        </button>
+        {selecting ? (
+          <span
+            className={
+              "rounded-lg px-2.5 py-1 text-xs " +
+              (checked ? "bg-emerald-400/15 text-emerald-200" : "bg-white/[0.07] text-zinc-400")
+            }
+          >
+            {checked ? "已选中" : "未选中"}
+          </span>
+        ) : (
+          <span className="rounded-lg bg-white/[0.07] px-2.5 py-1 text-xs text-zinc-300">
+            {active ? "编辑中…" : "编辑"}
+          </span>
+        )}
+        {/* 多选模式下不给「删除」—— 那时候删除应该由底部「批量删除」统一做，
+            行内再留一个单删按钮会让人分不清删的是一条还是一批。 */}
+        {!selecting && (
+          <button
+            type="button"
+            aria-label={"删除音乐「" + (track.title || "未命名音乐") + "」"}
+            onClick={(event) => { event.stopPropagation(); onDelete(); }}
+            className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-400 transition-colors duration-200 hover:border-red-500 hover:text-red-300"
+          >
+            <Trash2 size={13} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -2505,6 +2873,41 @@ export default function AdminApp() {
   const [expandedTreasureId, setExpandedTreasureId] = useState<string | null>(null);
   const [expandedPoemId, setExpandedPoemId] = useState<string | null>(null);
   const [expandedMusicId, setExpandedMusicId] = useState<string | null>(null);
+  /**
+   * 音乐模块的批量操作状态。
+   * 与作品列表那套（WorkListEditor 里的 selecting/selectedKeys）是**同一套规则**，
+   * 只是这里没有复用那个组件 —— 它是强绑定 Work 类型的，音乐是 MusicTrack。
+   * 规则记住三条：多选默认关、删除按下标从大到小、确认一律两段式。
+   */
+  const [musicSelecting, setMusicSelecting] = useState(false);
+  const [musicSelectedKeys, setMusicSelectedKeys] = useState<string[]>([]);
+  const [musicBulkConfirm, setMusicBulkConfirm] = useState<null | "delete">(null);
+  const [musicBulkBusy, setMusicBulkBusy] = useState(false);
+  /** 音乐拖动排序：正被拖的下标 / 悬停到的目标下标。 */
+  const [musicDragFrom, setMusicDragFrom] = useState<number | null>(null);
+  const [musicDragOver, setMusicDragOver] = useState<number | null>(null);
+
+  /**
+   * 「应用技能」与「我的珍藏」的批量操作 + 拖动排序状态。
+   *
+   * 与音乐模块是**同一套规则**（多选默认关、删除按下标从大到小、确认两段式、
+   * 拖动是「摘出来再插进去」）。之所以又写一遍而不是抽公共组件：两边的条目类型
+   * 不同（GalleryItem / TreasureItem），抽成泛型会把类型分发塞进每一个读写回调里，
+   * 反而更难读。规则统一、实现各写一份，是这里刻意选的路。
+   */
+  const [gallerySelecting, setGallerySelecting] = useState(false);
+  const [gallerySelectedKeys, setGallerySelectedKeys] = useState<string[]>([]);
+  const [galleryBulkConfirm, setGalleryBulkConfirm] = useState<null | "delete">(null);
+  const [galleryBulkBusy, setGalleryBulkBusy] = useState(false);
+  const [galleryDragFrom, setGalleryDragFrom] = useState<number | null>(null);
+  const [galleryDragOver, setGalleryDragOver] = useState<number | null>(null);
+
+  const [treasureSelecting, setTreasureSelecting] = useState(false);
+  const [treasureSelectedKeys, setTreasureSelectedKeys] = useState<string[]>([]);
+  const [treasureBulkConfirm, setTreasureBulkConfirm] = useState<null | "delete">(null);
+  const [treasureBulkBusy, setTreasureBulkBusy] = useState(false);
+  const [treasureDragFrom, setTreasureDragFrom] = useState<number | null>(null);
+  const [treasureDragOver, setTreasureDragOver] = useState<number | null>(null);
   // 「模块管理」打开的是哪一个模块的页首文案弹窗。存 SectionKey 而不是下标 ——
   // 上下移之后下标会变，key 不会。
   const [expandedModuleKey, setExpandedModuleKey] = useState<string | null>(null);
@@ -2601,6 +3004,27 @@ export default function AdminApp() {
     } catch (err: any) {
       setVisitsError(err?.message || "清理失败");
     }
+  }
+
+  /**
+   * 拖动排序：把列表里第 from 条挪到第 to 条的位置。
+   *
+   * 用「摘出来再插进去」而不是交换两条 —— 拖动的心智模型是「插到这个位置」，
+   * 交换会让中间那几条莫名其妙地整体前移一格。
+   *
+   * 落库前先算好新数组再写：`readItems`/`writeItems` 走的是同一个 draft，
+   * 在 mutator 里边读边写会读到已经被改过的列表。
+   */
+  async function reorderWorks(read: (draft: PortfolioData) => Work[], write: (draft: PortfolioData, items: Work[]) => void, from: number, to: number) {
+    const list = [...read(data)];
+    if (from < 0 || to < 0 || from >= list.length || to >= list.length || from === to) return;
+    const [moved] = list.splice(from, 1);
+    list.splice(to, 0, moved);
+    await mutateAndSave(
+      (draft) => { write(draft, list); },
+      () => setStatus(`顺序已保存：第 ${from + 1} 条 → 第 ${to + 1} 条。`),
+      { collapse: false },
+    );
   }
 
   // 只有切到「站点检测」才拉数据：访问记录跟站点内容无关，没必要一进后台就多打一次接口。
@@ -3110,6 +3534,159 @@ export default function AdminApp() {
     await save(draft);
   }
 
+  /* ------------------------------------------------------ 音乐：排序与批量操作 */
+  /**
+   * 音乐列表身份规则。与列表渲染用的是同一条（`rowKey(track.id, index)`），
+   * 顺序也不能变 —— 删除按下标，算错一位就删错歌。
+   */
+  const musicKeyOf = (track: MusicTrack, index: number) => rowKey(track.id, index);
+
+  const musicSelectedIndexes = musicSelectedKeys
+    .map((k) => (data.musicTracks || []).findIndex((track, index) => musicKeyOf(track, index) === k))
+    .filter((i) => i >= 0);
+
+  const exitMusicSelecting = () => {
+    setMusicSelecting(false);
+    setMusicSelectedKeys([]);
+    setMusicBulkConfirm(null);
+  };
+
+  /**
+   * 拖动排序：把第 from 首挪到第 to 首的位置。
+   * 与作品列表同一个心智模型 —— 「插到这个位置」而不是交换两条。
+   */
+  async function reorderMusic(from: number, to: number) {
+    const list = [...(data.musicTracks || [])];
+    if (from < 0 || to < 0 || from >= list.length || to >= list.length || from === to) return;
+    const [moved] = list.splice(from, 1);
+    list.splice(to, 0, moved);
+    await mutateAndSave(
+      (draft) => { draft.musicTracks = list; },
+      () => setStatus(`顺序已保存：第 ${from + 1} 首 → 第 ${to + 1} 首。`),
+      { collapse: false },
+    );
+  }
+
+  /**
+   * 批量删除音乐。素材要**先收集再一次性删**，并且必须走 removeAndSave
+   * （它会真的删 COS 上的音频与封面）。下标从大到小，避免删了前面的把后面挪位。
+   */
+  async function runMusicBulkDelete() {
+    const indexes = [...musicSelectedIndexes].sort((a, b) => b - a);
+    if (indexes.length === 0) return;
+    const list = data.musicTracks || [];
+    const media = indexes.flatMap((i) => [list[i]?.audioUrl, list[i]?.coverUrl].filter(Boolean) as string[]);
+    const titles = indexes.map((i) => list[i]?.title || `第 ${i + 1} 首`).join("、");
+    setMusicBulkBusy(true);
+    await removeAndSave(
+      (draft) => {
+        const next = [...(draft.musicTracks || [])];
+        for (const i of indexes) next.splice(i, 1);
+        draft.musicTracks = next;
+      },
+      media,
+      () => { setExpandedMusicId(null); exitMusicSelecting(); setStatus(`已批量删除 ${indexes.length} 首：${titles}`); },
+    );
+    setMusicBulkBusy(false);
+  }
+
+  /* ------------------------------------- 应用技能 / 我的珍藏：排序与批量操作 */
+  /**
+   * 身份规则必须和列表渲染里用的是同一条（`rowKey(item.id, index)`），
+   * 顺序也不能变 —— 删除按下标走，算错一位就删错图。
+   */
+  const galleryKeyOf = (item: GalleryItem, index: number) => rowKey(item.id, index);
+  const treasureKeyOf = (item: TreasureItem, index: number) => rowKey(item.id, index);
+
+  const gallerySelectedIndexes = gallerySelectedKeys
+    .map((k) => (data.gallery || []).findIndex((item, index) => galleryKeyOf(item, index) === k))
+    .filter((i) => i >= 0);
+  const treasureSelectedIndexes = treasureSelectedKeys
+    .map((k) => (data.treasures || []).findIndex((item, index) => treasureKeyOf(item, index) === k))
+    .filter((i) => i >= 0);
+
+  const exitGallerySelecting = () => {
+    setGallerySelecting(false);
+    setGallerySelectedKeys([]);
+    setGalleryBulkConfirm(null);
+  };
+
+  const exitTreasureSelecting = () => {
+    setTreasureSelecting(false);
+    setTreasureSelectedKeys([]);
+    setTreasureBulkConfirm(null);
+  };
+
+  /**
+   * 拖动排序：把第 from 张挪到第 to 张的位置。
+   * 「摘出来再插进去」而不是交换两条 —— 拖动的心智模型是「插到这个位置」，
+   * 交换会让中间那几张莫名其妙地整体挪一格。
+   */
+  async function reorderGallery(from: number, to: number) {
+    const list = [...(data.gallery || [])];
+    if (from < 0 || to < 0 || from >= list.length || to >= list.length || from === to) return;
+    const [moved] = list.splice(from, 1);
+    list.splice(to, 0, moved);
+    await mutateAndSave(
+      (draft) => { draft.gallery = list; },
+      () => setStatus(`顺序已保存：第 ${from + 1} 张 → 第 ${to + 1} 张。`),
+      { collapse: false },
+    );
+  }
+
+  async function reorderTreasures(from: number, to: number) {
+    const list = [...(data.treasures || [])];
+    if (from < 0 || to < 0 || from >= list.length || to >= list.length || from === to) return;
+    const [moved] = list.splice(from, 1);
+    list.splice(to, 0, moved);
+    await mutateAndSave(
+      (draft) => { draft.treasures = list; },
+      () => setStatus(`顺序已保存：第 ${from + 1} 张 → 第 ${to + 1} 张。`),
+      { collapse: false },
+    );
+  }
+
+  /**
+   * 批量删除截图。素材**先收集再一次性删**，并且必须走 removeAndSave
+   * （它会真的删 COS 上的图）。下标从大到小，避免删了前面的把后面挪位。
+   */
+  async function runGalleryBulkDelete() {
+    const indexes = [...gallerySelectedIndexes].sort((a, b) => b - a);
+    if (indexes.length === 0) return;
+    const list = data.gallery || [];
+    const media = indexes.flatMap((i) => [list[i]?.imageUrl].filter(Boolean) as string[]);
+    const names = indexes.map((i) => list[i]?.title || `第 ${i + 1} 张`).join("、");
+    setGalleryBulkBusy(true);
+    await removeAndSave(
+      (draft) => {
+        const next = [...(draft.gallery || [])];
+        for (const i of indexes) next.splice(i, 1);
+        draft.gallery = next;
+      },
+      media,
+      () => { setExpandedGalleryId(null); exitGallerySelecting(); setStatus(`已批量删除 ${indexes.length} 张：${names}`); },
+    );
+    setGalleryBulkBusy(false);
+  }
+
+  async function runTreasureBulkDelete() {
+    const indexes = [...treasureSelectedIndexes].sort((a, b) => b - a);
+    if (indexes.length === 0) return;
+    const list = data.treasures || [];
+    const media = indexes.flatMap((i) => [list[i]?.imageUrl].filter(Boolean) as string[]);
+    setTreasureBulkBusy(true);
+    await removeAndSave(
+      (draft) => {
+        const next = [...(draft.treasures || [])];
+        for (const i of indexes) next.splice(i, 1);
+        draft.treasures = next;
+      },
+      media,
+      () => { setExpandedTreasureId(null); exitTreasureSelecting(); setStatus(`已批量删除 ${indexes.length} 张珍藏。`); },
+    );
+    setTreasureBulkBusy(false);
+  }
+
   const SaveCurrentButton = ({ label = "保存全部" }: { label?: string }) => (
     <button
       type="button"
@@ -3475,21 +4052,29 @@ export default function AdminApp() {
                     update((draft) => { draft.profile.avatar = url; });
                   })} />
                 </label>
+
+                {/* 「不展示头像」开关：勾上 = 前台首页左栏不渲染头像。
+                    字段是 `hideAvatar` 而不是 `avatarVisible`，勾选状态与字段同向，
+                    省掉一次 `!value` 反转 —— 那种地方最容易写反，前台会跟开关相反。
+                    改完即保存（与「模块管理」的开关一致），不用等「保存全部」。 */}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <VisibilitySwitch
+                    name="首页头像"
+                    hint="关闭后访客看不到头像，名片只剩下名称与标签；头像文件与地址都保留。"
+                    checked={!data.profile.pageCopy?.hideAvatar}
+                    disabled={saving}
+                    onChange={(next) => {
+                      void mutateAndSave(
+                        (draft) => { editPageCopy(draft, { hideAvatar: !next }); },
+                        undefined,
+                        { collapse: false },
+                      );
+                    }}
+                  />
+                </div>
                 <Field label="一句话标签" value={data.profile.tagline} onChange={(value) => update((draft) => { draft.profile.tagline = value; })} textarea />
                 <Field label="自我介绍" value={data.profile.intro} onChange={(value) => update((draft) => { draft.profile.intro = value; })} textarea />
                 <Field label="诗句/签名" value={data.profile.quote} onChange={(value) => update((draft) => { draft.profile.quote = value; })} textarea />
-                <label className="flex items-center justify-between gap-4 rounded-xl bg-white/[0.03] p-3">
-                  <span>
-                    <span className="block text-xs font-semibold text-zinc-200">允许前台自动播放音乐</span>
-                    <span className="mt-1 block text-[11px] text-zinc-500">开启后前台会默认尝试播放列表第一首音乐。</span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(data.profile.musicAutoplay)}
-                    onChange={(event) => update((draft) => { draft.profile.musicAutoplay = event.target.checked; })}
-                    className="h-5 w-5 accent-emerald-300"
-                  />
-                </label>
                 <SaveCurrentButton label="保存全部" />
               </Section>
             )}
@@ -3724,11 +4309,13 @@ export default function AdminApp() {
                   deleteMedia={deleteMedia}
                   addDraft={addDraft}
                   removeAndSave={removeAndSave}
+                  reorder={(from, to) => reorderWorks((draft) => draft.works, (draft, items) => { draft.works = items; }, from, to)}
                   migrate={{
                     label: "迁移到 AI 专区",
                     hint: "这条作品会从「作品媒体」移到「AI 专区」，访客端跟着换栏目。图片 / 视频 / 附件素材原样带过去，不会被删除；分类如果不在 AI 专区的词表里会保留原值（显示为「xxx（当前）」），迁移后可以自己改。",
                     run: (work, index) => migrateWork(work, index, "to-ai"),
                   }}
+                  onStatus={setStatus}
                   renderSaveButton={() => <SaveCurrentButton label="保存全部" />}
                 />
               </>
@@ -3755,11 +4342,18 @@ export default function AdminApp() {
                   deleteMedia={deleteMedia}
                   addDraft={addDraft}
                   removeAndSave={removeAndSave}
+                  reorder={(from, to) => reorderWorks(
+                    (draft) => draft.profile.pageCopy?.aiWorks || [],
+                    (draft, items) => { editPageCopy(draft, { aiWorks: items }); },
+                    from,
+                    to,
+                  )}
                   migrate={{
                     label: "迁移回作品媒体",
                     hint: "这条 AI 作品会从「AI 专区」移回「作品媒体」，访客端跟着换栏目。图片 / 视频 / 附件素材原样带过去，不会被删除；分类如果不在「作品媒体」的词表里会保留原值（显示为「xxx（当前）」），迁移后可以自己改。",
                     run: (work, index) => migrateWork(work, index, "to-works"),
                   }}
+                  onStatus={setStatus}
                   renderSaveButton={() => <SaveCurrentButton label="保存全部" />}
                 />
               </>
@@ -3771,42 +4365,189 @@ export default function AdminApp() {
                   title="应用技能图库"
                   description="前台「应用技能」栏目里的图片，按这里的顺序展示。"
                   action={
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const id = uid("gallery");
-                        addDraft(
-                          (draft) => { draft.gallery = [...(draft.gallery || []), { ...emptyGalleryItem, id }]; },
-                          () => setExpandedGalleryId(id),
-                        );
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-zinc-300 hover:border-zinc-600"
-                    >
-                      <Plus size={15} /> 新增截图
-                    </button>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      {/* 多选总开关。栏目不同、位置与外观一致 —— 后台里
+                          「批量操作」永远在标题栏右上角，不用重新找。 */}
+                      <button
+                        type="button"
+                        aria-pressed={gallerySelecting}
+                        onClick={() => (gallerySelecting ? exitGallerySelecting() : setGallerySelecting(true))}
+                        className={
+                          "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-sm transition-colors duration-200 " +
+                          (gallerySelecting
+                            ? "border-emerald-400 text-emerald-200"
+                            : "border-zinc-800 text-zinc-300 hover:border-zinc-600")
+                        }
+                      >
+                        <ListChecks size={15} /> {gallerySelecting ? "退出批量" : "批量操作"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const id = uid("gallery");
+                          addDraft(
+                            (draft) => { draft.gallery = [...(draft.gallery || []), { ...emptyGalleryItem, id }]; },
+                            () => setExpandedGalleryId(id),
+                          );
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-zinc-300 hover:border-zinc-600"
+                      >
+                        <Plus size={15} /> 新增截图
+                      </button>
+                    </div>
                   }
                 >
                   <p className="text-sm leading-5 text-zinc-400">
                     共 {(data.gallery || []).length} 张截图。分类可用：应用、原型图、Agent、剪辑，也可新建分类。
+                    <span className="text-zinc-500">按住左侧手柄可拖动调整前台顺序。</span>
                   </p>
                 </Section>
+
+                {/* 批量操作条。只在多选模式下出现；删除不可撤销，所以两段式确认。 */}
+                {gallerySelecting && (
+                  <div className="adm-note adm-note-info flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-emerald-100/85">
+                    <LogOut size={14} className="shrink-0" />
+                    <span>
+                      已选 <span className="font-semibold text-white">{gallerySelectedIndexes.length}</span> / {(data.gallery || []).length} 张
+                      <span className="text-emerald-200/70">（批量模式下拖动排序已暂停）</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setGallerySelectedKeys((data.gallery || []).map((item, index) => galleryKeyOf(item, index)))}
+                      className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-600"
+                    >
+                      全选
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setGallerySelectedKeys([])}
+                      disabled={gallerySelectedKeys.length === 0}
+                      className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-600 disabled:opacity-50"
+                    >
+                      清空
+                    </button>
+
+                    <span className="ml-auto flex flex-wrap items-center gap-2">
+                      {galleryBulkConfirm === "delete" ? (
+                        <>
+                          <span className="text-[11px] leading-5 text-rose-200">
+                            删除 {gallerySelectedIndexes.length} 张截图及其图片文件，不可恢复。
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => { void runGalleryBulkDelete(); }}
+                            disabled={galleryBulkBusy}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-rose-400 px-2.5 py-1.5 text-xs font-semibold text-zinc-950 hover:bg-rose-300 disabled:opacity-60"
+                          >
+                            {galleryBulkBusy ? <Loader2 className="animate-spin" size={12} /> : <Trash2 size={12} />} 确认删除
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setGalleryBulkConfirm(null)}
+                            disabled={galleryBulkBusy}
+                            className="rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 disabled:opacity-60"
+                          >
+                            取消
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setGalleryBulkConfirm("delete")}
+                          disabled={gallerySelectedIndexes.length === 0}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-rose-500/60 hover:text-rose-200 disabled:opacity-50"
+                        >
+                          <Trash2 size={12} /> 批量删除
+                        </button>
+                      )}
+                    </span>
+                  </div>
+                )}
+
                 {(data.gallery || []).map((item: GalleryItem, index: number) => {
                   const active = expandedGalleryId === rowKey(item.id, index);
+                  const key = galleryKeyOf(item, index);
+                  const checked = gallerySelectedKeys.includes(key);
                   return (
-                    <EditorRow key={rowKey(item.id, index)} expanded={active}>
-                      <GallerySummary
-                        item={item}
-                        index={index}
-                        active={active}
-                        onEdit={() => setExpandedGalleryId(rowKey(item.id, index))}
-                        onDelete={() => {
-                                                    void removeAndSave(
-                            (draft) => { draft.gallery = (draft.gallery || []).filter((_, i) => i !== index); },
-                            [item.imageUrl],
-                            () => setExpandedGalleryId(null),
-                          );
-                        }}
-                      />
+                    <EditorRow key={key} expanded={active} tone={checked ? "emerald" : undefined}>
+                      {/* 拖动落点提示：一条细线，不做整行位移（否则会视觉抖动）。 */}
+                      {galleryDragOver === index && galleryDragFrom !== null && galleryDragFrom !== index && (
+                        <div className="h-0.5 w-full rounded bg-emerald-400/70" aria-hidden="true" />
+                      )}
+                      <div
+                        className="flex items-stretch"
+                        // 拖动只在「没进多选」时开放：两套交互叠一起会互相抢点击。
+                        {...(!gallerySelecting
+                          ? {
+                              draggable: true,
+                              onDragStart: (event: React.DragEvent) => {
+                                setGalleryDragFrom(index);
+                                event.dataTransfer.effectAllowed = "move";
+                                // Firefox 不给 dataTransfer 赋值就不触发 drag。
+                                event.dataTransfer.setData("text/plain", key);
+                              },
+                              onDragOver: (event: React.DragEvent) => {
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = "move";
+                                setGalleryDragOver(index);
+                              },
+                              onDragLeave: () => setGalleryDragOver((prev) => (prev === index ? null : prev)),
+                              onDrop: (event: React.DragEvent) => {
+                                event.preventDefault();
+                                const from = galleryDragFrom;
+                                setGalleryDragFrom(null);
+                                setGalleryDragOver(null);
+                                if (from !== null && from !== index) void reorderGallery(from, index);
+                              },
+                              onDragEnd: () => { setGalleryDragFrom(null); setGalleryDragOver(null); },
+                            }
+                          : {})}
+                      >
+                        {!gallerySelecting && (
+                          <span
+                            aria-hidden="true"
+                            title="按住拖动可调整前台顺序"
+                            className="flex w-6 shrink-0 cursor-grab items-center justify-center text-zinc-600 active:cursor-grabbing"
+                          >
+                            <GripVertical size={15} />
+                          </span>
+                        )}
+                        {gallerySelecting && (
+                          <label className="flex w-8 shrink-0 cursor-pointer items-center justify-center">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => setGallerySelectedKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]))}
+                              aria-label={"选择「" + (item.title || "未命名截图") + "」"}
+                              className="h-4 w-4 accent-emerald-300"
+                            />
+                          </label>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <GallerySummary
+                            item={item}
+                            index={index}
+                            active={active}
+                            selecting={gallerySelecting}
+                            checked={checked}
+                            onEdit={() => {
+                              // 多选模式下点击语义换成「勾选」，否则点哪儿都开弹窗、永远选不上。
+                              if (gallerySelecting) {
+                                setGallerySelectedKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+                                return;
+                              }
+                              setExpandedGalleryId(key);
+                            }}
+                            onDelete={() => {
+                              void removeAndSave(
+                                (draft) => { draft.gallery = (draft.gallery || []).filter((_, i) => i !== index); },
+                                [item.imageUrl],
+                                () => setExpandedGalleryId(null),
+                              );
+                            }}
+                          />
+                        </div>
+                      </div>
                     </EditorRow>
                   );
                 })}
@@ -4146,42 +4887,185 @@ export default function AdminApp() {
                   title="我的珍藏图库"
                   description="前台「我的珍藏」栏目里的收藏，按这里的顺序展示。页首文案在「模块管理」里。"
                   action={
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const id = uid("treasure");
-                        addDraft(
-                          (draft) => { draft.treasures = [...(draft.treasures || []), { ...emptyTreasureItem, id }]; },
-                          () => setExpandedTreasureId(id),
-                        );
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-zinc-300 hover:border-zinc-600"
-                    >
-                      <Plus size={15} /> 新增珍藏
-                    </button>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        aria-pressed={treasureSelecting}
+                        onClick={() => (treasureSelecting ? exitTreasureSelecting() : setTreasureSelecting(true))}
+                        className={
+                          "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-sm transition-colors duration-200 " +
+                          (treasureSelecting
+                            ? "border-emerald-400 text-emerald-200"
+                            : "border-zinc-800 text-zinc-300 hover:border-zinc-600")
+                        }
+                      >
+                        <ListChecks size={15} /> {treasureSelecting ? "退出批量" : "批量操作"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const id = uid("treasure");
+                          addDraft(
+                            (draft) => { draft.treasures = [...(draft.treasures || []), { ...emptyTreasureItem, id }]; },
+                            () => setExpandedTreasureId(id),
+                          );
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-zinc-300 hover:border-zinc-600"
+                      >
+                        <Plus size={15} /> 新增珍藏
+                      </button>
+                    </div>
                   }
                 >
                   <p className="text-sm leading-5 text-zinc-400">
                     共 {(data.treasures || []).length} 张珍藏。
+                    <span className="text-zinc-500">按住左侧手柄可拖动调整前台顺序。</span>
                   </p>
                 </Section>
+
+                {/* 批量操作条。与截图、音乐同一套：只在多选模式下出现，删除两段式确认。 */}
+                {treasureSelecting && (
+                  <div className="adm-note adm-note-info flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-emerald-100/85">
+                    <LogOut size={14} className="shrink-0" />
+                    <span>
+                      已选 <span className="font-semibold text-white">{treasureSelectedIndexes.length}</span> / {(data.treasures || []).length} 张
+                      <span className="text-emerald-200/70">（批量模式下拖动排序已暂停）</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setTreasureSelectedKeys((data.treasures || []).map((item, index) => treasureKeyOf(item, index)))}
+                      className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-600"
+                    >
+                      全选
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTreasureSelectedKeys([])}
+                      disabled={treasureSelectedKeys.length === 0}
+                      className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-600 disabled:opacity-50"
+                    >
+                      清空
+                    </button>
+
+                    <span className="ml-auto flex flex-wrap items-center gap-2">
+                      {treasureBulkConfirm === "delete" ? (
+                        <>
+                          <span className="text-[11px] leading-5 text-rose-200">
+                            删除 {treasureSelectedIndexes.length} 张珍藏及其图片文件，不可恢复。
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => { void runTreasureBulkDelete(); }}
+                            disabled={treasureBulkBusy}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-rose-400 px-2.5 py-1.5 text-xs font-semibold text-zinc-950 hover:bg-rose-300 disabled:opacity-60"
+                          >
+                            {treasureBulkBusy ? <Loader2 className="animate-spin" size={12} /> : <Trash2 size={12} />} 确认删除
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setTreasureBulkConfirm(null)}
+                            disabled={treasureBulkBusy}
+                            className="rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 disabled:opacity-60"
+                          >
+                            取消
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setTreasureBulkConfirm("delete")}
+                          disabled={treasureSelectedIndexes.length === 0}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-rose-500/60 hover:text-rose-200 disabled:opacity-50"
+                        >
+                          <Trash2 size={12} /> 批量删除
+                        </button>
+                      )}
+                    </span>
+                  </div>
+                )}
+
                 {(data.treasures || []).map((item: TreasureItem, index: number) => {
                   const active = expandedTreasureId === rowKey(item.id, index);
+                  const key = treasureKeyOf(item, index);
+                  const checked = treasureSelectedKeys.includes(key);
                   return (
-                    <EditorRow key={rowKey(item.id, index)} expanded={active} tone="amber">
-                      <TreasureSummary
-                        item={item}
-                        index={index}
-                        active={active}
-                        onEdit={() => setExpandedTreasureId(rowKey(item.id, index))}
-                        onDelete={() => {
-                                                    void removeAndSave(
-                            (draft) => { draft.treasures = (draft.treasures || []).filter((_, i) => i !== index); },
-                            [item.imageUrl],
-                            () => setExpandedTreasureId(null),
-                          );
-                        }}
-                      />
+                    // tone 默认 amber（珍藏的固有色调），勾选中时让位给 emerald ——
+                    // 这跟音乐列表一个规矩：状态色优先于栏目色。
+                    <EditorRow key={key} expanded={active} tone={checked ? "emerald" : "amber"}>
+                      {treasureDragOver === index && treasureDragFrom !== null && treasureDragFrom !== index && (
+                        <div className="h-0.5 w-full rounded bg-emerald-400/70" aria-hidden="true" />
+                      )}
+                      <div
+                        className="flex items-stretch"
+                        {...(!treasureSelecting
+                          ? {
+                              draggable: true,
+                              onDragStart: (event: React.DragEvent) => {
+                                setTreasureDragFrom(index);
+                                event.dataTransfer.effectAllowed = "move";
+                                event.dataTransfer.setData("text/plain", key);
+                              },
+                              onDragOver: (event: React.DragEvent) => {
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = "move";
+                                setTreasureDragOver(index);
+                              },
+                              onDragLeave: () => setTreasureDragOver((prev) => (prev === index ? null : prev)),
+                              onDrop: (event: React.DragEvent) => {
+                                event.preventDefault();
+                                const from = treasureDragFrom;
+                                setTreasureDragFrom(null);
+                                setTreasureDragOver(null);
+                                if (from !== null && from !== index) void reorderTreasures(from, index);
+                              },
+                              onDragEnd: () => { setTreasureDragFrom(null); setTreasureDragOver(null); },
+                            }
+                          : {})}
+                      >
+                        {!treasureSelecting && (
+                          <span
+                            aria-hidden="true"
+                            title="按住拖动可调整前台顺序"
+                            className="flex w-6 shrink-0 cursor-grab items-center justify-center text-zinc-600 active:cursor-grabbing"
+                          >
+                            <GripVertical size={15} />
+                          </span>
+                        )}
+                        {treasureSelecting && (
+                          <label className="flex w-8 shrink-0 cursor-pointer items-center justify-center">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => setTreasureSelectedKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]))}
+                              aria-label={"选择「珍藏 " + (index + 1) + "」"}
+                              className="h-4 w-4 accent-emerald-300"
+                            />
+                          </label>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <TreasureSummary
+                            item={item}
+                            index={index}
+                            active={active}
+                            selecting={treasureSelecting}
+                            checked={checked}
+                            onEdit={() => {
+                              if (treasureSelecting) {
+                                setTreasureSelectedKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+                                return;
+                              }
+                              setExpandedTreasureId(key);
+                            }}
+                            onDelete={() => {
+                              void removeAndSave(
+                                (draft) => { draft.treasures = (draft.treasures || []).filter((_, i) => i !== index); },
+                                [item.imageUrl],
+                                () => setExpandedTreasureId(null),
+                              );
+                            }}
+                          />
+                        </div>
+                      </div>
                     </EditorRow>
                   );
                 })}
@@ -4334,42 +5218,207 @@ export default function AdminApp() {
                   title="首页音乐播放器"
                   description="前台首页背景音乐列表，可导入歌词并逐字校准时间轴。"
                   action={
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const id = uid("track");
-                        addDraft(
-                          (draft) => { draft.musicTracks = [...(draft.musicTracks || []), { ...emptyMusicTrack, id }]; },
-                          () => setExpandedMusicId(id),
-                        );
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-zinc-300"
-                    >
-                      <Plus size={15} /> 新增音乐
-                    </button>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      {/* 多选模式总开关。与作品列表同一位置、同一外观 —— 后台里
+                          「批量操作」在哪个栏目都是同一个地方，不用重新找。 */}
+                      <button
+                        type="button"
+                        aria-pressed={musicSelecting}
+                        onClick={() => (musicSelecting ? exitMusicSelecting() : setMusicSelecting(true))}
+                        className={
+                          "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-sm transition-colors duration-200 " +
+                          (musicSelecting
+                            ? "border-emerald-400 text-emerald-200"
+                            : "border-zinc-800 text-zinc-300 hover:border-zinc-600")
+                        }
+                      >
+                        <ListChecks size={15} /> {musicSelecting ? "退出批量" : "批量操作"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const id = uid("track");
+                          addDraft(
+                            (draft) => { draft.musicTracks = [...(draft.musicTracks || []), { ...emptyMusicTrack, id }]; },
+                            () => setExpandedMusicId(id),
+                          );
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-zinc-300"
+                      >
+                        <Plus size={15} /> 新增音乐
+                      </button>
+                    </div>
                   }
                 >
                   <p className="text-sm leading-5 text-zinc-400">
                     共 {(data.musicTracks || []).length} 首音乐。封面、标题、作者和歌词都在弹窗里改。
                   </p>
+
+                  {/* 自动播放开关。宝的要求：这里是「开关」不是「勾选框」，而且必须
+                      待在音乐模块里 —— 它管的是播放器行为，放在「站点资料」里没人找得到。
+                      用 VisibilitySwitch 保证与其它开关同一套外观与「改完即存」行为。 */}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                    <VisibilitySwitch
+                      name="自动播放"
+                      hint="开启后访客打开首页会尝试自动播放第一首；浏览器通常要求先有交互，所以不保证一定响。"
+                      checked={Boolean(data.profile.musicAutoplay)}
+                      disabled={saving}
+                      onChange={(next) => {
+                        void mutateAndSave(
+                          (draft) => { draft.profile.musicAutoplay = next; },
+                          undefined,
+                          { collapse: false },
+                        );
+                      }}
+                    />
+                  </div>
                 </Section>
+
+                {/* 批量操作条。只在多选模式下出现；删除不可撤销，所以两段式确认。 */}
+                {musicSelecting && (
+                  <div className="adm-note adm-note-info flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-emerald-100/85">
+                    <LogOut size={14} className="shrink-0" />
+                    <span>
+                      已选 <span className="font-semibold text-white">{musicSelectedIndexes.length}</span> / {(data.musicTracks || []).length} 首
+                      <span className="text-emerald-200/70">（批量模式下拖动排序已暂停）</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setMusicSelectedKeys((data.musicTracks || []).map((track, index) => musicKeyOf(track, index)))}
+                      className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-600"
+                    >
+                      全选
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMusicSelectedKeys([])}
+                      disabled={musicSelectedKeys.length === 0}
+                      className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-600 disabled:opacity-50"
+                    >
+                      清空
+                    </button>
+
+                    <span className="ml-auto flex flex-wrap items-center gap-2">
+                      {musicBulkConfirm === "delete" ? (
+                        <>
+                          <span className="text-[11px] leading-5 text-rose-200">
+                            删除 {musicSelectedIndexes.length} 首及其音频、封面，不可恢复。
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => { void runMusicBulkDelete(); }}
+                            disabled={musicBulkBusy}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-rose-400 px-2.5 py-1.5 text-xs font-semibold text-zinc-950 hover:bg-rose-300 disabled:opacity-60"
+                          >
+                            {musicBulkBusy ? <Loader2 className="animate-spin" size={12} /> : <Trash2 size={12} />} 确认删除
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setMusicBulkConfirm(null)}
+                            disabled={musicBulkBusy}
+                            className="rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 disabled:opacity-60"
+                          >
+                            取消
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setMusicBulkConfirm("delete")}
+                          disabled={musicSelectedIndexes.length === 0}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-rose-500/60 hover:text-rose-200 disabled:opacity-50"
+                        >
+                          <Trash2 size={12} /> 批量删除
+                        </button>
+                      )}
+                    </span>
+                  </div>
+                )}
+
                 {(data.musicTracks || []).map((track: MusicTrack, index: number) => {
                   const active = expandedMusicId === rowKey(track.id, index);
+                  const key = musicKeyOf(track, index);
+                  const checked = musicSelectedKeys.includes(key);
                   return (
-                    <EditorRow key={rowKey(track.id, index)} expanded={active}>
-                      <MusicSummary
-                        track={track}
-                        index={index}
-                        active={active}
-                        onEdit={() => setExpandedMusicId(rowKey(track.id, index))}
-                        onDelete={() => {
-                                                    void removeAndSave(
-                            (draft) => { draft.musicTracks = (draft.musicTracks || []).filter((_, i) => i !== index); },
-                            [track.audioUrl, track.coverUrl],
-                            () => setExpandedMusicId(null),
-                          );
-                        }}
-                      />
+                    <EditorRow key={key} expanded={active} tone={checked ? "emerald" : undefined}>
+                      {/* 拖动落点提示：一条细线，不做整行位移（否则会视觉抖动）。 */}
+                      {musicDragOver === index && musicDragFrom !== null && musicDragFrom !== index && (
+                        <div className="h-0.5 w-full rounded bg-emerald-400/70" aria-hidden="true" />
+                      )}
+                      <div
+                        className="flex items-stretch"
+                        // 拖动只在「没进多选」时开放：两套交互叠一起会互相抢点击。
+                        {...(!musicSelecting
+                          ? {
+                              draggable: true,
+                              onDragStart: (event: React.DragEvent) => {
+                                setMusicDragFrom(index);
+                                event.dataTransfer.effectAllowed = "move";
+                                // Firefox 不给 dataTransfer 赋值就不触发 drag。
+                                event.dataTransfer.setData("text/plain", key);
+                              },
+                              onDragOver: (event: React.DragEvent) => {
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = "move";
+                                setMusicDragOver(index);
+                              },
+                              onDragLeave: () => setMusicDragOver((prev) => (prev === index ? null : prev)),
+                              onDrop: (event: React.DragEvent) => {
+                                event.preventDefault();
+                                const from = musicDragFrom;
+                                setMusicDragFrom(null);
+                                setMusicDragOver(null);
+                                if (from !== null && from !== index) void reorderMusic(from, index);
+                              },
+                              onDragEnd: () => { setMusicDragFrom(null); setMusicDragOver(null); },
+                            }
+                          : {})}
+                      >
+                        {!musicSelecting && (
+                          <span
+                            aria-hidden="true"
+                            title="按住拖动可调整前台顺序"
+                            className="flex w-6 shrink-0 cursor-grab items-center justify-center text-zinc-600 active:cursor-grabbing"
+                          >
+                            <GripVertical size={15} />
+                          </span>
+                        )}
+                        {musicSelecting && (
+                          <label className="flex w-8 shrink-0 cursor-pointer items-center justify-center">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => setMusicSelectedKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]))}
+                              aria-label={"选择「" + (track.title || "未命名音乐") + "」"}
+                              className="h-4 w-4 accent-emerald-300"
+                            />
+                          </label>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <MusicSummary
+                            track={track}
+                            index={index}
+                            active={active}
+                            selecting={musicSelecting}
+                            checked={checked}
+                            onEdit={() => {
+                              // 多选模式下点击语义换成「勾选」，否则点哪儿都开弹窗、永远选不上。
+                              if (musicSelecting) {
+                                setMusicSelectedKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+                                return;
+                              }
+                              setExpandedMusicId(key);
+                            }}
+                            onDelete={() => {
+                              void removeAndSave(
+                                (draft) => { draft.musicTracks = (draft.musicTracks || []).filter((_, i) => i !== index); },
+                                [track.audioUrl, track.coverUrl],
+                                () => setExpandedMusicId(null),
+                              );
+                            }}
+                          />
+                        </div>
+                      </div>
                     </EditorRow>
                   );
                 })}
