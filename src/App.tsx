@@ -20,19 +20,23 @@ import {
   TrendingUp,
   Video,
   X,
+  ZoomIn,
 } from "lucide-react";
+import { createPortal } from "react-dom";
 import AdminApp from "./AdminApp";
-import { FloatingSentencesConfig, GalleryItem, MusicTrack, PortfolioData, ResumeProfile, TreasureItem, Work, defaultPageCopy } from "./types";
+import { startVisitTracking } from "./tracking";
+import { FloatingSentencesConfig, GalleryItem, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, Work, defaultPageCopy, isSectionVisible, normalizeSectionOrder } from "./types";
 
-type TabKey = "intro" | "resume" | "works" | "ai" | "prospects" | "treasures" | "contact";
+type TabKey = "intro" | "resume" | "works" | "ai" | "prospects" | "treasures" | "poems" | "contact";
 
 const navItems: { key: TabKey; label: string; sub: string }[] = [
   { key: "intro", label: "自我介绍", sub: "BIOGRAPHY" },
   { key: "resume", label: "个人简历", sub: "CURRICULUM" },
   { key: "works", label: "作品展示", sub: "PORTFOLIO" },
   { key: "ai", label: "AI专区", sub: "AI ZONE" },
-  { key: "prospects", label: "工程截图", sub: "GALLERY" },
+  { key: "prospects", label: "应用技能", sub: "SKILLS" },
   { key: "treasures", label: "我的珍藏", sub: "TREASURES" },
+  { key: "poems", label: "诗与惆怅", sub: "POEMS" },
   { key: "contact", label: "联系方式", sub: "CONTACT" },
 ];
 
@@ -42,6 +46,7 @@ const workCategories = [
   { key: "app", label: "应用制作" },
   { key: "prototype", label: "原型图" },
   { key: "video", label: "视频剪辑" },
+  { key: "poetry", label: "闲诗" },
 ];
 
 const galleryCategoryOrder = ["应用", "原型图", "Agent", "剪辑"];
@@ -81,17 +86,19 @@ function normalizeData(data: PortfolioData): PortfolioData {
  * 只有管理员在后台显式关闭（写入 false）才隐藏；缺省 undefined 视为展示，
  * 因此历史数据无需迁移也不会被误隐藏。导航过滤与图片预载都走这一个判断，
  * 避免两处规则各写一遍后彼此不一致。
+ *
+ * 现在它是 isSectionVisible 的一层薄封装 —— 判定规则（含 sectionVisible 新键
+ * 优先、旧键兜底）统一收在 types.ts，这里只负责「拿 data 取珍藏那一格」。
  */
 function isTreasuresVisible(data: PortfolioData) {
-  return data.profile.pageCopy?.treasuresVisible !== false;
+  return isSectionVisible(data.profile.pageCopy, "treasures");
 }
 
 /**
- * 「AI 专区」栏目是否在前台展示。约定与 isTreasuresVisible 完全一致：
- * 只有管理员在后台显式关闭（写入 false）才隐藏，缺省 undefined 一律视为展示。
+ * 「AI 专区」栏目是否在前台展示。约定与 isTreasuresVisible 完全一致。
  */
 function isAiZoneVisible(data: PortfolioData) {
-  return data.profile.pageCopy?.aiZoneVisible !== false;
+  return isSectionVisible(data.profile.pageCopy, "ai");
 }
 
 function categoryLabel(category: string) {
@@ -138,19 +145,23 @@ function getFileExtension(url: string, label?: string) {
   return match?.[1] || "";
 }
 
+// 能在弹层里原地预览的扩展名。其余（doc/xls/xlsx/ppt/zip/rar…）后台接不住，
+// 前台就别给「预览」按钮 —— 点了只会看到一句「不支持」，不如直接引导下载。
+const INLINE_PREVIEWABLE = new Set(["pdf", "docx", "csv", "tsv", "txt", "md", "markdown", "json", "log", "yml", "yaml"]);
+
 function getWorkLinkMeta(link: { label?: string; url: string; kind?: string; fileName?: string }) {
   const ext = getFileExtension(link.url, link.fileName || link.label);
-  const office = ["doc", "docx", "xls", "xlsx", "ppt", "pptx"];
   const isAttachment = link.kind === "attachment" || Boolean(ext);
-  const previewUrl = office.includes(ext)
-    ? `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(link.url)}`
-    : link.url;
+  const label = link.label || link.fileName || getFileNameFromUrl(link.url) || "查看文件";
+  // 预览走**本站同源**中转路由，浏览器插件、第三方域名一概不碰。
+  // 这样 iframe 才能嵌进来，且内网/本地部署照样能用。
+  const previewUrl = `/api/media/attachment-preview?url=${encodeURIComponent(link.url)}&name=${encodeURIComponent(label)}`;
   return {
     ext,
     isAttachment,
-    canPreview: isAttachment,
+    canPreview: isAttachment && INLINE_PREVIEWABLE.has(ext),
     previewUrl,
-    label: link.label || link.fileName || getFileNameFromUrl(link.url) || "查看文件",
+    label,
   };
 }
 
@@ -799,8 +810,154 @@ function PoetryDescription({ text }: { text: string }) {
   );
 }
 
+/**
+ * 前台图片放大层。
+ *
+ * 宝：作品选了图片却点不开、只能看缩略图。根因是前台详情弹窗把图片塞进一个
+ * 固定 `aspect-video` 的框里 `object-contain` —— 非 16:9 的图在框内被压成小条，
+ * 还没法点开看原图。这里给一条「点一下看大图」的路。
+ *
+ * 它在前台是**最上层**（z-[60] 压在详情弹窗的 z-50 之上），且用 portal 挂到 body：
+ * 详情弹窗自己就有 `overflow-y-auto` 的滚动容器，`position: fixed` 一旦被这种
+ * 祖先吃掉坐标系就铺不满屏 —— portal 把这个隐患变成结构性保证。
+ */
+function ImageLightbox({ images, index, onChange, onClose }: {
+  images: string[];
+  index: number;
+  onChange: (index: number) => void;
+  onClose: () => void;
+}) {
+  const usable = (images || []).filter(Boolean);
+  const current = (images || [])[index];
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setFailed(false); }, [current]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.stopPropagation(); onClose(); }
+    };
+    // capture 阶段抢在详情弹窗之前处理 Esc，免得一起被关掉。
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+
+  if (!current) return null;
+  const validIndex = usable.indexOf(current);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[60] m-0 flex flex-col items-center justify-center gap-3 p-4 md:p-8">
+      <button type="button" className="absolute inset-0 cursor-zoom-out bg-black/95 backdrop-blur-sm" onClick={onClose} aria-label="关闭大图" tabIndex={-1} />
+      <div className="relative z-10 flex max-h-full min-h-0 w-full flex-col items-center gap-3">
+        <div className="flex w-full items-center justify-between gap-3">
+          <span className="truncate font-mono text-[11px] text-zinc-400">
+            第 {validIndex + 1} / {usable.length} 张
+          </span>
+          <button type="button" onClick={onClose} className="inline-flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900/80 px-3 py-1.5 text-xs text-zinc-200 hover:border-zinc-500 hover:text-white" aria-label="关闭">
+            <X size={14} /> 关闭
+          </button>
+        </div>
+        {failed ? (
+          <p className="rounded-lg border border-amber-600/40 bg-amber-950/20 px-4 py-3 text-xs text-amber-200">这张图加载失败，地址可能已失效。</p>
+        ) : (
+          <img src={current} alt={zhText("图片大图预览")} referrerPolicy="no-referrer" onError={() => setFailed(true)} className="max-h-[70vh] w-auto max-w-full rounded-lg border border-zinc-700/70 object-contain" />
+        )}
+        {usable.length > 1 && (
+          <div className="flex max-w-full flex-wrap justify-center gap-2">
+            {usable.map((url, thumbIndex) => (
+              <button key={`${url}-${thumbIndex}`} type="button" onClick={() => onChange((images || []).indexOf(url))} className={"h-12 w-16 shrink-0 overflow-hidden rounded-md border transition " + (url === current ? "border-emerald-400" : "border-zinc-700 hover:border-zinc-500")} aria-label={`看第 ${thumbIndex + 1} 张`}>
+                <img src={url} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/**
+ * 作品附件的**原地预览弹层**。
+ *
+ * 为什么是弹层 + iframe 而不是新标签页：
+ *   - 附件存在 COS 上，直接 `href` 过去，PDF 会被浏览器丢进自己的阅读器（外站、新页面），
+ *     doc/docx 更是根本不渲染、只能靠 Microsoft 的在线预览器 —— 那个是**另一个域**，
+ *     还要求文件公网可达，本地/内网部署直接废掉。
+ *   - 所以统一走本站同源路由 `/api/media/attachment-preview`，把 iframe 嵌回来，
+ *     用户在原来这一页就能看，也不会有新开窗口/新标签的跳转。
+ *
+ * 滚动：iframe 内部撑满并自带滚动条，长文档（尤其是 Word 转出来的 HTML）
+ * 可以整份连续滚到底，不会只卡在第一页。
+ */
+function AttachmentPreviewModal({
+  src,
+  title,
+  downloadUrl,
+  onClose,
+}: {
+  src: string;
+  title: string;
+  downloadUrl: string;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 md:p-6" role="dialog" aria-modal="true" aria-label={`预览 ${title}`}>
+      <button className="absolute inset-0 bg-black/92 backdrop-blur-md" onClick={onClose} aria-label="关闭预览" />
+      <div className="relative flex h-full max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-900 bg-zinc-950 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <FileText size={14} className="shrink-0 text-emerald-300/80" />
+            <span className="min-w-0 truncate text-xs text-zinc-200">{zhText(title)}</span>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <a href={downloadUrl} target="_blank" rel="noopener noreferrer" download className="inline-flex items-center gap-1 rounded border border-zinc-800 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-600 hover:text-white">
+              <Download size={11} /> 下载
+            </a>
+            <button onClick={onClose} className="rounded-full border border-zinc-800 bg-zinc-900/80 p-1.5 text-zinc-300 hover:text-white" aria-label="关闭">
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+        <div className="relative flex-1 overflow-hidden bg-zinc-900">
+          {loading && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-zinc-950">
+              <span className="font-mono text-[11px] tracking-widest text-zinc-500">正在加载文档…</span>
+            </div>
+          )}
+          {/* 高度撑满 + overflow-auto：文档整份在框内滚动，不再只露第一页。 */}
+          <iframe
+            src={src}
+            title={`预览 ${title}`}
+            onLoad={() => setLoading(false)}
+            className="h-full w-full overflow-auto border-0 bg-white"
+          />
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
   const [imageIndex, setImageIndex] = useState(0);
+  const [zoomed, setZoomed] = useState(false);
+  // 原地预览的那份附件（存 meta 而不是 id —— 老数据不一定有 id）。
+  const [previewing, setPreviewing] = useState<{ src: string; title: string; downloadUrl: string } | null>(null);
   const images = work.images || [];
   const currentImage = images[imageIndex];
   return (
@@ -816,9 +973,16 @@ function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
               {images.length > 0 && (
                 <div className="grid grid-cols-4 gap-2">
                   {images.map((image, idx) => (
-                    <button key={`${image}-${idx}`} type="button" onClick={() => setImageIndex(idx)} className={`aspect-video overflow-hidden rounded-md border ${idx === imageIndex ? "border-emerald-300" : "border-zinc-800"}`} aria-label={`切换到第 ${idx + 1} 张封面`}>
-                      <img src={image} alt={`${zhText(work.title)} 封面 ${idx + 1}`} className="h-full w-full object-contain bg-black" referrerPolicy="no-referrer" />
-                    </button>
+                    /* 双击语义不存在于触屏/无头环境，所以「选这张当封面」和「看大图」
+                       拆成两个可点区域：缩略图选中，右上角放大镜看大图。 */
+                    <div key={`${image}-${idx}`} className={`group relative aspect-video overflow-hidden rounded-md border ${idx === imageIndex ? "border-emerald-300" : "border-zinc-800"}`}>
+                      <button type="button" onClick={() => setImageIndex(idx)} className="h-full w-full" aria-label={`切换到第 ${idx + 1} 张封面`}>
+                        <img src={image} alt={`${zhText(work.title)} 封面 ${idx + 1}`} className="h-full w-full object-contain bg-black" referrerPolicy="no-referrer" />
+                      </button>
+                      <button type="button" onClick={() => { setImageIndex(idx); setZoomed(true); }} className="absolute right-0.5 top-0.5 rounded bg-black/70 p-1 opacity-0 transition group-hover:opacity-100" aria-label={`放大第 ${idx + 1} 张封面`}>
+                        <ZoomIn size={12} className="text-white" />
+                      </button>
+                    </div>
                   ))}
                 </div>
               )}
@@ -826,7 +990,14 @@ function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
           ) : (
             <div className="relative flex aspect-video w-full items-center justify-center p-4">
               {currentImage ? (
-                <div className="absolute inset-4 overflow-hidden rounded-lg border border-zinc-900 bg-zinc-900/40"><img src={currentImage} alt={zhText(work.title)} className="h-full w-full object-contain" referrerPolicy="no-referrer" /></div>
+                /* 整张图是个按钮：点开看原图。横幅图在这块 aspect-video 里只能
+                   看清轮廓，点开放大是唯一能看细节的路。 */
+                <button type="button" onClick={() => setZoomed(true)} className="group absolute inset-4 overflow-hidden rounded-lg border border-zinc-900 bg-zinc-900/40" aria-label="放大查看图片">
+                  <img src={currentImage} alt={zhText(work.title)} className="h-full w-full object-contain" referrerPolicy="no-referrer" />
+                  <span className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition group-hover:opacity-100">
+                    <ZoomIn size={22} className="text-white" />
+                  </span>
+                </button>
               ) : (
                 <div className="font-mono text-xs text-zinc-600">No preview images available</div>
               )}
@@ -863,7 +1034,15 @@ function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
                         {meta.ext && <span className="rounded border border-zinc-800 px-1.5 py-0.5 text-[10px] uppercase text-zinc-500">{meta.ext}</span>}
                       </div>
                       <div className="flex shrink-0 gap-2">
-                        {meta.canPreview && <a href={meta.previewUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded border border-zinc-800 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-600 hover:text-white"><ExternalLink size={11} /> 预览</a>}
+                        {meta.canPreview && (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewing({ src: meta.previewUrl, title: meta.label, downloadUrl: link.url })}
+                            className="inline-flex items-center gap-1 rounded border border-zinc-800 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-600 hover:text-white"
+                          >
+                            <ZoomIn size={11} /> 预览
+                          </button>
+                        )}
                         <a href={link.url} target="_blank" rel="noopener noreferrer" download className="inline-flex items-center gap-1 rounded border border-zinc-800 px-2 py-1 text-[11px] text-zinc-300 hover:border-zinc-600 hover:text-white"><Download size={11} /> 下载</a>
                       </div>
                     </div>
@@ -874,6 +1053,17 @@ function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
           )}
         </div>
       </div>
+      {zoomed && currentImage && (
+        <ImageLightbox images={images} index={imageIndex} onChange={setImageIndex} onClose={() => setZoomed(false)} />
+      )}
+      {previewing && (
+        <AttachmentPreviewModal
+          src={previewing.src}
+          title={previewing.title}
+          downloadUrl={previewing.downloadUrl}
+          onClose={() => setPreviewing(null)}
+        />
+      )}
     </div>
   );
 }
@@ -950,9 +1140,9 @@ function ResumePane({ data }: { data: PortfolioData }) {
           </div>
         </div>
       ) : profiles.length > 0 ? (
-        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂未上传{zhText(active.position)}简历 PDF</p><p className="mt-3 text-sm leading-7 text-zinc-400">请进入后台 `/admin`，在“站点资料 → 简历展示”里为这个岗位上传 PDF，保存后这里会自动展示。</p></div>
+        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂未上传{zhText(active.position)}简历 PDF</p><p className="mt-3 text-sm leading-7 text-zinc-400">请进入后台 `/admin`，在“个人简历 → 简历展示”里为这个岗位上传 PDF，保存后这里会自动展示。</p></div>
       ) : (
-        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂未配置简历</p><p className="mt-3 text-sm leading-7 text-zinc-400">请进入后台 `/admin`，在“站点资料 → 简历展示”中新增岗位并上传 PDF 简历。</p></div>
+        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂未配置简历</p><p className="mt-3 text-sm leading-7 text-zinc-400">请进入后台 `/admin`，在“个人简历 → 简历展示”中新增岗位并上传 PDF 简历。</p></div>
       )}
     </div>
   );
@@ -991,6 +1181,159 @@ function FilterRail({
 }
 
 /**
+ * 页码条。作品展示 / AI 专区 / 应用技能 / 我的珍藏 共用。
+ *
+ * 宝：超过 3 列的分页（第 6 个之后），页码放模块底部居中。
+ *
+ * 为什么用**固定每页条数**而不是「按列数动态算」：
+ * 列数是断点相关的（`md:grid-cols-2 xl:grid-cols-3`），窗口一拉列数就变，
+ * 动态算每页条数会让「第 2 页」的内容随窗口宽度跳来跳去 —— 用户正在看的东西
+ * 突然换掉，比多几行空白糟糕得多。固定条数至少保证「翻到第几页」是稳定的。
+ *
+ * 三列布局配 6 个（两整行）、两列布局配 4 个（两整行），窄屏下会显得偏少，
+ * 但翻页节奏一致、宽屏正好铺满两行。
+ */
+function Pagination({
+  page,
+  pageCount,
+  onPageChange,
+  anchorRef,
+}: {
+  page: number;
+  pageCount: number;
+  onPageChange: (page: number) => void;
+  /**
+   * 内容区的 ref。翻页时用它把滚动位置带回内容顶部 ——
+   * 没有这个，用户点第 2 页会「看不出反应」（见 scrollToTopOf 的说明）。
+   */
+  anchorRef?: React.RefObject<HTMLElement | null>;
+}) {
+  // 只有一页时不渲染 —— 一个永远点不动的「1」是纯噪音。
+  if (pageCount <= 1) return null;
+
+  const go = (next: number) => {
+    onPageChange(next);
+    scrollToTopOf(anchorRef?.current ?? null);
+  };
+
+  // 当前页附近展开，两端各留 1 个，其余折叠成省略号。
+  // 纯线性铺开在页数多时会把头部挤爆（几十个小方块），要收口。
+  const pages: (number | "gap")[] = [];
+  for (let n = 1; n <= pageCount; n++) {
+    const near = Math.abs(n - page) <= 1 || n === 1 || n === pageCount;
+    if (near) {
+      pages.push(n);
+    } else if (pages[pages.length - 1] !== "gap") {
+      pages.push("gap");
+    }
+  }
+
+  const arrowClass =
+    "inline-flex h-8 min-w-8 items-center justify-center rounded border border-zinc-800 px-2 font-mono text-xs text-zinc-300 transition-colors hover:border-zinc-600 hover:text-white disabled:cursor-not-allowed disabled:border-zinc-900 disabled:text-zinc-700 disabled:hover:border-zinc-900";
+
+  return (
+    <nav className="flex flex-wrap items-center justify-center gap-1.5 pt-6" aria-label="分页">
+      <button type="button" onClick={() => go(page - 1)} disabled={page <= 1} className={arrowClass} aria-label="上一页">
+        上一页
+      </button>
+      {pages.map((item, index) =>
+        item === "gap" ? (
+          <span key={`gap-${index}`} className="px-1 font-mono text-xs text-zinc-600">
+            …
+          </span>
+        ) : (
+          <button
+            key={item}
+            type="button"
+            onClick={() => go(item)}
+            aria-current={item === page ? "page" : undefined}
+            className={`inline-flex h-8 min-w-8 items-center justify-center rounded border px-2 font-mono text-xs transition-colors ${
+              item === page
+                ? "border-emerald-500/70 bg-emerald-500/10 text-emerald-200"
+                : "border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:text-white"
+            }`}
+          >
+            {item}
+          </button>
+        ),
+      )}
+      <button type="button" onClick={() => go(page + 1)} disabled={page >= pageCount} className={arrowClass} aria-label="下一页">
+        下一页
+      </button>
+    </nav>
+  );
+}
+
+/**
+ * 把一列条目切片分页。所有列表共用一套越界兜底：
+ * 数据变少（删了作品 / 换了筛选）时当前页会落空，这里统一夹回合法范围，
+ * 免得渲染出空白页。
+ */
+function usePaged<T>(items: T[], pageSize: number, resetKey?: unknown) {
+  const [page, setPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
+
+  // 筛选条件一变就回第 1 页（宝选的）。否则切到只有 2 条的分类、
+  // 却停在第 3 页 ⇒ 一片空白，看着像数据丢了。
+  //
+  // 首次挂载也要跳过：`resetKey` 在挂载那一轮必然「变化」一次，但那时 page
+  // 本来就是 1，多跑一次 setPage(1) 无害却也多余。
+  const firstRun = useRef(true);
+  useEffect(() => {
+    if (firstRun.current) { firstRun.current = false; return; }
+    setPage(1);
+  }, [resetKey]);
+
+  const safePage = Math.min(Math.max(1, page), pageCount);
+  const start = (safePage - 1) * pageSize;
+  return {
+    page: safePage,
+    pageCount,
+    items: items.slice(start, start + pageSize),
+    setPage,
+  };
+}
+
+/**
+ * 翻页时把内容顶部带回视野。
+ *
+ * 宝：点第 2 页「没反应」—— 其实内容换了，但页码条在模块**底部**，翻页只换 DOM
+ * 不动滚动位置，于是视口还停在原来那一屏上：新卡片在屏幕上方看不见，
+ * 眼前只有一条一模一样的页码条。同一份文档高度、同一个位置、同一排按钮，
+ * 视觉上就等于「什么都没发生」。
+ *
+ * 所以翻页必须把滚动位置拉回内容顶部。两处都要管：窗口（前台整页滚）和
+ * 最近的滚动祖先（万一将来把列表放进内部滚动容器）。
+ *
+ * ## 为什么是瞬移，不是 smooth（活体实测教训）
+ *
+ * 第一版用的是 `behavior: "smooth"`，**活体上完全没生效**：挂钩 `window.scrollTo`
+ * 看到调用确实发生了（`{top: 199, behavior: "smooth"}` 从 y=515 发起），
+ * 但页面最终停在 **y=0**；单独在控制台跑同一条滚动又能正常落到 199。原因是时序：
+ *   1. `go()` 先 `onPageChange(next)` 触发 React 更新，再立刻发起平滑滚动；
+ *   2. 平滑滚动是异步动画，要跑几百毫秒；
+ *   3. 动画期间 React 把这一页的卡片换成了下一页 —— 内容高度变了；
+ *   4. 进行中的平滑滚动被内容重排打断，浏览器的 scroll anchoring 又把位置
+ *      拉回 0 ⇒「滚了，但结果是 0」，看起来还是没反应。
+ * **内容会换的场合，滚动就不该做成动画。** 改成瞬移（默认 behavior），
+ * 并且 `requestAnimationFrame` 等一帧、拿新布局的坐标，一次到位不抖。
+ */
+function scrollToTopOf(el: HTMLElement | null) {
+  if (!el) return;
+  // 等一帧：让 onClick 引发的 React 提交先落到 DOM 上，再按**新布局**算坐标。
+  requestAnimationFrame(() => {
+    const scroller = el.closest("[class*='overflow-y-auto'], [class*='overflow-auto']") as HTMLElement | null;
+    if (scroller && scroller.scrollHeight > scroller.clientHeight + 4) {
+      const top = scroller.scrollTop + el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 16;
+      scroller.scrollTo({ top: Math.max(0, top) });
+      return;
+    }
+    const top = window.scrollY + el.getBoundingClientRect().top - 24;
+    window.scrollTo({ top: Math.max(0, top) });
+  });
+}
+
+/**
  * 作品网格。作品展示与 AI 专区共用这一份渲染，保证两处的外观和交互完全一致。
  *
  * categoryOrder 有值时按它固定的顺序出筛选项（作品展示就是这种）；不传时按列表里
@@ -1017,7 +1360,14 @@ function WorksPane({
 }) {
   const [filter, setFilter] = useState("all");
   const filters = useMemo(() => {
-    if (categoryOrder) return categoryOrder.filter((item) => item.key !== "all");
+    // categoryOrder 是**固定词表**（作品展示用它来定顺序），不代表当前一定有内容。
+    // 所以还要按实际数据过滤一遍：否则一首诗都没有时，「闲诗」这个筛选按钮照旧
+    // 挂着，点进去是空白 —— 用户会以为自己的数据丢了。
+    // （AI 专区不传 categoryOrder，走下面那条按数据自动生成的分支，本来就没这问题。）
+    if (categoryOrder) {
+      const present = new Set(items.map((item) => item.category).filter(Boolean));
+      return categoryOrder.filter((item) => item.key !== "all" && present.has(item.key));
+    }
     return Array.from(new Set(items.map((item) => item.category).filter(Boolean)))
       .map((key) => ({ key, label: categoryLabel(key) }));
   }, [items, categoryOrder]);
@@ -1025,8 +1375,14 @@ function WorksPane({
   const activeFilter = filter === "all" || filters.some((item) => item.key === filter) ? filter : "all";
   const filteredItems = activeFilter === "all" ? items : items.filter((work) => work.category === activeFilter);
 
+  // 作品媒体是 2 列布局（md:grid-cols-2）⇒ 每页 4 个，正好两整行。
+  // resetKey 用筛选值：切分类回第 1 页。
+  const paged = usePaged(filteredItems, 4, activeFilter);
+  // 翻页要把滚动位置带回这里（否则点第 2 页看不出反应，见 scrollToTopOf）。
+  const paneRef = useRef<HTMLDivElement | null>(null);
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-8" ref={paneRef}>
       <div className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
         <div>
           <span className="mb-2 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">{eyebrow}</span>
@@ -1042,8 +1398,9 @@ function WorksPane({
         )}
       </div>
       {filteredItems.length > 0 ? (
-        <div className="grid grid-cols-1 gap-6 pt-2 md:grid-cols-2">
-          {filteredItems.map((work) => (
+        <>
+          <div className="grid grid-cols-1 gap-6 pt-2 md:grid-cols-2">
+            {paged.items.map((work) => (
             <article
               key={work.id}
               onClick={() => onSelect(work)}
@@ -1078,7 +1435,9 @@ function WorksPane({
               </div>
             </article>
           ))}
-        </div>
+          </div>
+          <Pagination page={paged.page} pageCount={paged.pageCount} onPageChange={paged.setPage} anchorRef={paneRef} />
+        </>
       ) : (
         <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center">
           <p className="font-serif text-xl text-white">{emptyTitle}</p>
@@ -1092,11 +1451,11 @@ function WorksPane({
 function GalleryPane({
   items,
   onSelect,
-  eyebrow = "工程留影 / PROJECT SCREENSHOTS",
-  title = "工程截图",
+  eyebrow = "应用技能 / APPLIED SKILLS",
+  title = "应用技能",
   description = defaultPageCopy.gallery,
-  emptyTitle = "暂无工程截图",
-  emptyDescription = "请在后台“工程截图”中上传图片并填写简介。",
+  emptyTitle = "暂无应用技能",
+  emptyDescription = "请进入后台 /admin，在「应用技能」中上传图片并填写简介。",
 }: {
   items: GalleryItem[];
   onSelect: (item: GalleryItem) => void;
@@ -1112,11 +1471,17 @@ function GalleryPane({
     return [...galleryCategoryOrder, ...custom];
   }, [items]);
   const filtered = filter === "all" ? items : items.filter((item) => (item.category || "应用") === filter);
+  // 截图网格最多 3 列（xl:grid-cols-3）⇒ 每页 6 个，宽屏正好两整行。
+  const paged = usePaged(filtered, 6, filter);
+  const paneRef = useRef<HTMLDivElement | null>(null);
   return (
-    <div className="space-y-8">
+    <div className="space-y-8" ref={paneRef}>
       <div className="flex flex-col justify-between gap-6 md:flex-row md:items-end"><div><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">{eyebrow}</span><h2 className="font-serif text-3xl tracking-tight text-white md:text-4xl">{zhText(title)}</h2><p className="mt-3 line-clamp-2 text-[15px] leading-7 text-zinc-300">{zhText(description)}</p></div><FilterRail allActive={filter === "all"} onAll={() => setFilter("all")} items={categories.map((category) => ({ key: category, label: category, active: filter === category, onSelect: () => setFilter(category) }))} /></div>
       {filtered.length > 0 ? (
-        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">{filtered.map((item) => <button key={item.id} onClick={() => onSelect(item)} className="group flex h-full flex-col overflow-hidden rounded-xl border border-zinc-900 bg-zinc-950/60 text-left transition-all duration-300 hover:border-zinc-700 hover:bg-zinc-950"><div className="aspect-video overflow-hidden bg-zinc-900">{item.imageUrl ? <img src={item.imageUrl} alt={zhText(item.title)} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" referrerPolicy="no-referrer" /> : <div className="flex h-full items-center justify-center font-mono text-xs text-zinc-600">NO SCREENSHOT</div>}</div><div className="flex flex-1 flex-col p-4"><span className="w-fit rounded border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-[10px] text-emerald-300">{item.category || "应用"}</span><h3 className="mt-3 line-clamp-1 font-serif text-lg font-semibold text-white">{zhText(item.title)}</h3><p className="mt-2 line-clamp-2 text-sm leading-6 text-zinc-400">{zhText(item.description)}</p></div></button>)}</div>
+        <>
+          <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">{paged.items.map((item) => <button key={item.id} onClick={() => onSelect(item)} className="group flex h-full flex-col overflow-hidden rounded-xl border border-zinc-900 bg-zinc-950/60 text-left transition-all duration-300 hover:border-zinc-700 hover:bg-zinc-950"><div className="aspect-video overflow-hidden bg-zinc-900">{item.imageUrl ? <img src={item.imageUrl} alt={zhText(item.title)} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" referrerPolicy="no-referrer" /> : <div className="flex h-full items-center justify-center font-mono text-xs text-zinc-600">NO SCREENSHOT</div>}</div><div className="flex flex-1 flex-col p-4"><span className="w-fit rounded border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-[10px] text-emerald-300">{item.category || "应用"}</span><h3 className="mt-3 line-clamp-1 font-serif text-lg font-semibold text-white">{zhText(item.title)}</h3><p className="mt-2 line-clamp-2 text-sm leading-6 text-zinc-400">{zhText(item.description)}</p></div></button>)}</div>
+          <Pagination page={paged.page} pageCount={paged.pageCount} onPageChange={paged.setPage} anchorRef={paneRef} />
+        </>
       ) : (
         <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">{emptyTitle}</p><p className="mt-3 text-sm text-zinc-400">{emptyDescription}</p></div>
       )}
@@ -1240,11 +1605,17 @@ function TreasurePane({
   emptyTitle?: string;
   emptyDescription?: string;
 }) {
+  // 珍藏网格最多 3 列（xl:grid-cols-3）⇒ 每页 6 个，宽屏正好两整行。
+  const paged = usePaged(items, 6);
+  const paneRef = useRef<HTMLDivElement | null>(null);
   return (
-    <div className="space-y-8">
+    <div className="space-y-8" ref={paneRef}>
       <div><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-amber-300/80">{eyebrow}</span><h2 className="font-serif text-3xl tracking-tight text-white md:text-4xl">{zhText(title)}</h2><p className="mt-3 line-clamp-2 text-[15px] leading-7 text-zinc-300">{zhText(description)}</p></div>
       {items.length > 0 ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{items.map((item) => <button key={item.id} onClick={() => onSelect(item)} className="group overflow-hidden rounded-xl border border-zinc-900 bg-zinc-950/60 transition-all duration-300 hover:border-amber-800 hover:bg-zinc-950"><div className="aspect-[4/3] overflow-hidden bg-zinc-900">{item.imageUrl ? <img src={item.imageUrl} alt="珍藏" className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" referrerPolicy="no-referrer" /> : <div className="flex h-full items-center justify-center font-mono text-xs text-zinc-600">NO IMAGE</div>}</div></button>)}</div>
+        <>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{paged.items.map((item) => <button key={item.id} onClick={() => onSelect(item)} className="group overflow-hidden rounded-xl border border-zinc-900 bg-zinc-950/60 transition-all duration-300 hover:border-amber-800 hover:bg-zinc-950"><div className="aspect-[4/3] overflow-hidden bg-zinc-900">{item.imageUrl ? <img src={item.imageUrl} alt="珍藏" className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" referrerPolicy="no-referrer" /> : <div className="flex h-full items-center justify-center font-mono text-xs text-zinc-600">NO IMAGE</div>}</div></button>)}</div>
+          <Pagination page={paged.page} pageCount={paged.pageCount} onPageChange={paged.setPage} anchorRef={paneRef} />
+        </>
       ) : (
         <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">{emptyTitle}</p><p className="mt-3 text-sm text-zinc-400">{emptyDescription}</p></div>
       )}
@@ -1260,6 +1631,90 @@ function TreasureModal({ item, onClose }: { item: TreasureItem; onClose: () => v
         <button onClick={onClose} className="absolute right-4 top-4 z-10 rounded-full border border-zinc-800 bg-zinc-950/80 p-2 text-zinc-300 hover:text-white" aria-label="关闭"><X size={16} /></button>
         <div className="max-h-[88vh] overflow-auto bg-black p-3"><img src={item.imageUrl} alt="珍藏" className="mx-auto max-h-none max-w-full rounded-lg object-contain" referrerPolicy="no-referrer" /></div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 把一首诗适配成 `Work`，让它能直接喂给 `WorksPane`。
+ *
+ * 宝要的是「诗同时出现在作品展示里」。做法**不是在 WorksPane 里加分支**，而是
+ * 在这里做一次形状转换 —— 卡片、筛选、详情弹窗、分页、无图占位这一整套逻辑
+ * 原样复用，一行都不用改。`PoemPane` 仍然服务「诗与惆怅」那个独立栏目。
+ *
+ * category 固定 `poetry`：前台已有「闲诗」这个标签，作品详情里也已有按体裁
+ * 自动排版的分支（`work.category === "poetry"` 走 PoetryDescription）。
+ */
+function poemToWork(poem: Poem, index: number): Work {
+  return {
+    id: poem.id || `poem-${index}`,
+    category: "poetry",
+    title: poem.title || "",
+    description: poem.text || "",
+    images: poem.imageUrl ? [poem.imageUrl] : [],
+    tags: poem.note ? [poem.note] : [],
+    links: [],
+  };
+}
+
+/**
+ * 「诗与惆怅」栏目。
+ *
+ * 一页一条：诗是竖向读的，挤进网格会把换行和缩进全打乱。所以这里不用卡片网格，
+ * 而是按后台顺序一条条铺下来，每首一张纸。
+ *
+ * 体裁（五言/七言/词/现代）交给 `PoetryDescription` 自动判 —— 它在作品详情里
+ * 已经跑了几轮，按每行字数就能排出居中的古体或左对齐的现代诗，作者不用手动
+ * 加空格对齐。
+ */
+function PoemPane({
+  items,
+  eyebrow = "偶得之句 / VERSES",
+  title = "诗与惆怅",
+  description = defaultPageCopy.poems,
+  emptyTitle = "暂无诗",
+  emptyDescription = "请在后台「诗与惆怅」中写下第一首。",
+}: {
+  items: Poem[];
+  eyebrow?: string;
+  title?: string;
+  description?: string;
+  emptyTitle?: string;
+  emptyDescription?: string;
+}) {
+  // 一页 4 首：诗比图长，铺太多首页会拉得很长；4 首刚好够翻两下不嫌烦。
+  const paged = usePaged(items, 4);
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  return (
+    <div className="space-y-8" ref={paneRef}>
+      <div><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-rose-300/80">{eyebrow}</span><h2 className="font-serif text-3xl tracking-tight text-white md:text-4xl">{zhText(title)}</h2>{description ? <p className="mt-3 max-w-3xl text-[15px] leading-8 text-zinc-300">{zhText(description)}</p> : null}</div>
+      {items.length > 0 ? (
+        <>
+          <div className="space-y-8 pt-2">
+            {paged.items.map((poem) => (
+              <article key={poem.id} className="relative overflow-hidden rounded-2xl border border-zinc-900 bg-zinc-950/60">
+                {/* 封面：和作品一样放正文上方。用 aspect-[16/10] 而不是写死的像素高 ——
+                    诗句卡是整幅铺开的，封面跟着文字宽度走才不会显得偏心。 */}
+                {poem.imageUrl ? (
+                  <div className="aspect-[16/10] w-full overflow-hidden bg-black">
+                    <img src={poem.imageUrl} alt={poem.title ? zhText(poem.title) : "诗配图"} className="h-full w-full object-contain" referrerPolicy="no-referrer" />
+                  </div>
+                ) : null}
+                <div className="relative px-6 py-10 md:px-12 md:py-14">
+                  {/* 一枚极淡的竖排印，给纸张一点质感。纯装饰，不参与布局。 */}
+                  <span aria-hidden className="pointer-events-none absolute right-6 top-6 font-serif text-[64px] leading-none text-rose-300/[0.06] select-none md:text-[88px]">诗</span>
+                  {poem.title ? <h3 className="mb-6 text-center font-serif text-xl tracking-[0.2em] text-white md:text-2xl">{zhText(poem.title)}</h3> : null}
+                  <PoetryDescription text={poem.text} />
+                  {poem.note ? <p className="mt-8 text-right font-mono text-[11px] tracking-wider text-zinc-500">—— {zhText(poem.note)}</p> : null}
+                </div>
+              </article>
+            ))}
+          </div>
+          <Pagination page={paged.page} pageCount={paged.pageCount} onPageChange={paged.setPage} anchorRef={paneRef} />
+        </>
+      ) : (
+        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">{emptyTitle}</p><p className="mt-3 text-sm text-zinc-400">{emptyDescription}</p></div>
+      )}
     </div>
   );
 }
@@ -1359,22 +1814,48 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
+  /*
+   * 站点检测：每次打开前台页面记一条访问（IP/归属地由服务端补，设备与环境由
+   * tracking.ts 采集），离开时补交停留时长。
+   *
+   * 放在这里而不是 App 组件顶部，是因为 /admin 那条分支在函数开头就 return 了，
+   * 走后台时根本不会注册这个 effect —— 后台自己的访问不该被算进前台访客里。
+   *
+   * 关于「同一个用户」：visitorKey 存在 localStorage，同一个浏览器重复访问会归到
+   * 同一位访客，后台就能把他的多次访问按时间串成一条时间线。
+   *
+   * 失败不影响浏览：tracking 内部全部吞异常，这里不需要 try/catch 也不做 loading。
+   */
+  useEffect(() => startVisitTracking(), []);
+
   const pageCopy = { ...defaultPageCopy, ...(data.profile.pageCopy || {}) };
   const floatingSentencesConfig = useMemo(() => resolveFloatingSentencesConfig(data.profile.pageCopy?.floatingSentences, activeTab), [data.profile.pageCopy?.floatingSentences, activeTab]);
 
-  // 后台开关决定「我的珍藏」与「AI 专区」是否出现在前台。隐藏时连导航入口一起摘掉，
+  // 后台「模块管理」决定前台导航的顺序与显隐。隐藏时连导航入口一起摘掉，
   // 而不是把空页面留在那里。
   //
-  // 这里不需要额外的兜底副作用：站点只在挂载时取一次数据，而 activeTab 初值恒为
-  // "intro"、选中项初值恒为 null，所以开关关闭时不可能停在被隐藏的栏目上。
-  const treasuresVisible = isTreasuresVisible(data);
-  const aiZoneVisible = isAiZoneVisible(data);
-  const visibleNavItems = useMemo(
-    () => navItems.filter((item) => (
-      (item.key !== "treasures" || treasuresVisible) && (item.key !== "ai" || aiZoneVisible)
-    )),
-    [treasuresVisible, aiZoneVisible],
-  );
+  // 顺序与显隐统一由 types.ts 的 normalizeSectionOrder / isSectionVisible 决定 ——
+  // 那两个函数对残缺 / 过期 / 被改坏的 sectionOrder 都有兜底，最坏结果只是顺序不完美，
+  // 绝不会把栏目弄丢。
+  //
+  const visibleNavItems = useMemo(() => {
+    const byKey = new Map(navItems.map((item) => [item.key as string, item]));
+    return normalizeSectionOrder(data.profile.pageCopy?.sectionOrder)
+      .filter((key) => isSectionVisible(data.profile.pageCopy, key))
+      .map((key) => byKey.get(key))
+      .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  }, [data.profile.pageCopy]);
+  const sectionShown = (key: SectionKey) => isSectionVisible(data.profile.pageCopy, key);
+
+  // 「自我介绍」也能被后台关掉之后，activeTab 的初值 "intro" 就可能指向一个已隐藏的
+  // 栏目 —— 那时既没有它的导航项，页面也不该留着它的内容。所以这里兜一下：
+  // 落到第一个还开着的栏目上；一个都不剩就什么都不切，交给下面的空态接住。
+  useEffect(() => {
+    if (isSectionVisible(data.profile.pageCopy, activeTab)) return;
+    const fallback = normalizeSectionOrder(data.profile.pageCopy?.sectionOrder)
+      .find((key) => isSectionVisible(data.profile.pageCopy, key));
+    if (fallback) setActiveTab(fallback);
+  }, [data.profile.pageCopy, activeTab]);
 
   if (!portfolioReady) return <InitialLoader />;
 
@@ -1404,13 +1885,30 @@ export default function App() {
           </header>
           {mobileMenuOpen && <div className="absolute left-6 right-6 top-20 z-30 flex flex-col space-y-3 rounded-xl border border-zinc-800 bg-zinc-950 p-5 shadow-2xl md:hidden">{visibleNavItems.map((item) => <button key={item.key} onClick={() => { setActiveTab(item.key); setMobileMenuOpen(false); }} className={`flex w-full flex-col justify-start rounded-xl p-3 px-4 text-left transition-all ${activeTab === item.key ? "border border-zinc-700 bg-zinc-900 text-white" : "text-zinc-300 hover:bg-zinc-900/50"}`}><span className="font-serif text-base font-bold tracking-widest">{item.label}</span><span className={`mt-1 font-mono text-[10px] uppercase tracking-widest ${activeTab === item.key ? "text-emerald-300/85" : "text-zinc-500"}`}>{item.sub}</span></button>)}</div>}
           <div className="flex-1">
-            {activeTab === "intro" && <div className="space-y-10"><div className="space-y-4"><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">墨香独白 / MONOLOGUE BODY</span><h2 className="font-serif text-3xl leading-normal tracking-tight text-white md:text-4xl">自我评价</h2><p className="text-[15px] font-light leading-8 text-zinc-100/90 md:text-[17px] md:leading-9">{zhText(data.profile.intro)}</p></div><div className="space-y-8 border-t border-zinc-900/60 pt-8"><span className="mb-3 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">尘埃之迹 / PERSONAL PATH TIMELINE</span><div className="relative space-y-8 before:absolute before:inset-y-1 before:left-2 before:w-[1.5px] before:bg-zinc-900">{data.experiences.map((exp) => <article key={exp.id} className="group relative pl-8"><div className="absolute left-[4px] top-[9px] h-2.5 w-2.5 rounded-full border-2 border-zinc-950 bg-zinc-800 transition-colors duration-300 group-hover:bg-zinc-300" /><div className="mb-2 grid gap-2 text-center md:grid-cols-3 md:items-center"><span className="justify-self-center font-mono text-xs font-semibold tracking-wider text-emerald-300/80 md:justify-self-start md:text-sm">{zhText(exp.period)}</span><span className="justify-self-center font-serif text-base font-medium text-white md:text-lg">{zhText(exp.role)}</span><span className="justify-self-center font-sans text-xs text-zinc-400 md:justify-self-end md:text-right md:text-sm">@ {zhText(exp.company)}</span></div><p className="text-[15px] font-light leading-7 text-zinc-200/90">{zhText(exp.desc)}</p></article>)}</div></div></div>}
-            {activeTab === "works" && <WorksPane items={data.works} description={pageCopy.works} onSelect={setSelectedWork} categoryOrder={workCategories} />}
-            {activeTab === "ai" && aiZoneVisible && <WorksPane items={data.profile.pageCopy?.aiWorks || []} description={pageCopy.aiZone} onSelect={setSelectedAiWork} eyebrow="与 AI 共作 / AI ZONE EXHIBITS" title="AI 专区" emptyTitle="暂无 AI 作品" emptyDescription="请进入后台 /admin，在「AI 专区」中新增作品并保存。" />}
-            {activeTab === "prospects" && <GalleryPane items={data.gallery || []} onSelect={setSelectedGallery} description={pageCopy.gallery} />}
-            {activeTab === "treasures" && treasuresVisible && <TreasurePane items={data.treasures || []} onSelect={setSelectedTreasure} description={pageCopy.treasures} />}
-            {activeTab === "resume" && <ResumePane data={data} />}
-            {activeTab === "contact" && <ContactPane data={data} />}
+            {visibleNavItems.length === 0 ? (
+              <div className="flex min-h-[42vh] flex-col items-center justify-center text-center">
+                <p className="font-serif text-xl tracking-wide text-white">站点正在整理中</p>
+                <p className="mt-3 text-sm leading-6 text-zinc-400">
+                  所有栏目都被隐藏了，暂时没有可以展示的内容。
+                  <br />
+                  进后台 <span className="font-mono text-zinc-300">/admin</span> 的「模块管理」重新打开需要的栏目即可。
+                </p>
+              </div>
+            ) : (
+              <>
+            {activeTab === "intro" && sectionShown("intro") && <div className="space-y-10"><div className="space-y-4"><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">墨香独白 / MONOLOGUE BODY</span><h2 className="font-serif text-3xl leading-normal tracking-tight text-white md:text-4xl">自我评价</h2><p className="text-[15px] font-light leading-8 text-zinc-100/90 md:text-[17px] md:leading-9">{zhText(data.profile.intro)}</p></div><div className="space-y-8 border-t border-zinc-900/60 pt-8"><span className="mb-3 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">尘埃之迹 / PERSONAL PATH TIMELINE</span><div className="relative space-y-8 before:absolute before:inset-y-1 before:left-2 before:w-[1.5px] before:bg-zinc-900">{data.experiences.map((exp) => <article key={exp.id} className="group relative pl-8"><div className="absolute left-[4px] top-[9px] h-2.5 w-2.5 rounded-full border-2 border-zinc-950 bg-zinc-800 transition-colors duration-300 group-hover:bg-zinc-300" /><div className="mb-2 grid gap-2 text-center md:grid-cols-3 md:items-center"><span className="justify-self-center font-mono text-xs font-semibold tracking-wider text-emerald-300/80 md:justify-self-start md:text-sm">{zhText(exp.period)}</span><span className="justify-self-center font-serif text-base font-medium text-white md:text-lg">{zhText(exp.role)}</span><span className="justify-self-center font-sans text-xs text-zinc-400 md:justify-self-end md:text-right md:text-sm">@ {zhText(exp.company)}</span></div><p className="text-[15px] font-light leading-7 text-zinc-200/90">{zhText(exp.desc)}</p></article>)}</div></div></div>}
+            {/* 宝：诗同时出现在作品展示里。用 poemToWork 做一次形状转换后直接拼接 ——
+                卡片、筛选、「闲诗」分类、详情弹窗、分页、无图占位整套逻辑原样复用，
+                WorksPane 一行都不用改。诗与惆怅栏目仍然独立存在，两边读的是同一份数据。 */}
+            {activeTab === "works" && sectionShown("works") && <WorksPane items={[...data.works, ...((data.profile.pageCopy?.poemList || []).map(poemToWork))]} description={pageCopy.works} onSelect={setSelectedWork} categoryOrder={workCategories} />}
+            {activeTab === "ai" && sectionShown("ai") && <WorksPane items={data.profile.pageCopy?.aiWorks || []} description={pageCopy.aiZone} onSelect={setSelectedAiWork} eyebrow="与 AI 共作 / AI ZONE EXHIBITS" title="AI 专区" emptyTitle="暂无 AI 作品" emptyDescription="请进入后台 /admin，在「AI 专区」中新增作品并保存。" />}
+            {activeTab === "prospects" && sectionShown("prospects") && <GalleryPane items={data.gallery || []} onSelect={setSelectedGallery} description={pageCopy.gallery} />}
+            {activeTab === "treasures" && sectionShown("treasures") && <TreasurePane items={data.treasures || []} onSelect={setSelectedTreasure} description={pageCopy.treasures} />}
+            {activeTab === "poems" && sectionShown("poems") && <PoemPane items={data.profile.pageCopy?.poemList || []} description={pageCopy.poems} />}
+            {activeTab === "resume" && sectionShown("resume") && <ResumePane data={data} />}
+            {activeTab === "contact" && sectionShown("contact") && <ContactPane data={data} />}
+              </>
+            )}
           </div>
         </section>
       </div>

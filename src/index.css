@@ -1,5 +1,20 @@
 @import "tailwindcss";
 
+/*
+ * 这里**不要**再加任何覆盖 rounded-* 的规则。
+ *
+ * 曾经有一条 `.rounded, .rounded-md, .rounded-lg, ... { border-radius: 0 }`，
+ * 想「一处收口」把全站圆角去掉。那是错的，已删除（宝：我不要圆角全被删掉）：
+ *   - JSX 里明明写着 `rounded-xl`，渲染出来却是直角 —— 代码在说谎，
+ *     后人读代码以为有圆角、看页面又没有，只能靠猜；
+ *   - 它连组件库基元（.adm-card / .adm-panel / .adm-modal-layer 等）里的
+ *     border-radius 一起压掉，而这些基元本该自己决定长什么样；
+ *   - 想调某个组件的圆角时，改 className 完全无效，得先知道有这么一条全局规则 ——
+ *     这种「改不动」的隐藏状态比多写几个类名昂贵得多。
+ *
+ * 圆角由各元素自己的工具类决定。要统一风格就统一改 className，别再写全局覆盖。
+ */
+
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
@@ -153,6 +168,76 @@
 .adm-drawer {
   border-top: 1px solid rgb(39 39 42 / 0.75);
   background-color: rgb(0 0 0 / 0.2);
+}
+
+/* ==========================================================================
+   「二级弹窗」——列表条目的完整编辑器。
+   ==========================================================================
+   为什么要有它：把完整编辑表单塞在列表行下面，一行就能撑到 1000px+，
+   列表读起来是一团糊。改成点开弹窗后，列表恒是「一屏扫完」的摘要，
+   表单在独立图层里呼吸。
+   
+   它是**新的一层表面**（position: fixed），不是卡片里套的框：
+   弹窗面板自己就是这一层的「那一个框」，里面的分组一律用
+   .adm-panel / .adm-row / .adm-note（都无整圈描边），所以不违反
+   「禁止框套框」。判定脚本遇到 fixed 祖先会停止向上找框 —— 几何上
+   fixed 元素本来就不在祖先的坐标系统里。
+   ========================================================================== */
+.adm-modal-backdrop {
+  background-color: rgb(0 0 0 / 0.72);
+  backdrop-filter: blur(6px);
+}
+
+/* 弹窗的最外层定位壳。
+   关键的一条：margin 必须是 0 —— 弹窗常常作为列表的兄弟节点插进去，
+   而父级多半带 space-y-*，那些 margin-block 会把 fixed 遮罩往下顶十几像素，
+   于是页面顶部露出一条没被遮住的缝。这里显式清零，别依赖调用点的 className。 */
+.adm-modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  margin: 0;
+}
+
+.adm-modal {
+  /* 这一层的唯一一个「框」：1px 描边 + 大圆角 + 抬起来的阴影。 */
+  border-radius: 1rem;
+  border: 1px solid rgb(39 39 42 / 0.9);
+  background-color: #0c0c0e;
+  box-shadow: 0 24px 64px -12px rgb(0 0 0 / 0.85);
+}
+
+/* 有文件被拖到弹窗上。只调描边颜色和阴影 —— 一旦改成加宽描边或换尺寸，
+   松手瞬间弹窗会「跳」一下，正是后台布局最忌讳的那种抖动。 */
+.adm-modal[data-drag="true"] {
+  border-color: rgb(52 211 153 / 0.8);
+  box-shadow: 0 0 0 1px rgb(52 211 153 / 0.35), 0 24px 64px -12px rgb(0 0 0 / 0.85);
+}
+
+/* 弹窗内部的滚动容器，同样守住「滚动只发生在一个容器里」。 */
+.adm-modal-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.adm-modal-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.adm-modal-scroll::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background-color: rgb(63 63 70 / 0.9);
+}
+
+/* 图片放大预览（lightbox）。
+   它必须**压在编辑弹窗之上** —— .adm-modal-layer 是 z-50，所以这里取 60。
+   和弹窗一样是 fixed 定位的「新一层表面」：只有一个完整框（外面那张图），
+   内部不再套框，所以不违反「禁止框套框」。
+   margin: 0 同样承重（lightbox 会作为弹窗的子孙插进去，父级的 space-y-* 会顶出缝）。 */
+.adm-lightbox-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  margin: 0;
 }
 
 /* Custom Range Input Styling for a sleek, premium media progress track */

@@ -114,3 +114,89 @@ values ('portfolio-media', 'portfolio-media', true, 52428800)
 on conflict (id) do update set
   public = excluded.public,
   file_size_limit = excluded.file_size_limit;
+
+-- ===========================================================================
+-- 站点检测：访客设备指纹 + 逐次访问记录
+-- ===========================================================================
+
+-- 一个「人」= visitor_key（前台 localStorage 里的稳定匿名 ID）
+create table if not exists public.portfolio_visitors (
+  visitor_key text primary key,
+  first_seen timestamptz not null default now(),
+  last_seen timestamptz not null default now(),
+  visit_count integer not null default 0,
+  page_views integer not null default 0,
+  total_dwell_ms bigint not null default 0,
+  label text default '',
+  blocked boolean not null default false,
+  last_ip text default '',
+  last_country text default '',
+  last_region text default '',
+  last_city text default '',
+  last_isp text default '',
+  last_device text default '',
+  last_browser text default '',
+  last_os text default ''
+);
+
+alter table public.portfolio_visitors add column if not exists page_views integer not null default 0;
+alter table public.portfolio_visitors add column if not exists total_dwell_ms bigint not null default 0;
+alter table public.portfolio_visitors add column if not exists label text default '';
+alter table public.portfolio_visitors add column if not exists blocked boolean not null default false;
+alter table public.portfolio_visitors add column if not exists last_ip text default '';
+alter table public.portfolio_visitors add column if not exists last_country text default '';
+alter table public.portfolio_visitors add column if not exists last_region text default '';
+alter table public.portfolio_visitors add column if not exists last_city text default '';
+alter table public.portfolio_visitors add column if not exists last_isp text default '';
+alter table public.portfolio_visitors add column if not exists last_device text default '';
+alter table public.portfolio_visitors add column if not exists last_browser text default '';
+alter table public.portfolio_visitors add column if not exists last_os text default '';
+
+-- 一次访问 = 一行
+create table if not exists public.portfolio_visits (
+  id bigserial primary key,
+  visitor_key text not null,
+  session_id text default '',
+  ip text default '',
+  ip_geo jsonb default '{}'::jsonb,
+  country text default '',
+  region text default '',
+  city text default '',
+  isp text default '',
+  device_type text default '',
+  browser text default '',
+  browser_version text default '',
+  os text default '',
+  os_version text default '',
+  engine text default '',
+  user_agent text default '',
+  path text default '',
+  referrer text default '',
+  screen text default '',
+  viewport text default '',
+  pixel_ratio numeric,
+  color_depth integer,
+  timezone text default '',
+  timezone_offset integer,
+  language text default '',
+  languages text default '',
+  platform text default '',
+  cpu_cores integer,
+  device_memory numeric,
+  touch_points integer,
+  gpu text default '',
+  cookie_enabled boolean,
+  dnt text default '',
+  fingerprint text default '',
+  dwell_ms bigint,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists portfolio_visits_visitor_idx
+  on public.portfolio_visits (visitor_key, created_at desc);
+
+create index if not exists portfolio_visits_created_idx
+  on public.portfolio_visits (created_at desc);
+
+create index if not exists portfolio_visits_ip_idx
+  on public.portfolio_visits (ip);
