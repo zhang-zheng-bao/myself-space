@@ -56,6 +56,23 @@ function getVisitorKey() {
   }
 }
 
+/**
+ * 记住服务端归一化后的规范 key。
+ *
+ * 无痕窗口里每次都会重新生成一个随机 key，光靠 localStorage 是治不好的 ——
+ * 服务端会拿设备指纹把这次的 key 归并到那台设备已有的访客上，并把规范 key 回下来。
+ * 前台把它存回本地（存不进就存内存），这样同一个无痕窗口里后续上报也不会再飘。
+ */
+function adoptVisitorKey(canonical: string) {
+  if (!canonical) return;
+  try {
+    window.localStorage.setItem(VISITOR_KEY_STORAGE, canonical);
+    return;
+  } catch {
+    memoryVisitorKey = canonical;
+  }
+}
+
 /** FNV-1a 32 位 → 8 位十六进制。只用来给「设备」一个稳定短指纹，不追求抗碰撞。 */
 function fingerprintOf(input: string) {
   let hash = 0x811c9dc5;
@@ -162,7 +179,7 @@ export function startVisitTracking(): () => void {
   const visibleNow = () => visibleAccumMs + (visibleSince ? Date.now() - visibleSince : 0);
 
   const client = collectClient();
-  const visitorKey = getVisitorKey();
+  let visitorKey = getVisitorKey();
 
   // 同一次页面加载只记一条：React 严格模式下 effect 会跑两次（见 markedThisPageLoad）。
   if (markedThisPageLoad) return () => {};
@@ -184,7 +201,14 @@ export function startVisitTracking(): () => void {
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
-        if (json && Number.isFinite(json.visitId)) visitId = Number(json.visitId);
+        if (!json) return;
+        if (Number.isFinite(json.visitId)) visitId = Number(json.visitId);
+        // 服务端可能把这次访问归并到了同一台设备的既有访客上（指纹命中），
+        // 那就采纳它给的规范 key —— 见 adoptVisitorKey 的注释。
+        if (typeof json.visitorKey === "string") {
+          adoptVisitorKey(json.visitorKey);
+          visitorKey = json.visitorKey;
+        }
       })
       .catch(() => {});
   } catch {
