@@ -1,13 +1,17 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowRight,
   AppWindow,
+  BarChart3,
   Bot,
+  BriefcaseBusiness,
   Compass,
   Download,
   ExternalLink,
   Feather,
   FileText,
   Github,
+  ListMusic,
   Mail,
   Menu,
   Pause,
@@ -24,7 +28,7 @@ import {
 import { createPortal } from "react-dom";
 import AdminApp from "./AdminApp";
 import { startVisitTracking } from "./tracking";
-import { FloatingSentencesConfig, GalleryItem, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, Work, defaultPageCopy, isSectionVisible, normalizeSectionOrder } from "./types";
+import { FloatingSentencesConfig, GalleryItem, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, Work, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder } from "./types";
 
 type TabKey = "intro" | "resume" | "works" | "ai" | "prospects" | "treasures" | "poems" | "contact";
 
@@ -456,7 +460,7 @@ function activeLyricAtTime(lines: LyricLine[], currentTime: number) {
  * 所以这里没有 `compact` 之类的变体 —— 尺寸、间距、歌词面板全部是我改动之前
  * 的那一套。要调它的外观前先问，别再自作主张。
  */
-function AudioBlock({ tracks, autoplay }: { tracks: MusicTrack[]; autoplay?: boolean }) {
+function AudioBlock({ tracks, autoplay, compact = false }: { tracks: MusicTrack[]; autoplay?: boolean; compact?: boolean }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lyricsRef = useRef<HTMLDivElement | null>(null);
   const autoplayAttemptedRef = useRef(false);
@@ -617,6 +621,119 @@ function AudioBlock({ tracks, autoplay }: { tracks: MusicTrack[]; autoplay?: boo
       setAutoplayBlocked(true);
     }
   };
+
+  if (compact) {
+    return (
+      <>
+      <div className="hero-audio">
+        <audio
+          ref={audioRef}
+          src={currentTrack?.audioUrl || ""}
+          onEnded={() => playlist.length > 1 ? playIndex(trackIndex + 1) : setIsPlaying(false)}
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
+          onTimeUpdate={(event) => syncProgress(event.currentTarget)}
+          onDurationChange={(event) => syncProgress(event.currentTarget)}
+          onLoadedMetadata={(event) => syncProgress(event.currentTarget)}
+          preload="metadata"
+        />
+        <div className="hero-audio__cover">
+          {currentTrack?.coverUrl ? <img src={currentTrack.coverUrl} alt="" referrerPolicy="no-referrer" /> : <Sparkles size={16} />}
+        </div>
+        <div className="hero-audio__meta">
+          <strong>{zhText(currentTrack?.title) || "暂无音乐"}</strong>
+          <span>{currentTrack ? zhText(currentTrack.artist) || "Unknown" : "请在后台上传音乐"}</span>
+        </div>
+        <button type="button" onClick={togglePlay} disabled={!currentTrack} className="hero-audio__play" aria-label={isPlaying ? "暂停音乐" : "播放音乐"}>
+          {isPlaying ? <Pause size={15} className="fill-current" /> : <Play size={15} className="translate-x-px fill-current" />}
+        </button>
+        <div className="hero-audio__wave">
+          {[8, 14, 22, 17, 27, 19, 13, 9, 16, 11, 18, 12, 8, 14].map((height, index, bars) => (
+            <i
+              key={index}
+              style={{ height, animationDelay: `${index * 70}ms` }}
+              data-active={isPlaying || undefined}
+              data-lit={index < (isPlaying ? Math.max(1, Math.ceil((playbackPercent / 100) * bars.length)) : 7) || undefined}
+            />
+          ))}
+          <input
+            type="range"
+            min={0}
+            max={duration || 0}
+            value={Math.min(currentTime, duration || 0)}
+            onChange={(event) => {
+              const nextTime = Number(event.target.value);
+              if (audioRef.current) audioRef.current.currentTime = nextTime;
+              setCurrentTime(nextTime);
+            }}
+            disabled={!currentTrack}
+            aria-label="音乐播放进度"
+          />
+        </div>
+        <div className="hero-audio__time">{formatTime(currentTime)} / {formatTime(duration)}</div>
+        <button type="button" onClick={() => playIndex(trackIndex - 1)} disabled={playlist.length <= 1} className="hero-audio__skip" aria-label="上一首"><SkipBack size={14} /></button>
+        <button type="button" onClick={() => playIndex(trackIndex + 1)} disabled={playlist.length <= 1} className="hero-audio__skip" aria-label="下一首"><SkipForward size={14} /></button>
+        <span className="hero-audio__queue" aria-hidden="true"><ListMusic size={15} /></span>
+        <div className="hero-audio__progress" aria-hidden="true"><span style={{ width: `${playbackPercent}%` }} /></div>
+      </div>
+      {isPlaying && currentTrack && typeof document !== "undefined" && createPortal(
+        <aside className="now-playing-lyrics" aria-label={`正在播放 ${zhText(currentTrack.title)} 的歌词`}>
+          <div ref={lyricsRef} className="now-playing-lyrics__body">
+            {lyrics.length > 0 ? (
+              <div className="now-playing-lyrics__list">
+                {lyrics.map((line, index) => {
+                  const active = index === activeLyricIndex;
+                  const distance = Math.abs(index - activeLyricIndex);
+                  const nextTime = lyrics[index + 1]?.time;
+                  const charProgress = active
+                    ? characterFillProgress(line, nextTime, currentTime, duration)
+                    : line.text.split("").map(() => index < activeLyricIndex ? 1 : 0);
+                  return (
+                    <button
+                      type="button"
+                      key={`${line.time}-${index}`}
+                      data-lyric-index={index}
+                      data-lyric-time={line.time}
+                      data-active={active || undefined}
+                      onClick={() => { void seekToLyric(line); }}
+                      className="now-playing-lyrics__line"
+                      style={{ opacity: active ? 1 : distance === 1 ? 0.68 : 0.35 }}
+                    >
+                      {line.text.split("").map((char, charIndex) => (
+                        <span
+                          key={`${line.time}-${index}-${charIndex}`}
+                          className="now-playing-lyrics__char"
+                          style={{
+                            color: active
+                              ? `color-mix(in srgb, rgb(164 175 173) ${Math.round((1 - (charProgress[charIndex] || 0)) * 100)}%, rgb(98 245 206))`
+                              : index < activeLyricIndex
+                                ? "rgb(98 245 206)"
+                                : undefined,
+                            textShadow: active && (charProgress[charIndex] || 0) > 0.35
+                              ? `0 0 ${Math.round(5 + (charProgress[charIndex] || 0) * 8)}px rgba(98,245,206,${0.12 + (charProgress[charIndex] || 0) * 0.25})`
+                              : undefined,
+                            transform: active && (charProgress[charIndex] || 0) > 0 && (charProgress[charIndex] || 0) < 1
+                              ? `translateY(${(1 - (charProgress[charIndex] || 0)) * 1.2}px)`
+                              : undefined,
+                          }}
+                        >
+                          {char}
+                        </span>
+                      ))}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="now-playing-lyrics__empty">暂无歌词</p>
+            )}
+          </div>
+        </aside>,
+        document.body,
+      )}
+      </>
+    );
+  }
 
   return (
     <div className="rounded-2xl border border-zinc-900 bg-zinc-950/85 p-5 shadow-2xl transition-all duration-300 hover:border-zinc-800">
@@ -1053,18 +1170,18 @@ function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
           {work.links && work.links.length > 0 && (
             <div className="mt-4 border-t border-zinc-900 pt-4">
               <span className="mb-2 block font-mono text-[10px] uppercase tracking-widest text-emerald-300/80">附件与链接 / Files & URL</span>
-              <div className="grid gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {work.links.map((link, idx) => {
                   const meta = getWorkLinkMeta(link);
                   if (!meta.isAttachment) {
-                    return <a key={idx} href={link.url} target="_blank" rel="noopener noreferrer" className="inline-flex w-fit items-center space-x-1.5 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-200 hover:border-zinc-700 hover:text-white"><span>{zhText(meta.label)}</span><ExternalLink size={12} className="text-zinc-400" /></a>;
+                    return <a key={idx} href={link.url} target="_blank" rel="noopener noreferrer" className="inline-flex w-fit shrink-0 items-center space-x-1.5 whitespace-nowrap rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-200 hover:border-zinc-700 hover:text-white"><span>{zhText(meta.label)}</span><ExternalLink size={12} className="text-zinc-400" /></a>;
                   }
                   return (
                     /* 一行放下：文件名（可截断）+ 类型标签 + 预览/下载。
                        所以这里**不能** flex-wrap —— 一换行按钮就掉到第二行去。
                        文件名用 flex-1 + truncate 吃掉剩余空间（超 10 字省略），
                        按钮 shrink-0 保证不被压扁。 */
-                    <div key={idx} className="flex items-center gap-2 rounded-lg border border-zinc-900 bg-zinc-950/80 px-3 py-2">
+                    <div key={idx} className="flex w-full items-center gap-2 rounded-lg border border-zinc-900 bg-zinc-950/80 px-3 py-2">
                       <FileText size={14} className="shrink-0 text-emerald-300/80" />
                       <span className="min-w-0 flex-1 truncate text-xs text-zinc-200" title={meta.displayName}>
                         {meta.displayName}
@@ -1415,9 +1532,9 @@ function WorksPane({
   const activeFilter = filter === "all" || filters.some((item) => item.key === filter) ? filter : "all";
   const filteredItems = activeFilter === "all" ? items : items.filter((work) => work.category === activeFilter);
 
-  // 作品媒体是 2 列布局（md:grid-cols-2）⇒ 每页 4 个，正好两整行。
+  // 与「应用技能」保持一致：宽屏 3 列，每页 6 个，正好两整行。
   // resetKey 用筛选值：切分类回第 1 页。
-  const paged = usePaged(filteredItems, 4, activeFilter);
+  const paged = usePaged(filteredItems, 6, activeFilter);
   // 翻页要把滚动位置带回这里（否则点第 2 页看不出反应，见 scrollToTopOf）。
   const paneRef = useRef<HTMLDivElement | null>(null);
 
@@ -1438,39 +1555,41 @@ function WorksPane({
       </div>
       {filteredItems.length > 0 ? (
         <>
-          <div className="grid grid-cols-1 gap-6 pt-2 md:grid-cols-2">
+          <div className="work-grid grid grid-cols-1 gap-4 pt-2 md:grid-cols-2 xl:grid-cols-3">
             {paged.items.map((work) => (
             <article
               key={work.id}
               onClick={() => onSelect(work)}
-              className="group flex cursor-pointer flex-col justify-between space-y-4 rounded-xl border border-zinc-900 bg-zinc-950/60 p-5 transition-all duration-500 hover:border-zinc-800 hover:bg-zinc-950"
+              className="work-card group flex h-full cursor-pointer flex-col overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/60 transition-all duration-500 hover:border-zinc-700 hover:bg-zinc-950"
             >
-              <div>
-                <div className="mb-4 flex items-start justify-between">
-                  <div className="flex items-center space-x-2.5">
-                    <span className="rounded-lg border border-zinc-800 bg-zinc-900 p-2 transition-transform duration-300 group-hover:scale-105">{categoryIcon(work.category)}</span>
-                    <span className="font-mono text-xs font-semibold uppercase tracking-widest text-zinc-200">{categoryLabel(work.category)}</span>
-                  </div>
-                  {work.badgeText && <span className="rounded border border-emerald-900 bg-emerald-950/40 px-2 py-0.5 font-mono text-[10px] text-emerald-300">{zhText(work.badgeText)}</span>}
-                </div>
-                <div className="relative mb-4 aspect-video overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/60 shadow-inner">
-                  {work.images?.[0] ? (
-                    <img src={work.images[0]} alt={zhText(work.title)} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" referrerPolicy="no-referrer" />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-zinc-900/20 font-mono text-xs text-zinc-600">NO IMAGES</div>
+              <div className="work-card__media relative aspect-[1.92/1] overflow-hidden bg-zinc-950/60 shadow-inner">
+                   {work.images?.[0] ? (
+                     <img src={work.images[0]} alt={zhText(work.title)} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" referrerPolicy="no-referrer" />
+                   ) : (
+                     <div className="flex h-full w-full items-center justify-center bg-zinc-900/20 font-mono text-xs text-zinc-600">NO IMAGES</div>
+                   )}
+                  <span className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/5 to-black/35" />
+                  <span className="work-card__category absolute left-2.5 top-2.5 z-10 rounded border border-white/15 bg-black/65 px-2 py-1 text-[10px] font-medium text-zinc-100 backdrop-blur-sm">
+                    {categoryLabel(work.category)}
+                  </span>
+                  <span className="absolute right-2.5 top-2.5 z-10 flex flex-col items-end gap-1.5">
+                    {work.badgeText && <span className="rounded border border-emerald-300/25 bg-emerald-950/75 px-2 py-0.5 font-mono text-[10px] text-emerald-200 backdrop-blur-sm">{zhText(work.badgeText)}</span>}
+                    {(work.images?.length || 0) > 1 && <span className="rounded border border-white/15 bg-black/65 px-2 py-0.5 font-mono text-[10px] text-zinc-200">{work.images.length} 图</span>}
+                  </span>
+                  {(work.tags || []).length > 0 && (
+                    <span className="work-card__tags absolute bottom-2.5 left-2.5 right-2.5 z-10 flex flex-wrap gap-1.5">
+                      {(work.tags || []).slice(0, 3).map((tag, idx) => (
+                        <span key={idx} className="rounded border border-white/15 bg-black/65 px-2 py-0.5 text-[10px] text-zinc-200 backdrop-blur-sm">{tag}</span>
+                      ))}
+                    </span>
                   )}
-                  {(work.images?.length || 0) > 1 && <span className="absolute right-2 top-2 rounded border border-zinc-800 bg-black/70 px-2 py-0.5 font-mono text-[10px] text-zinc-200">{work.images.length} 图</span>}
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
-                    <span className="rounded-md border border-zinc-850 bg-zinc-950/90 px-4 py-2 font-serif text-xs tracking-widest text-zinc-100 shadow-lg">查看详情与解读</span>
+                  <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/35 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+                    <span className="rounded border border-white/20 bg-black/75 px-3 py-1.5 font-serif text-[11px] text-zinc-100 shadow-lg">查看详情</span>
                   </div>
-                </div>
-                <h3 className="mb-1 line-clamp-1 font-serif text-lg font-bold tracking-wide text-white">{zhText(work.title)}</h3>
-                <p className="mt-2 line-clamp-2 text-sm font-light leading-7 text-zinc-300/95 md:text-[15px]">{zhText(work.description)}</p>
               </div>
-              <div className="flex flex-wrap gap-1.5 border-t border-zinc-900/50 pt-3">
-                {(work.tags || []).slice(0, 3).map((tag, idx) => (
-                  <span key={idx} className="rounded border border-zinc-850 bg-zinc-900 px-2.5 py-1 text-[11px] text-zinc-300 md:text-xs">{tag}</span>
-                ))}
+              <div className="flex flex-1 flex-col p-4">
+                <h3 className="portfolio-card__title">{zhText(work.title)}</h3>
+                <p className="portfolio-card__description">{zhText(work.description)}</p>
               </div>
             </article>
           ))}
@@ -1518,7 +1637,20 @@ function GalleryPane({
       <div className="flex flex-col justify-between gap-6 md:flex-row md:items-end"><div><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">{eyebrow}</span><p className="mt-3 line-clamp-2 text-[15px] leading-7 text-zinc-300">{zhText(description)}</p></div><FilterRail allActive={filter === "all"} onAll={() => setFilter("all")} items={categories.map((category) => ({ key: category, label: category, active: filter === category, onSelect: () => setFilter(category) }))} /></div>
       {filtered.length > 0 ? (
         <>
-          <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">{paged.items.map((item) => <button key={item.id} onClick={() => onSelect(item)} className="group flex h-full flex-col overflow-hidden rounded-xl border border-zinc-900 bg-zinc-950/60 text-left transition-all duration-300 hover:border-zinc-700 hover:bg-zinc-950"><div className="aspect-video overflow-hidden bg-zinc-900">{item.imageUrl ? <img src={item.imageUrl} alt={zhText(item.title)} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" referrerPolicy="no-referrer" /> : <div className="flex h-full items-center justify-center font-mono text-xs text-zinc-600">NO SCREENSHOT</div>}</div><div className="flex flex-1 flex-col p-4"><span className="w-fit rounded border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-[10px] text-emerald-300">{item.category || "应用"}</span><h3 className="mt-3 line-clamp-1 font-serif text-lg font-semibold text-white">{zhText(item.title)}</h3><p className="mt-2 line-clamp-2 text-sm leading-6 text-zinc-400">{zhText(item.description)}</p></div></button>)}</div>
+          <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+            {paged.items.map((item) => (
+              <button key={item.id} onClick={() => onSelect(item)} className="gallery-card group flex h-full flex-col overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/60 text-left transition-all duration-300 hover:border-zinc-700 hover:bg-zinc-950">
+                <div className="gallery-card__media relative aspect-[1.92/1] overflow-hidden bg-zinc-900">
+                  {item.imageUrl ? <img src={item.imageUrl} alt={zhText(item.title)} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" referrerPolicy="no-referrer" /> : <div className="flex h-full items-center justify-center font-mono text-xs text-zinc-600">NO SCREENSHOT</div>}
+                  <span className="gallery-card__category absolute left-2.5 top-2.5 z-10 rounded border border-white/15 bg-black/65 px-2 py-1 text-[10px] font-medium text-zinc-100 backdrop-blur-sm">{item.category || "应用"}</span>
+                </div>
+                <div className="flex flex-1 flex-col p-4">
+                  <h3 className="portfolio-card__title">{zhText(item.title)}</h3>
+                  <p className="portfolio-card__description">{zhText(item.description)}</p>
+                </div>
+              </button>
+            ))}
+          </div>
           <Pagination page={paged.page} pageCount={paged.pageCount} onPageChange={paged.setPage} anchorRef={paneRef} />
         </>
       ) : (
@@ -2100,6 +2232,182 @@ async function preloadInitialAssets(data: PortfolioData, flags: { treasuresVisib
   ]);
 }
 
+function isVideoWork(work: Work) {
+  if (work.category === "video") return true;
+  if (!work.videoUrl) return false;
+  return !/\.(mp3|wav|m4a|aac|flac|ogg|opus)(?:$|[?#])/i.test(work.videoUrl);
+}
+
+const particleSeeds = [
+  [68, 8, 4, 12, "down"], [82, 15, 3, 15, "down"], [94, 5, 5, 18, "down"], [76, 29, 3, 13, "down"], [89, 36, 4, 16, "down"],
+  [101, 23, 3, 11, "down"], [72, 49, 5, 19, "down"], [86, 57, 3, 14, "down"], [97, 46, 4, 17, "down"], [66, 67, 3, 13, "down"],
+  [80, 76, 4, 18, "down"], [93, 70, 3, 15, "down"], [103, 62, 5, 20, "down"], [74, 88, 3, 16, "down"], [90, 91, 4, 19, "down"],
+  [4, 94, 4, 17, "up"], [13, 82, 3, 14, "up"], [24, 101, 5, 20, "up"], [7, 69, 3, 16, "up"], [31, 91, 4, 18, "up"],
+  [18, 74, 6, 22, "up"], [2, 56, 3, 15, "up"], [38, 84, 4, 19, "up"], [26, 64, 3, 17, "up"], [12, 103, 5, 21, "up"],
+  [44, 96, 3, 16, "up"], [35, 72, 4, 20, "up"],
+] as const;
+
+function DynamicParticles() {
+  return (
+    <div className="portfolio-particles" aria-hidden="true">
+      {particleSeeds.map(([left, top, size, duration, flow], index) => (
+        <i
+          key={`${flow}-${left}-${top}`}
+          data-flow={flow}
+          style={{
+            "--particle-left": `${left}%`,
+            "--particle-top": `${top}%`,
+            "--particle-size": `${size}px`,
+            "--particle-duration": `${duration}s`,
+            "--particle-delay": `${index * -0.83}s`,
+          } as React.CSSProperties}
+        />
+      ))}
+    </div>
+  );
+}
+
+function CareerTimeline({ experiences }: { experiences: PortfolioData["experiences"] }) {
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const indexRef = useRef(0);
+  const pausedRef = useRef(false);
+  const resumeTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const reducedOrMobile = window.matchMedia("(prefers-reduced-motion: reduce), (max-width: 820px)").matches;
+    if (reducedOrMobile || experiences.length <= 2) return;
+    const timer = window.setInterval(() => {
+      const viewport = viewportRef.current;
+      if (!viewport || pausedRef.current) return;
+      const items = Array.from(viewport.querySelectorAll("article")) as HTMLElement[];
+      if (items.length === 0) return;
+      indexRef.current = (indexRef.current + 1) % items.length;
+      viewport.scrollTo({ top: items[indexRef.current].offsetTop, behavior: "smooth" });
+    }, 4200);
+    return () => {
+      window.clearInterval(timer);
+      if (resumeTimerRef.current !== null) window.clearTimeout(resumeTimerRef.current);
+    };
+  }, [experiences]);
+
+  const pauseTemporarily = () => {
+    pausedRef.current = true;
+    if (resumeTimerRef.current !== null) window.clearTimeout(resumeTimerRef.current);
+    resumeTimerRef.current = window.setTimeout(() => { pausedRef.current = false; }, 3800);
+  };
+
+  return (
+    <div
+      ref={viewportRef}
+      className="career-timeline"
+      tabIndex={0}
+      aria-label="职业经历时间线，可滚动查看全部经历"
+      onMouseEnter={() => { pausedRef.current = true; }}
+      onMouseLeave={() => { pausedRef.current = false; }}
+      onWheel={pauseTemporarily}
+      onTouchStart={pauseTemporarily}
+      onFocus={() => { pausedRef.current = true; }}
+      onBlur={() => { pausedRef.current = false; }}
+    >
+      <div className="career-timeline__track">
+        <span className="career-timeline__line" aria-hidden="true" />
+        {experiences.map((exp, index) => (
+          <article key={exp.id}>
+            <i />
+            <div className="career-icon">{index % 2 === 1 ? <Compass size={18} /> : <BriefcaseBusiness size={18} />}</div>
+            <div className="career-copy">
+              <div><time>{zhText(exp.period)}</time><span>@ {zhText(exp.company)}</span></div>
+              <h3>{zhText(exp.role)}</h3>
+              <p>{zhText(exp.desc)}</p>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function IntroDashboard({ data, onSelectWork, onNavigate }: {
+  data: PortfolioData;
+  onSelectWork: (work: Work) => void;
+  onNavigate: (tab: TabKey) => void;
+}) {
+  const homeWorks = [
+    ...data.works,
+    ...((data.profile.pageCopy?.poemList || []).map(poemToWork)),
+  ];
+  const skills = ["短视频运营", "内容策划", "AI工具应用", "原型图绘制", "数据分析", "文案写作"];
+  const statCopy = data.profile.pageCopy?.homeStats;
+  const stats = [
+    { icon: Play, ...defaultHomeStats.works, value: statCopy?.works?.value || `${Math.max(10, data.works.length)}+`, ...statCopy?.works },
+    { icon: BarChart3, ...defaultHomeStats.plays, ...statCopy?.plays },
+    { icon: Sparkles, ...defaultHomeStats.ai, ...statCopy?.ai },
+  ];
+
+  return (
+    <div className="intro-dashboard">
+      <p className="content-note content-note--top" aria-hidden="true">Content<br />Creates<br />More Possibilities</p>
+      <section className="dashboard-section dashboard-about">
+        <div className="section-kicker"><span />关于我 <b>/</b> ABOUT ME</div>
+        <p>{zhText(data.profile.intro)}</p>
+        <div className="dashboard-stats">
+          {stats.map(({ icon: Icon, value, label, detail }) => (
+            <article key={label}>
+              <span className="stat-icon"><Icon size={22} /></span>
+              <div><strong>{value}</strong><em>{label}</em><small>{detail}</small></div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="dashboard-section">
+        <div className="section-kicker"><span />职业旅程 <b>/</b> CAREER TIMELINE</div>
+        <CareerTimeline experiences={data.experiences} />
+      </section>
+
+      <section className="dashboard-section dashboard-works">
+        <div className="section-heading-row">
+          <div className="section-kicker"><span />我的作品 <b>/</b> MY WORKS</div>
+          <button type="button" onClick={() => onNavigate("works")}>查看全部作品 <ArrowRight size={14} /></button>
+        </div>
+        {homeWorks.length > 0 ? (
+          <div className="home-work-carousel" aria-label="我的作品自动轮播">
+            <div className="home-work-carousel__track" style={{ "--carousel-duration": `${Math.max(24, homeWorks.length * 5)}s` } as React.CSSProperties}>
+              {[0, 1].map((copyIndex) => (
+                <div className="home-work-carousel__group" key={copyIndex} aria-hidden={copyIndex === 1 || undefined}>
+                  {homeWorks.map((work) => (
+                    <button type="button" key={`${copyIndex}-${work.id}`} tabIndex={copyIndex === 1 ? -1 : 0} onClick={() => onSelectWork(work)} className="featured-work">
+                      {work.images?.[0] ? <img src={work.images[0]} alt="" referrerPolicy="no-referrer" /> : <span className="featured-work__empty">NO IMAGE</span>}
+                      <span className="featured-work__shade" />
+                      <span className="featured-work__category">{categoryLabel(work.category)}</span>
+                      <strong>{zhText(work.title)}</strong>
+                      <span className="featured-work__meta">
+                        {isVideoWork(work) ? <Play size={12} className="fill-current" /> : <ExternalLink size={12} />}
+                        {isVideoWork(work) ? "播放视频" : "查看项目"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="dashboard-section dashboard-skills">
+        <div className="section-kicker"><span />技能标签 <b>/</b> SKILLS</div>
+        <div className="skill-strip">
+          {skills.map((skill, index) => {
+            const Icon = [Video, FileText, Bot, AppWindow, TrendingUp, Feather][index];
+            return <span key={skill}><Icon size={16} />{skill}</span>;
+          })}
+        </div>
+      </section>
+      <p className="content-note content-note--bottom" aria-hidden="true">“Keep Creating” →<br />“Keep Going”</p>
+    </div>
+  );
+}
+
 export default function App() {
   if (window.location.pathname.startsWith("/admin")) return <AdminApp />;
   const [data, setData] = useState<PortfolioData>(normalizeData(emptyPortfolioData));
@@ -2178,43 +2486,58 @@ export default function App() {
   if (!portfolioReady) return <InitialLoader />;
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center overflow-x-hidden bg-[#09090b] p-4 font-sans leading-relaxed tracking-wide text-zinc-100 selection:bg-zinc-800 selection:text-white md:p-8 lg:p-12">
-      <div className="fixed inset-0 z-0 pointer-events-none bg-[radial-gradient(circle_at_top,_#121215_0%,_#09090b_100%)]" />
-      <div className="fixed inset-0 z-0 pointer-events-none bg-[linear-gradient(to_right,#808080_1px,transparent_1px),linear-gradient(to_bottom,#808080_1px,transparent_1px)] bg-[size:32px_32px] opacity-[0.03]" />
+    <div className="portfolio-site">
       <FloatingSentences config={floatingSentencesConfig} />
-      <style>{`@keyframes soundWave { 0%, 100% { height: 6px; } 50% { height: 24px; } }.animate-sound-1 { animation: soundWave 0.8s ease-in-out infinite; }.animate-sound-2 { animation: soundWave 1.2s ease-in-out infinite; animation-delay: 0.2s; }.animate-sound-3 { animation: soundWave 0.9s ease-in-out infinite; animation-delay: 0.4s; }.animate-sound-4 { animation: soundWave 1.4s ease-in-out infinite; animation-delay: 0.1s; }@keyframes floatRight { 0%{transform:translate(0,0) scale(1);opacity:0.5} 42%{transform:translate(28vw,-4vh) scale(1.08);opacity:0.5} 58%{transform:translate(35vw,-2vh) scale(1.1);opacity:0.45} 78%{transform:translate(42vw,0vh) scale(1.1);opacity:0.25} 100%{transform:translate(52vw,-3vh) scale(1.1);opacity:0} }@keyframes floatLeft { 0%{transform:translate(0,0) scale(1);opacity:0.45} 48%{transform:translate(-28vw,6vh) scale(0.88);opacity:0.45} 62%{transform:translate(-35vw,8vh) scale(0.85);opacity:0.35} 78%{transform:translate(-40vw,6vh) scale(0.88);opacity:0.15} 100%{transform:translate(-42vw,10vh) scale(0.9);opacity:0} }@keyframes floatDiagonal { 0%{transform:translate(0,0) scale(0.9);opacity:0.5} 50%{transform:translate(20vw,-10vh) scale(1.14);opacity:0.5} 65%{transform:translate(14vw,0vh) scale(1.05);opacity:0.42} 78%{transform:translate(2vw,8vh) scale(0.9);opacity:0.15} 100%{transform:translate(-8vw,16vh) scale(0.8);opacity:0} }@keyframes floatUpDown { 0%{transform:translate(0,0) scale(1);opacity:0.5} 48%{transform:translate(6vw,-18vh) scale(1.05);opacity:0.5} 65%{transform:translate(3vw,-8vh) scale(1.0);opacity:0.4} 78%{transform:translate(-1vw,4vh) scale(0.9);opacity:0.15} 100%{transform:translate(1vw,14vh) scale(0.85);opacity:0} }`}</style>
-      <div className="relative z-10 flex w-full max-w-7xl flex-col items-stretch gap-8 pb-12 pt-2 lg:flex-row lg:gap-12">
-        <aside className="relative flex min-h-[520px] w-full shrink-0 flex-col justify-between rounded-2xl border border-zinc-900 bg-zinc-950/80 p-8 shadow-2xl md:p-10 lg:sticky lg:top-8 lg:min-h-[82vh] lg:w-[38%]">
-          <div className="space-y-8">
-            <div className="flex items-center justify-between border-b border-zinc-900/40 pb-4"><span className="font-mono text-xs uppercase tracking-widest text-zinc-400">我的空间 / MY SPACE</span><div className="flex h-[24px] items-end space-x-[3px] px-2 opacity-90"><div className="animate-sound-1 w-[3px] rounded-full bg-emerald-300" /><div className="animate-sound-2 w-[3px] rounded-full bg-zinc-300" /><div className="animate-sound-3 w-[3px] rounded-full bg-emerald-300" /><div className="animate-sound-4 w-[3px] rounded-full bg-zinc-300" /></div></div>
-            {/* 自我介绍靠左：去掉水平居中，文字一律左对齐（宝要求「往左移」）。
-                头像受后台「不展示头像」开关控制（pageCopy.hideAvatar，只有显式
-                false 才隐藏，同 sectionVisible 的约定）；关掉时整块连留白一起去掉，
-                不是留一个空圆占位。 */}
-            <div className="flex flex-col items-start space-y-5 text-left">{!pageCopy.hideAvatar && <div data-avatar="profile" className="relative h-24 w-24 overflow-hidden rounded-full border-2 border-zinc-800 shadow-md md:h-28 md:w-28"><img src={data.profile.avatar} alt={data.profile.name} className="h-full w-full object-cover transition-transform duration-700 hover:scale-110" referrerPolicy="no-referrer" /></div>}<div className="space-y-2"><h1 className="font-serif text-3xl font-bold tracking-widest text-white md:text-4xl">{data.profile.name}</h1><p className="text-base font-medium leading-relaxed tracking-wide text-zinc-200 md:text-lg">{zhText(data.profile.tagline)}</p></div></div>
-            {/* 「闲言碎语 / CASUAL CHAT」：宝要求还原（原话「我说UI还原」）。
-                整块**逐字取自 git（HEAD 4ca098c）** —— 含那个「墨」字水印、英文副标
-                和 quote 文案。曾经被我删掉过，现在恢复。 */}
-            <div className="relative border-t border-zinc-900/60 pt-6"><span className="pointer-events-none absolute right-2 top-4 select-none font-serif text-8xl font-extrabold text-zinc-900/20">墨</span><span className="mb-4 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">闲言碎语 / CASUAL CHAT</span><p className="whitespace-pre-wrap font-serif text-base italic leading-loose text-zinc-200 md:text-lg">{zhText(data.profile.quote)}</p></div>
-            {/* 音乐播放器：宝要求「闲言碎语和播放器都要恢复」⇒ 紧随其后，同在
-                `space-y-8` 容器内。外层**逐字取自 git（HEAD 4ca098c）** ——
-                `border-t border-zinc-900/60 pt-6`，通栏不限宽。
-                我曾自作主张加过 `mt-auto`（顶到左栏底部）和 `max-w-[300px]`（限宽），
-                已被要求还原。要再动它的位置或宽度前，先问。 */}
-            <div className="border-t border-zinc-900/60 pt-6"><AudioBlock tracks={data.musicTracks || []} autoplay={data.profile.musicAutoplay} /></div>
+
+      <header className="site-header">
+        <button type="button" className="site-brand" onClick={() => setActiveTab("intro")}>
+          <strong>{data.profile.name}</strong>
+          <span>我的空间 / MY SPACE</span>
+          <i aria-hidden="true"><b /><b /><b /></i>
+        </button>
+        <nav className="site-nav" aria-label="主要导航">
+          {visibleNavItems.map((item) => (
+            <button key={item.key} type="button" onClick={() => setActiveTab(item.key)} data-active={activeTab === item.key || undefined}>
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </nav>
+        <button type="button" className="mobile-menu-button" onClick={() => setMobileMenuOpen((open) => !open)} aria-label="打开导航">
+          {mobileMenuOpen ? <X size={19} /> : <Menu size={19} />}
+        </button>
+      </header>
+
+      {mobileMenuOpen && (
+        <nav className="mobile-nav" aria-label="移动端导航">
+          {visibleNavItems.map((item) => (
+            <button key={item.key} type="button" onClick={() => { setActiveTab(item.key); setMobileMenuOpen(false); }} data-active={activeTab === item.key || undefined}>
+              <span>{item.label}</span><small>{item.sub}</small>
+            </button>
+          ))}
+        </nav>
+      )}
+
+      <main className="portfolio-layout">
+        <aside className="hero-panel">
+          <img className="hero-panel__art" src="/hero-creator-stage.png" alt="年轻创作者与柴犬坐在发光创作台上" />
+          <span className="hero-panel__veil" />
+          <DynamicParticles />
+          <div className="hero-panel__aside" aria-hidden="true">HUMAN<br />×<br />AI<br />×<br />CREATIVE<br />×<br />A BETTER<br />TOMORROW</div>
+          <div className="hero-panel__copy">
+            <span className="hero-panel__label">CREATE · SHARE · A BETTER TOMORROW</span>
+            <h1>{data.profile.name}</h1>
+            <h2>{zhText(data.profile.tagline)}</h2>
+            <p>{zhText(data.profile.quote)}</p>
+            <div className="hero-actions">
+              <button type="button" className="hero-action hero-action--primary" onClick={() => setActiveTab("works")}><BriefcaseBusiness size={17} />查看作品集<ArrowRight size={15} /></button>
+              <button type="button" className="hero-action" onClick={() => setActiveTab("contact")}><Mail size={17} />联系我</button>
+            </div>
           </div>
-          <div className="mt-8 flex flex-col items-center justify-between gap-2.5 border-t border-zinc-900/60 pt-5 font-mono text-[10px] text-zinc-500 sm:flex-row lg:mt-0">
-            <div className="flex shrink-0 items-center space-x-1.5"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /><span className="font-semibold uppercase text-zinc-300">Dear970 Studio</span><span>|</span><span>HEFEI</span></div>
-            <span>© {new Date().getFullYear()} DESIGN PORTFOLIO</span>
-          </div>
+          <div className="hero-player"><AudioBlock tracks={data.musicTracks || []} autoplay={data.profile.musicAutoplay} compact /></div>
         </aside>
-        <section className="relative flex min-h-[60vh] flex-1 flex-col rounded-2xl border border-zinc-900 bg-[#0c0c0e] p-8 shadow-2xl md:p-12">
-          <header className="sticky top-0 z-20 mb-8 flex items-center justify-between border-b border-zinc-900 bg-[#0c0c0e]/95 pb-5 backdrop-blur-md">
-            <nav className="hidden flex-nowrap items-center gap-2 md:flex">{visibleNavItems.map((item) => <button key={item.key} onClick={() => setActiveTab(item.key)} className={`flex shrink-0 cursor-pointer flex-col items-center justify-center rounded-xl border px-3.5 py-2.5 transition-all duration-300 ${activeTab === item.key ? "border-zinc-700 bg-zinc-900 text-white shadow-md" : "border-transparent text-zinc-300 hover:bg-zinc-950/20 hover:text-white"}`}><span className="font-serif text-[14px] font-bold tracking-widest md:text-[15px]">{item.label}</span><span className={`mt-1 font-mono text-[9px] uppercase tracking-widest ${activeTab === item.key ? "text-emerald-300/85" : "text-zinc-500"}`}>{item.sub}</span></button>)}</nav>
-            <span className="font-serif text-base font-semibold tracking-wider text-white md:hidden">我的空间</span><button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="rounded-lg border border-zinc-800 bg-zinc-900 p-2.5 text-zinc-300 hover:text-white md:hidden" aria-label="移动端菜单">{mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}</button>
-          </header>
-          {mobileMenuOpen && <div className="absolute left-6 right-6 top-20 z-30 flex flex-col space-y-3 rounded-xl border border-zinc-800 bg-zinc-950 p-5 shadow-2xl md:hidden">{visibleNavItems.map((item) => <button key={item.key} onClick={() => { setActiveTab(item.key); setMobileMenuOpen(false); }} className={`flex w-full flex-col justify-start rounded-xl p-3 px-4 text-left transition-all ${activeTab === item.key ? "border border-zinc-700 bg-zinc-900 text-white" : "text-zinc-300 hover:bg-zinc-900/50"}`}><span className="font-serif text-base font-bold tracking-widest">{item.label}</span><span className={`mt-1 font-mono text-[10px] uppercase tracking-widest ${activeTab === item.key ? "text-emerald-300/85" : "text-zinc-500"}`}>{item.sub}</span></button>)}</div>}
-          <div className="flex-1">
+
+        <section className="content-panel">
+          <div className="content-panel__inner">
             {visibleNavItems.length === 0 ? (
               <div className="flex min-h-[42vh] flex-col items-center justify-center text-center">
                 <p className="font-serif text-xl tracking-wide text-white">站点正在整理中</p>
@@ -2226,10 +2549,7 @@ export default function App() {
               </div>
             ) : (
               <>
-            {activeTab === "intro" && sectionShown("intro") && <div className="space-y-10"><div className="space-y-4"><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">墨香独白 / MONOLOGUE BODY</span><p className="text-[15px] font-light leading-8 text-zinc-100/90 md:text-[17px] md:leading-9">{zhText(data.profile.intro)}</p></div><div className="space-y-8 border-t border-zinc-900/60 pt-8"><span className="mb-3 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">尘埃之迹 / PERSONAL PATH TIMELINE</span><div className="relative space-y-8 before:absolute before:inset-y-1 before:left-2 before:w-[1.5px] before:bg-zinc-900">{data.experiences.map((exp) => <article key={exp.id} className="group relative pl-8"><div className="absolute left-[4px] top-[9px] h-2.5 w-2.5 rounded-full border-2 border-zinc-950 bg-zinc-800 transition-colors duration-300 group-hover:bg-zinc-300" /><div className="mb-2 grid gap-2 text-center md:grid-cols-3 md:items-center"><span className="justify-self-center font-mono text-xs font-semibold tracking-wider text-emerald-300/80 md:justify-self-start md:text-sm">{zhText(exp.period)}</span><span className="justify-self-center font-serif text-base font-medium text-white md:text-lg">{zhText(exp.role)}</span><span className="justify-self-center font-sans text-xs text-zinc-400 md:justify-self-end md:text-right md:text-sm">@ {zhText(exp.company)}</span></div><p className="text-[15px] font-light leading-7 text-zinc-200/90">{zhText(exp.desc)}</p></article>)}</div></div></div>}
-            {/* 宝：诗同时出现在作品展示里。用 poemToWork 做一次形状转换后直接拼接 ——
-                卡片、筛选、「闲诗」分类、详情弹窗、分页、无图占位整套逻辑原样复用，
-                WorksPane 一行都不用改。诗与惆怅栏目仍然独立存在，两边读的是同一份数据。 */}
+            {activeTab === "intro" && sectionShown("intro") && <IntroDashboard data={data} onSelectWork={setSelectedWork} onNavigate={setActiveTab} />}
             {activeTab === "works" && sectionShown("works") && <WorksPane items={[...data.works, ...((data.profile.pageCopy?.poemList || []).map(poemToWork))]} description={pageCopy.works} onSelect={setSelectedWork} categoryOrder={workCategories} />}
             {activeTab === "ai" && sectionShown("ai") && <WorksPane items={data.profile.pageCopy?.aiWorks || []} description={pageCopy.aiZone} onSelect={setSelectedAiWork} eyebrow="与 AI 共作 / AI ZONE EXHIBITS" title="AI 专区" emptyTitle="暂无 AI 作品" emptyDescription="请进入后台 /admin，在「AI 专区」中新增作品并保存。" />}
             {activeTab === "prospects" && sectionShown("prospects") && <GalleryPane items={data.gallery || []} onSelect={setSelectedGallery} description={pageCopy.gallery} />}
@@ -2240,16 +2560,16 @@ export default function App() {
               </>
             )}
           </div>
+          <footer className="site-footer">
+            备案号：
+            <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">皖ICP备2026017545号</a>
+          </footer>
         </section>
-      </div>
+      </main>
       {selectedWork && <WorkModal work={selectedWork} onClose={() => setSelectedWork(null)} />}
       {selectedAiWork && <WorkModal work={selectedAiWork} onClose={() => setSelectedAiWork(null)} />}
       {selectedGallery && <GalleryModal item={selectedGallery} onClose={() => setSelectedGallery(null)} />}
       {selectedTreasure && <TreasureModal item={selectedTreasure} onClose={() => setSelectedTreasure(null)} />}
-      <footer className="relative z-20 w-full pb-2 text-center font-mono text-[11px] text-zinc-500">
-        备案号：
-        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-zinc-300">皖ICP备2026017545号</a>
-      </footer>
     </div>
   );
 }
