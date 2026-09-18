@@ -1498,10 +1498,6 @@ function WorksPane({
   description,
   onSelect,
   eyebrow = "精心打磨的痕迹 / PORTFOLIO EXHIBITS",
-  // 宝（原话「可以」「都删掉」）：各栏目的中文大字标题从页面上撤掉，只留英文副标
-  // 和下面那句简介。这个参数**保留但不再渲染** —— 调用处还传着它（AI 专区传了
-  // 「AI 专区」），删参数会连带改一堆调用；留着也方便哪天想把标题放回来。
-  title: _title = "我的创意合集",
   emptyTitle = "暂无作品",
   emptyDescription = "请进入后台 /admin，在「作品媒体」中新增作品并保存。",
   categoryOrder,
@@ -1510,7 +1506,6 @@ function WorksPane({
   description?: string;
   onSelect: (work: Work) => void;
   eyebrow?: string;
-  title?: string;
   emptyTitle?: string;
   emptyDescription?: string;
   categoryOrder?: { key: string; label: string }[];
@@ -2551,7 +2546,7 @@ export default function App() {
               <>
             {activeTab === "intro" && sectionShown("intro") && <IntroDashboard data={data} onSelectWork={setSelectedWork} onNavigate={setActiveTab} />}
             {activeTab === "works" && sectionShown("works") && <WorksPane items={[...data.works, ...((data.profile.pageCopy?.poemList || []).map(poemToWork))]} description={pageCopy.works} onSelect={setSelectedWork} categoryOrder={workCategories} />}
-            {activeTab === "ai" && sectionShown("ai") && <WorksPane items={data.profile.pageCopy?.aiWorks || []} description={pageCopy.aiZone} onSelect={setSelectedAiWork} eyebrow="与 AI 共作 / AI ZONE EXHIBITS" title="AI 专区" emptyTitle="暂无 AI 作品" emptyDescription="请进入后台 /admin，在「AI 专区」中新增作品并保存。" />}
+            {activeTab === "ai" && sectionShown("ai") && <WorksPane items={data.profile.pageCopy?.aiWorks || []} description={pageCopy.aiZone} onSelect={setSelectedAiWork} eyebrow="与 AI 共作 / AI ZONE EXHIBITS" emptyTitle="暂无 AI 作品" emptyDescription="请进入后台 /admin，在「AI 专区」中新增作品并保存。" />}
             {activeTab === "prospects" && sectionShown("prospects") && <GalleryPane items={data.gallery || []} onSelect={setSelectedGallery} description={pageCopy.gallery} />}
             {activeTab === "treasures" && sectionShown("treasures") && <TreasurePane items={data.treasures || []} onSelect={setSelectedTreasure} description={pageCopy.treasures} />}
             {activeTab === "poems" && sectionShown("poems") && <PoemPane items={data.profile.pageCopy?.poemList || []} description={pageCopy.poems} />}
