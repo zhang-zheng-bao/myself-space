@@ -92,8 +92,26 @@ export interface Profile {
      * 免得后台和前台之间要做一次 `!value` 的反转（那种地方最容易写反）。
      */
     hideAvatar?: boolean;
+    /** 首页「关于我」下方三项数据标签，可在后台站点资料中编辑。 */
+    homeStats?: {
+      works?: Partial<HomeStatCopy>;
+      plays?: Partial<HomeStatCopy>;
+      ai?: Partial<HomeStatCopy>;
+    };
   };
 }
+
+export interface HomeStatCopy {
+  value: string;
+  label: string;
+  detail: string;
+}
+
+export const defaultHomeStats = {
+  works: { value: "10+", label: "作品", detail: "多平台内容创作" },
+  plays: { value: "100W+", label: "播放", detail: "全网作品累计播放量" },
+  ai: { value: "6项", label: "AI技能", detail: "熟练使用主流AI工具" },
+} satisfies Record<"works" | "plays" | "ai", HomeStatCopy>;
 
 /**
  * 各栏目「说明文字」的默认文案。

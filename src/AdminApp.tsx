@@ -42,7 +42,7 @@ import {
   X,
   ZoomIn,
 } from "lucide-react";
-import { Experience, GalleryItem, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, VisitRecord, VisitorRecord, VisitsPayload, Work, WorkLink, defaultPageCopy, isSectionVisible, normalizeSectionOrder, sectionMeta } from "./types";
+import { Experience, GalleryItem, HomeStatCopy, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, VisitRecord, VisitorRecord, VisitsPayload, Work, WorkLink, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder, sectionMeta } from "./types";
 
 const emptyWork: Work = {
   id: "",
@@ -389,6 +389,18 @@ function editPageCopy(
   patch: Partial<NonNullable<PortfolioData["profile"]["pageCopy"]>>,
 ) {
   draft.profile.pageCopy = { ...defaultPageCopy, ...(draft.profile.pageCopy || {}), ...patch };
+}
+
+type HomeStatKey = keyof typeof defaultHomeStats;
+
+function setHomeStatCopy(draft: PortfolioData, key: HomeStatKey, patch: Partial<HomeStatCopy>) {
+  const current = draft.profile.pageCopy?.homeStats || {};
+  editPageCopy(draft, {
+    homeStats: {
+      ...current,
+      [key]: { ...defaultHomeStats[key], ...current[key], ...patch },
+    },
+  });
 }
 
 /**
@@ -4074,6 +4086,26 @@ export default function AdminApp() {
                 </div>
                 <Field label="一句话标签" value={data.profile.tagline} onChange={(value) => update((draft) => { draft.profile.tagline = value; })} textarea />
                 <Field label="自我介绍" value={data.profile.intro} onChange={(value) => update((draft) => { draft.profile.intro = value; })} textarea />
+                <div className="space-y-3 border-t border-zinc-800/80 pt-4">
+                  <div>
+                    <h3 className="text-sm font-medium text-zinc-100">首页数据标签</h3>
+                    <p className="mt-1 text-xs leading-5 text-zinc-500">编辑前台“关于我”下方的作品、播放和 AI 技能数据。</p>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-3">
+                    {(["works", "plays", "ai"] as const).map((key) => {
+                      const stat = { ...defaultHomeStats[key], ...data.profile.pageCopy?.homeStats?.[key] };
+                      const groupName = { works: "作品", plays: "播放", ai: "AI 技能" }[key];
+                      return (
+                        <div key={key} className="space-y-3 border-l-2 border-emerald-400/25 pl-3">
+                          <strong className="block text-xs font-medium text-emerald-200">{groupName}</strong>
+                          <Field label="醒目数值" value={stat.value} onChange={(value) => update((draft) => { setHomeStatCopy(draft, key, { value }); })} placeholder={defaultHomeStats[key].value} />
+                          <Field label="短标签" value={stat.label} onChange={(value) => update((draft) => { setHomeStatCopy(draft, key, { label: value }); })} placeholder={defaultHomeStats[key].label} />
+                          <Field label="补充说明" value={stat.detail} onChange={(value) => update((draft) => { setHomeStatCopy(draft, key, { detail: value }); })} placeholder={defaultHomeStats[key].detail} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
                 <Field label="诗句/签名" value={data.profile.quote} onChange={(value) => update((draft) => { draft.profile.quote = value; })} textarea />
                 <SaveCurrentButton label="保存全部" />
               </Section>

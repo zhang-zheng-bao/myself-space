@@ -5,6 +5,8 @@ LZGO1/
 tmp/
 uploads/
 coverage/
+.playwright-cli/
+output/
 .DS_Store
 *.log
 
