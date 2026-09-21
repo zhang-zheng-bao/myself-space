@@ -1,5 +1,6 @@
 import React, { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { isInstrumental, setInstrumental } from "./musicMetadata";
 import {
   Activity,
   ArrowDown,
@@ -1796,7 +1797,7 @@ function WorkListEditor({
   upload: (event: ChangeEvent<HTMLInputElement>, onUrl: (url: string, file: File) => void | Promise<void>) => void;
   /** 直接上传一个 File（拖拽走这条）。真正的实现是后台的 uploadMediaFile。 */
   uploadFile: (file: File, onUrl: (url: string, file: File) => void | Promise<void>) => Promise<void>;
-  deleteMedia: (urls: string[]) => Promise<void>;
+  deleteMedia: (urls: string[]) => Promise<boolean>;
   update: (mutator: (draft: PortfolioData) => void) => void;
   updateAndSave: (mutator: (draft: PortfolioData) => void) => Promise<void>;
   addDraft: (mutator: (draft: PortfolioData) => void, onDone?: () => void) => void;
@@ -2876,6 +2877,7 @@ export default function AdminApp() {
   // 有没有「改了但还没保存」的内容。任何走 update() 的编辑都会点亮它，save() 成功才熄灭。
   // 用途有两个：底部状态条常驻提示、以及在用户关页面时拦一下（长表单最容易白填）。
   const [dirty, setDirty] = useState(false);
+  const pendingMusicAudioDeletesRef = useRef<Map<string, string>>(new Map());
   const [active, setActive] = useState("profile");
   const [expandedExperienceId, setExpandedExperienceId] = useState<string | null>(null);
   const [expandedWorkId, setExpandedWorkId] = useState<string | null>(null);
@@ -3234,9 +3236,21 @@ export default function AdminApp() {
         setStatus(json.error || "保存失败");
         return false;
       }
-      setData(normalize(json.data));
+      const savedData = normalize(json.data);
+      setData(savedData);
       setDirty(false);
       setStatus("已保存到数据库。");
+      const referencedAudioUrls = new Set((savedData.musicTracks || []).map((track) => track.audioUrl).filter(Boolean));
+      const replacedAudioUrls = [...pendingMusicAudioDeletesRef.current.values()].filter((url) => !referencedAudioUrls.has(url));
+      if (replacedAudioUrls.length === 0) {
+        pendingMusicAudioDeletesRef.current.clear();
+      } else {
+        try {
+          if (await deleteMedia(replacedAudioUrls, false)) pendingMusicAudioDeletesRef.current.clear();
+        } catch {
+          setStatus("数据已保存，但旧音频文件清理失败；下次保存时会重试。");
+        }
+      }
       if (collapse) {
         setExpandedExperienceId(null);
         setExpandedWorkId(null);
@@ -3332,6 +3346,26 @@ export default function AdminApp() {
       },
       { collapse: false },
     );
+  }
+
+  async function uploadMusicAudio(file: File, trackId: string) {
+    if (!file.type.startsWith("audio/") && !/\.(mp3|wav|flac|m4a|aac|ogg|opus|wma|aiff)$/i.test(file.name)) {
+      setStatus("请选择音频文件。");
+      return;
+    }
+    await uploadMediaFile(file, (url) => {
+      const previousUrl = data.musicTracks?.find(item => item.id === trackId)?.audioUrl || "";
+      const originalUrl = pendingMusicAudioDeletesRef.current.get(trackId);
+      if (previousUrl && originalUrl === undefined) {
+        pendingMusicAudioDeletesRef.current.set(trackId, previousUrl);
+      } else if (previousUrl && previousUrl !== originalUrl) {
+        void deleteMedia([previousUrl], false);
+      }
+      update((draft) => {
+        const target = draft.musicTracks?.find(item => item.id === trackId);
+        if (target) target.audioUrl = url;
+      });
+    });
   }
 
   async function upload(event: ChangeEvent<HTMLInputElement>, onUrl: (url: string, file: File) => void | Promise<void>) {
@@ -3464,9 +3498,9 @@ export default function AdminApp() {
     window.setTimeout(() => setUploadProgress(null), 1000);
   }
 
-  async function deleteMedia(urls: string[]) {
+  async function deleteMedia(urls: string[], announceSuccess = true) {
     const cleanUrls = urls.filter(Boolean);
-    if (cleanUrls.length === 0) return;
+    if (cleanUrls.length === 0) return true;
 
     const res = await fetch("/api/admin/delete-media", {
       method: "POST",
@@ -3476,11 +3510,12 @@ export default function AdminApp() {
     const json = await res.json().catch(() => ({}));
     if (!res.ok || json.failed?.length > 0) {
       setStatus("已从页面移除，但部分 COS 文件删除失败，请到腾讯云文件列表检查。");
-      return;
+      return false;
     }
-    if (json.deleted?.length > 0) {
+    if (announceSuccess && json.deleted?.length > 0) {
       setStatus(`已同步删除 ${json.deleted.length} 个 COS 文件，请记得保存页面数据。`);
     }
+    return true;
   }
 
   async function importLyrics(event: ChangeEvent<HTMLInputElement>, onText: (text: string) => void) {
@@ -3493,6 +3528,7 @@ export default function AdminApp() {
   }
 
   async function requestLyricsWithAsr(track: MusicTrack, index: number, referenceLyrics: string) {
+    if (isInstrumental(track.lyrics)) return "";
     if (!track.audioUrl) {
       setStatus("请先上传或填写音频 URL。");
       return "";
@@ -3534,7 +3570,7 @@ export default function AdminApp() {
     }
 
     const plainLyrics = stripLyricTimeline(track.lyrics);
-    if (track.audioUrl && plainLyrics && !hasEnhancedLyricTimeline(track.lyrics)) {
+    if (!isInstrumental(track.lyrics) && track.audioUrl && plainLyrics && !hasEnhancedLyricTimeline(track.lyrics)) {
       const lyrics = await requestLyricsWithAsr(track, index, plainLyrics);
       if (!lyrics) return;
       track.lyrics = lyrics;
@@ -5292,7 +5328,7 @@ export default function AdminApp() {
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                     <VisibilitySwitch
                       name="自动播放"
-                      hint="开启后访客打开首页会尝试自动播放第一首；浏览器通常要求先有交互，所以不保证一定响。"
+                      hint="开启后按音乐提前入场时间尝试播放第一首；浏览器可能要求先有交互。"
                       checked={Boolean(data.profile.musicAutoplay)}
                       disabled={saving}
                       onChange={(next) => {
@@ -5303,6 +5339,29 @@ export default function AdminApp() {
                         );
                       }}
                     />
+                    <label className="flex items-center gap-2 text-sm text-zinc-300">
+                      音乐提前入场时间
+                      <input
+                        key={data.profile.pageCopy?.musicLeadSeconds ?? 3}
+                        type="number"
+                        min={0}
+                        max={15}
+                        step={0.5}
+                        defaultValue={data.profile.pageCopy?.musicLeadSeconds ?? 3}
+                        disabled={saving}
+                        className="w-20 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-zinc-100"
+                        onBlur={(event) => {
+                          const value = event.currentTarget.valueAsNumber;
+                          const next = Number.isFinite(value) ? Math.min(15, Math.max(0, value)) : 3;
+                          event.currentTarget.value = String(next);
+                          if (next === (data.profile.pageCopy?.musicLeadSeconds ?? 3)) return;
+                          void mutateAndSave((draft) => {
+                            draft.profile.pageCopy = { ...draft.profile.pageCopy, musicLeadSeconds: next };
+                          }, undefined, { collapse: false });
+                        }}
+                      />
+                      秒
+                    </label>
                   </div>
                 </Section>
 
@@ -5484,6 +5543,9 @@ export default function AdminApp() {
                           <Field label="封面 URL" value={track.coverUrl} onChange={(value) => update((draft) => { draft.musicTracks![index].coverUrl = value; })} />
                         </div>
                         <div className="mt-3">
+                          <VisibilitySwitch name="纯音乐" checked={isInstrumental(track.lyrics)} disabled={saving || Boolean(asrLoadingTrackId)} onChange={(next) => update((draft) => { draft.musicTracks![index].lyrics = setInstrumental(track.lyrics, next); })} />
+                        </div>
+                        {!isInstrumental(track.lyrics) && <div className="mt-3">
                           <Field
                             label="歌词文本"
                             value={stripLyricTimeline(track.lyrics)}
@@ -5529,13 +5591,24 @@ export default function AdminApp() {
                             </div>
                           )}
                         </div>
+                        }
                         <div className="mt-3 flex flex-wrap gap-3">
-                          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-zinc-600">
-                            <Music size={16} /> 上传音频
-                            <input className="hidden" type="file" accept="audio/*" onChange={(event) => upload(event, (url) => {
-                              void deleteMedia([track.audioUrl]);
-                              update((draft) => { draft.musicTracks![index].audioUrl = url; });
-                            })} />
+                          <label className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-zinc-600 p-5 text-sm text-zinc-300 hover:border-emerald-400 focus-within:border-emerald-400"
+                            onDragOver={(event) => { event.preventDefault(); event.stopPropagation(); event.currentTarget.style.borderColor = "#62f5ce"; }}
+                            onDragLeave={(event) => { event.currentTarget.style.borderColor = ""; }}
+                            onDrop={(event) => {
+                              event.preventDefault(); event.stopPropagation(); event.currentTarget.style.borderColor = "";
+                              if (uploadProgress || saving) return;
+                              const files = Array.from(event.dataTransfer.files) as File[];
+                              if (files.length !== 1) { setStatus("每次请选择一个音频文件。"); return; }
+                              void uploadMusicAudio(files[0], track.id);
+                            }}>
+                            <Music size={18} /> {uploadProgress ? "音频上传中" : "拖拽音频到此处，或点击上传"}
+                            <input className="sr-only" type="file" accept="audio/*,.mp3,.wav,.flac,.m4a,.aac,.ogg,.opus,.wma,.aiff" disabled={Boolean(uploadProgress) || saving} onChange={(event) => {
+                              const file = event.currentTarget.files?.[0];
+                              event.currentTarget.value = "";
+                              if (file) void uploadMusicAudio(file, track.id);
+                            }} />
                           </label>
                           <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-zinc-600">
                             <ImagePlus size={16} /> 上传封面
@@ -5544,10 +5617,10 @@ export default function AdminApp() {
                               update((draft) => { draft.musicTracks![index].coverUrl = url; });
                             })} />
                           </label>
-                          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-zinc-600">
+                          {!isInstrumental(track.lyrics) && <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-zinc-600">
                             <FileText size={16} /> 上传歌词/字幕
                             <input className="hidden" type="file" accept=".lrc,.srt,.vtt,.txt,text/plain,text/vtt,application/x-subrip" onChange={(event) => importLyrics(event, (text) => update((draft) => { draft.musicTracks![index].lyrics = text; }))} />
-                          </label>
+                          </label>}
                         </div>
                       </div>
                     </EditorModal>

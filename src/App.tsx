@@ -12,6 +12,8 @@ import {
   FileText,
   Github,
   ListMusic,
+  Repeat,
+  Repeat1,
   Mail,
   Menu,
   Pause,
@@ -27,6 +29,9 @@ import {
 } from "lucide-react";
 import { createPortal } from "react-dom";
 import AdminApp from "./AdminApp";
+import { isInstrumental } from "./musicMetadata";
+import TimelineArc from "./components/TimelineArc";
+import EntranceCinematic from "./components/EntranceCinematic";
 import { startVisitTracking } from "./tracking";
 import { FloatingSentencesConfig, GalleryItem, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, Work, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder } from "./types";
 
@@ -460,10 +465,29 @@ function activeLyricAtTime(lines: LyricLine[], currentTime: number) {
  * 所以这里没有 `compact` 之类的变体 —— 尺寸、间距、歌词面板全部是我改动之前
  * 的那一套。要调它的外观前先问，别再自作主张。
  */
-function AudioBlock({ tracks, autoplay, compact = false }: { tracks: MusicTrack[]; autoplay?: boolean; compact?: boolean }) {
+function AudioBlock({ tracks, autoplay, compact = false, onAutoplaySettled }: { tracks: MusicTrack[]; autoplay?: boolean; compact?: boolean; onAutoplaySettled?: () => void }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lyricsRef = useRef<HTMLDivElement | null>(null);
   const autoplayAttemptedRef = useRef(false);
+  const pendingPlayRef = useRef(false);
+  const playerRef = useRef<HTMLDivElement>(null);
+  const queueButtonRef = useRef<HTMLButtonElement>(null);
+  const [queueOpen, setQueueOpen] = useState(false);
+  const [repeatOne, setRepeatOne] = useState(false);
+  const [playbackError, setPlaybackError] = useState("");
+  const fadeFrameRef = useRef(0);
+  const fadeIn = React.useCallback((audio: HTMLAudioElement) => {
+    cancelAnimationFrame(fadeFrameRef.current);
+    const start = performance.now();
+    const step = (now: number) => {
+      if (audio.paused) { audio.volume = 1; return; }
+      const progress = Math.min(1, (now - start) / 2200);
+      audio.volume = progress * progress * (3 - 2 * progress);
+      if (progress < 1) fadeFrameRef.current = requestAnimationFrame(step);
+    };
+    fadeFrameRef.current = requestAnimationFrame(step);
+  }, []);
+  useEffect(() => () => cancelAnimationFrame(fadeFrameRef.current), []);
   const lastScrolledLyricIndexRef = useRef(-1);
   const [isPlaying, setIsPlaying] = useState(false);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
@@ -472,9 +496,25 @@ function AudioBlock({ tracks, autoplay, compact = false }: { tracks: MusicTrack[
   const [duration, setDuration] = useState(0);
   const playlist = tracks.filter((track) => track.audioUrl);
   const currentTrack = playlist[trackIndex] || null;
-  const lyrics = useMemo(() => withIntroLyrics(parseLyrics(currentTrack?.lyrics), lyricMeta(currentTrack?.lyrics, currentTrack)), [currentTrack?.lyrics, currentTrack?.title, currentTrack?.artist]);
+  const lyrics = useMemo(() => isInstrumental(currentTrack?.lyrics) ? [] : withIntroLyrics(parseLyrics(currentTrack?.lyrics), lyricMeta(currentTrack?.lyrics, currentTrack)), [currentTrack?.lyrics, currentTrack?.title, currentTrack?.artist]);
   const activeLyricIndex = activeLyricAtTime(lyrics, currentTime);
   const playbackPercent = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
+
+  useEffect(() => {
+    if (!queueOpen) return;
+    const outside = (event: PointerEvent) => {
+      if (!playerRef.current?.contains(event.target as Node)) setQueueOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { setQueueOpen(false); queueButtonRef.current?.focus(); }
+    };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [queueOpen]);
 
   useEffect(() => {
     setTrackIndex(0);
@@ -492,9 +532,10 @@ function AudioBlock({ tracks, autoplay, compact = false }: { tracks: MusicTrack[
       const audio = audioRef.current;
       if (!audio) return;
       audio.muted = false;
-      audio.volume = 1;
+      audio.volume = 0;
       audio.play()
         .then(() => {
+          fadeIn(audio);
           setIsPlaying(true);
           setAutoplayBlocked(false);
         })
@@ -508,15 +549,23 @@ function AudioBlock({ tracks, autoplay, compact = false }: { tracks: MusicTrack[
       window.removeEventListener("keydown", resumeAutoplay);
       window.removeEventListener("touchstart", resumeAutoplay);
     };
-  }, [autoplay, autoplayBlocked, currentTrack?.audioUrl]);
+  }, [autoplay, autoplayBlocked, currentTrack?.audioUrl, fadeIn]);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
+    const shouldPlay = pendingPlayRef.current || isPlaying;
+    pendingPlayRef.current = false;
+    let cancelled = false;
     audio.load();
     setCurrentTime(0);
     setDuration(0);
-    if (isPlaying && currentTrack) audio.play().catch(() => setIsPlaying(false));
+    setPlaybackError("");
+    lastScrolledLyricIndexRef.current = -1;
+    if (shouldPlay && currentTrack) audio.play().catch(() => {
+      if (!cancelled) { setIsPlaying(false); setPlaybackError("播放失败，请重试或切换歌曲"); }
+    });
+    return () => { cancelled = true; };
   }, [trackIndex, currentTrack?.audioUrl]);
 
   useEffect(() => {
@@ -525,17 +574,21 @@ function AudioBlock({ tracks, autoplay, compact = false }: { tracks: MusicTrack[
     autoplayAttemptedRef.current = true;
     setTrackIndex(0);
     audio.muted = false;
-    audio.volume = 1;
+    audio.volume = 0;
     audio.play()
       .then(() => {
+        fadeIn(audio);
         setIsPlaying(true);
         setAutoplayBlocked(false);
+        onAutoplaySettled?.();
       })
       .catch(() => {
         setIsPlaying(false);
         setAutoplayBlocked(true);
+        audio.volume = 1;
+        onAutoplaySettled?.();
       });
-  }, [autoplay, playlist.length, currentTrack?.audioUrl]);
+  }, [autoplay, playlist.length, currentTrack?.audioUrl, fadeIn, onAutoplaySettled]);
 
   useEffect(() => {
     if (!isPlaying) return;
@@ -584,8 +637,20 @@ function AudioBlock({ tracks, autoplay, compact = false }: { tracks: MusicTrack[
 
   const playIndex = (nextIndex: number) => {
     if (playlist.length === 0) return;
-    setTrackIndex((nextIndex + playlist.length) % playlist.length);
-    setIsPlaying(true);
+    setAutoplayBlocked(false);
+    setPlaybackError("");
+    cancelAnimationFrame(fadeFrameRef.current);
+    const audio = audioRef.current;
+    if (audio) audio.volume = 1;
+    const index = (nextIndex + playlist.length) % playlist.length;
+    if (index === trackIndex) {
+      if (!audio) return;
+      if (audio.ended) audio.currentTime = 0;
+      void audio.play().catch(() => { setIsPlaying(false); setPlaybackError("播放失败，请重试或切换歌曲"); });
+      return;
+    }
+    pendingPlayRef.current = true;
+    setTrackIndex(index);
   };
 
   const seekToLyric = async (line: LyricLine) => {
@@ -624,12 +689,14 @@ function AudioBlock({ tracks, autoplay, compact = false }: { tracks: MusicTrack[
 
   if (compact) {
     return (
-      <>
+      <div className="hero-audio-shell" ref={playerRef}>
       <div className="hero-audio">
         <audio
           ref={audioRef}
           src={currentTrack?.audioUrl || ""}
-          onEnded={() => playlist.length > 1 ? playIndex(trackIndex + 1) : setIsPlaying(false)}
+          loop={repeatOne}
+          onEnded={() => playIndex(trackIndex + 1)}
+          onError={() => { setIsPlaying(false); setPlaybackError("音频无法加载，请重试或切换歌曲"); }}
           onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}
           onTimeUpdate={(event) => syncProgress(event.currentTarget)}
@@ -673,10 +740,25 @@ function AudioBlock({ tracks, autoplay, compact = false }: { tracks: MusicTrack[
         <div className="hero-audio__time">{formatTime(currentTime)} / {formatTime(duration)}</div>
         <button type="button" onClick={() => playIndex(trackIndex - 1)} disabled={playlist.length <= 1} className="hero-audio__skip" aria-label="上一首"><SkipBack size={14} /></button>
         <button type="button" onClick={() => playIndex(trackIndex + 1)} disabled={playlist.length <= 1} className="hero-audio__skip" aria-label="下一首"><SkipForward size={14} /></button>
-        <span className="hero-audio__queue" aria-hidden="true"><ListMusic size={15} /></span>
-        <div className="hero-audio__progress" aria-hidden="true"><span style={{ width: `${playbackPercent}%` }} /></div>
+        <button ref={queueButtonRef} type="button" className="hero-audio__queue" aria-label="音乐列表" title="音乐列表" aria-expanded={queueOpen} onClick={() => setQueueOpen(value => !value)}><ListMusic size={17} /></button>
+        <div className="hero-audio__progress"><span style={{ width: `${playbackPercent}%` }} /><input type="range" min={0} max={duration || 0} step={0.1} value={Math.min(currentTime, duration || 0)} disabled={!duration} aria-label="音乐进度" onChange={event => { const time = Number(event.target.value); if (audioRef.current) audioRef.current.currentTime = time; setCurrentTime(time); }} /></div>
       </div>
-      {isPlaying && currentTrack && typeof document !== "undefined" && createPortal(
+      {queueOpen && <section className="music-queue" aria-label="音乐列表">
+        <header><strong>音乐列表 <small>{playlist.length} 首</small></strong>
+          <button type="button" onClick={() => setRepeatOne(value => !value)} aria-label={repeatOne ? "单曲循环，点击切换列表循环" : "列表循环，点击切换单曲循环"} aria-pressed={repeatOne} title={repeatOne ? "切换列表循环" : "切换单曲循环"}>{repeatOne ? <Repeat1 size={17} /> : <Repeat size={17} />}<span>{repeatOne ? "单曲循环" : "列表循环"}</span></button>
+          <button type="button" aria-label="关闭音乐列表" title="关闭音乐列表" onClick={() => { setQueueOpen(false); queueButtonRef.current?.focus(); }}><X size={17} /></button>
+        </header>
+        <div className="music-queue__tracks">
+          {playlist.length === 0 ? <p className="music-queue__empty">暂无可播放的音乐</p> : playlist.map((track, index) => <button type="button" key={track.id || index} className="music-queue__track" data-current={index === trackIndex || undefined} aria-current={index === trackIndex ? "true" : undefined} aria-label={`播放 ${zhText(track.title) || "未命名音乐"}`} onClick={() => playIndex(index)}>
+            <span className="music-queue__number">{index === trackIndex && isPlaying ? <BarChart3 size={16} /> : String(index + 1).padStart(2, "0")}</span>
+            <span className="music-queue__cover">{track.coverUrl ? <img src={track.coverUrl} alt="" referrerPolicy="no-referrer" /> : <ListMusic size={18} />}</span>
+            <span className="music-queue__text"><strong>{zhText(track.title) || "未命名音乐"}</strong><small>{zhText(track.artist) || "未知作者"}{isInstrumental(track.lyrics) ? " · 纯音乐" : ""}</small></span>
+            <Play size={14} />
+          </button>)}
+        </div>
+      </section>}
+      {playbackError && <p className="music-queue__error" role="status">{playbackError}</p>}
+      {isPlaying && currentTrack && !isInstrumental(currentTrack.lyrics) && typeof document !== "undefined" && createPortal(
         <aside className="now-playing-lyrics" aria-label={`正在播放 ${zhText(currentTrack.title)} 的歌词`}>
           <div ref={lyricsRef} className="now-playing-lyrics__body">
             {lyrics.length > 0 ? (
@@ -731,7 +813,7 @@ function AudioBlock({ tracks, autoplay, compact = false }: { tracks: MusicTrack[
         </aside>,
         document.body,
       )}
-      </>
+      </div>
     );
   }
 
@@ -740,6 +822,7 @@ function AudioBlock({ tracks, autoplay, compact = false }: { tracks: MusicTrack[
       <audio
         ref={audioRef}
         src={currentTrack?.audioUrl || ""}
+        loop={repeatOne}
         onEnded={() => playlist.length > 1 ? playIndex(trackIndex + 1) : setIsPlaying(false)}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
@@ -2177,27 +2260,6 @@ function ContactPane({ data }: { data: PortfolioData }) {
   return <div className="space-y-8"><div><span className="mb-1 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">有缘相识，留笔通信 / INK STATION CONTACT</span><p className="mt-3 text-[15px] leading-8 text-zinc-300">{zhText(pageCopy.contact)}</p></div><div className="grid gap-6 pt-2 md:grid-cols-2">{cards.map((card) => <a key={card.label} href={card.label === "GitHub" ? card.value : undefined} target={card.label === "GitHub" ? "_blank" : undefined} rel="noopener noreferrer" className="group flex flex-col justify-between space-y-4 rounded-xl border border-zinc-900 bg-zinc-950/60 p-5 transition-all duration-300 hover:border-zinc-800 hover:bg-zinc-950"><div className="flex items-center space-x-3"><span className={`rounded-lg border border-zinc-800 bg-zinc-900 p-2.5 ${card.color} transition-transform duration-300 group-hover:scale-105`}>{card.icon}</span><div><h4 className="font-serif text-base font-bold tracking-wider text-white">{card.label}</h4><p className="mt-0.5 font-mono text-[10px] uppercase text-zinc-500">Contact Channel</p></div></div><span className="break-all font-mono text-base font-medium tracking-wide text-white">{card.value}</span></a>)}</div></div>;
 }
 
-function InitialLoader() {
-  return (
-    <div className="flex min-h-screen items-center justify-center overflow-hidden bg-[#09090b] p-6 text-zinc-100">
-      <div className="fixed inset-0 pointer-events-none bg-[radial-gradient(circle_at_top,_#121215_0%,_#09090b_100%)]" />
-      <div className="fixed inset-0 pointer-events-none bg-[linear-gradient(to_right,#808080_1px,transparent_1px),linear-gradient(to_bottom,#808080_1px,transparent_1px)] bg-[size:32px_32px] opacity-[0.03]" />
-      <div className="relative flex flex-col items-center gap-5">
-        <div className="flex h-[38px] items-end space-x-[4px] opacity-90">
-          <div className="animate-sound-1 w-[4px] rounded-full bg-emerald-300" />
-          <div className="animate-sound-2 w-[4px] rounded-full bg-zinc-300" />
-          <div className="animate-sound-3 w-[4px] rounded-full bg-emerald-300" />
-          <div className="animate-sound-4 w-[4px] rounded-full bg-zinc-300" />
-        </div>
-        <div className="text-center">
-          <p className="font-serif text-xl font-semibold tracking-widest text-white">欢迎来到，我的空间</p>
-          <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.28em] text-zinc-500">Loading My Space</p>
-        </div>
-      </div>
-      <style>{`@keyframes soundWave { 0%, 100% { height: 8px; } 50% { height: 30px; } }.animate-sound-1 { animation: soundWave 0.8s ease-in-out infinite; }.animate-sound-2 { animation: soundWave 1.2s ease-in-out infinite; animation-delay: 0.2s; }.animate-sound-3 { animation: soundWave 0.9s ease-in-out infinite; animation-delay: 0.4s; }.animate-sound-4 { animation: soundWave 1.4s ease-in-out infinite; animation-delay: 0.1s; }`}</style>
-    </div>
-  );
-}
 
 function preloadImage(url: string) {
   return new Promise<void>((resolve) => {
@@ -2212,6 +2274,7 @@ function preloadImage(url: string) {
 
 async function preloadInitialAssets(data: PortfolioData, flags: { treasuresVisible: boolean; aiZoneVisible: boolean }) {
   const urls = [
+    "/hero-creator-stage.png",
     data.profile.avatar,
     data.musicTracks?.find((track) => track.coverUrl)?.coverUrl,
     data.works?.find((work) => work.images?.[0])?.images?.[0],
@@ -2305,9 +2368,9 @@ function CareerTimeline({ experiences }: { experiences: PortfolioData["experienc
       onBlur={() => { pausedRef.current = false; }}
     >
       <div className="career-timeline__track">
-        <span className="career-timeline__line" aria-hidden="true" />
         {experiences.map((exp, index) => (
           <article key={exp.id}>
+            {index < experiences.length - 1 && <TimelineArc index={index} />}
             <i />
             <div className="career-icon">{index % 2 === 1 ? <Compass size={18} /> : <BriefcaseBusiness size={18} />}</div>
             <div className="career-copy">
@@ -2407,6 +2470,12 @@ export default function App() {
   if (window.location.pathname.startsWith("/admin")) return <AdminApp />;
   const [data, setData] = useState<PortfolioData>(normalizeData(emptyPortfolioData));
   const [portfolioReady, setPortfolioReady] = useState(false);
+  const [entered, setEntered] = useState(false);
+  const [musicEntryReady, setMusicEntryReady] = useState(false);
+  const [musicSettled, setMusicSettled] = useState(false);
+  const beginMusicEntry = React.useCallback(() => setMusicEntryReady(true), []);
+  const completeEntrance = React.useCallback(() => setEntered(true), []);
+  const completeMusicAttempt = React.useCallback(() => setMusicSettled(true), []);
   const [activeTab, setActiveTab] = useState<TabKey>("intro");
   const [selectedWork, setSelectedWork] = useState<Work | null>(null);
   const [selectedAiWork, setSelectedAiWork] = useState<Work | null>(null);
@@ -2416,7 +2485,9 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/portfolio")
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12000);
+    fetch("/api/portfolio", { signal: controller.signal })
       .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then(async (json) => {
         const nextData = normalizeData(json);
@@ -2430,9 +2501,10 @@ export default function App() {
         if (!cancelled) setData(normalizeData(emptyPortfolioData));
       })
       .finally(() => {
+        window.clearTimeout(timeout);
         if (!cancelled) setPortfolioReady(true);
       });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; controller.abort(); window.clearTimeout(timeout); };
   }, []);
 
   /*
@@ -2478,10 +2550,10 @@ export default function App() {
     if (fallback) setActiveTab(fallback);
   }, [data.profile.pageCopy, activeTab]);
 
-  if (!portfolioReady) return <InitialLoader />;
-
   return (
-    <div className="portfolio-site">
+    <>
+    <EntranceCinematic ready={portfolioReady} soundReady={!data.profile.musicAutoplay || !(data.musicTracks || []).some(track => track.audioUrl) || musicSettled} musicLeadSeconds={data.profile.pageCopy?.musicLeadSeconds ?? 3} onMusicEntry={beginMusicEntry} onEntered={completeEntrance} />
+    {portfolioReady && <div className="portfolio-site" inert={!entered} aria-hidden={!entered}>
       <FloatingSentences config={floatingSentencesConfig} />
 
       <header className="site-header">
@@ -2528,7 +2600,7 @@ export default function App() {
               <button type="button" className="hero-action" onClick={() => setActiveTab("contact")}><Mail size={17} />联系我</button>
             </div>
           </div>
-          <div className="hero-player"><AudioBlock tracks={data.musicTracks || []} autoplay={data.profile.musicAutoplay} compact /></div>
+          <div className="hero-player"><AudioBlock tracks={data.musicTracks || []} autoplay={musicEntryReady && data.profile.musicAutoplay} onAutoplaySettled={completeMusicAttempt} compact /></div>
         </aside>
 
         <section className="content-panel">
@@ -2565,6 +2637,7 @@ export default function App() {
       {selectedAiWork && <WorkModal work={selectedAiWork} onClose={() => setSelectedAiWork(null)} />}
       {selectedGallery && <GalleryModal item={selectedGallery} onClose={() => setSelectedGallery(null)} />}
       {selectedTreasure && <TreasureModal item={selectedTreasure} onClose={() => setSelectedTreasure(null)} />}
-    </div>
+    </div>}
+    </>
   );
 }
