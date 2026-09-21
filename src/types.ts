@@ -7,6 +7,7 @@ export interface Profile {
   resumePdfUrl?: string;
   musicAutoplay?: boolean;
   pageCopy?: {
+    musicLeadSeconds?: number;
     resume?: string;
     works?: string;
     aiZone?: string;

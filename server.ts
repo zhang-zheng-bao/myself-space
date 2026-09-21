@@ -822,6 +822,8 @@ function signCosUrl(url?: string) {
  */
 function normalizePageCopy(pageCopy: JsonRecord | undefined, transform: (url?: string) => string) {
   const copy = { ...(pageCopy || {}) };
+  const musicLeadSeconds = Number(copy.musicLeadSeconds ?? 3);
+  copy.musicLeadSeconds = Number.isFinite(musicLeadSeconds) ? Math.min(15, Math.max(0, musicLeadSeconds)) : 3;
 
   // 旧版两份固定简历。
   const resumePdfs = copy.resumePdfs && typeof copy.resumePdfs === "object" ? copy.resumePdfs as JsonRecord : {};
