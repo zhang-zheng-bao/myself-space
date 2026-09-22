@@ -345,7 +345,10 @@ html.portfolio-document body {
 .music-queue header strong { margin-right: auto; font-size: 14px; }
 .music-queue header small { color: #82938b; font-size: 12px; font-weight: 400; }
 .music-queue header button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 4px; color: #99aba3; font-size: 12px; cursor: pointer; }
-.music-queue header button[aria-pressed="true"] { color: #62f5ce; }
+.music-queue__repeat { display: inline-flex; overflow: hidden; border: 1px solid #2a3b36; border-radius: 5px; }
+.music-queue header .music-queue__repeat button { min-height: 30px; padding: 4px 8px; }
+.music-queue__repeat button + button { border-left: 1px solid #2a3b36; }
+.music-queue header button[aria-pressed="true"] { background: rgba(98, 245, 206, 0.11); color: #62f5ce; }
 .music-queue__tracks { max-height: min(300px, 45svh); overflow-y: auto; overscroll-behavior: contain; }
 .music-queue__track { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 64px; padding: 10px 14px; text-align: left; cursor: pointer; }
 .music-queue__track:hover { background: #17241f; }
@@ -357,6 +360,9 @@ html.portfolio-document body {
 .music-queue__text strong, .music-queue__text small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .music-queue__text strong { font-size: 14px; font-weight: 500; }
 .music-queue__text small { margin-top: 4px; color: #8c9e95; font-size: 12px; }
+.music-queue__track-action { display: grid; width: 30px; height: 30px; flex: none; place-items: center; border: 1px solid #365049; border-radius: 50%; color: #c7d5d0; transition: border-color 180ms ease, color 180ms ease, background-color 180ms ease, box-shadow 180ms ease; }
+.music-queue__track:hover .music-queue__track-action, .music-queue__track[data-current] .music-queue__track-action { border-color: #50cda9; color: #62f5ce; }
+.music-queue__track[data-current] .music-queue__track-action { background: rgba(98, 245, 206, 0.1); box-shadow: 0 0 12px rgba(98, 245, 206, 0.12); }
 .music-queue__empty { padding: 24px; text-align: center; color: #8c9e95; }
 .music-queue__error { position: absolute; bottom: calc(100% + 4px); z-index: 11; padding: 6px 10px; border-radius: 4px; background: #241616; color: #f1b8b8; font-size: 12px; }
 .music-queue button:focus-visible, .hero-audio__queue:focus-visible { outline: 2px solid #62f5ce; outline-offset: -2px; }
