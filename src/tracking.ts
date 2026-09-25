@@ -1,52 +1,40 @@
-/**
- * 站点检测 —— 前台上报端。
- *
- * 职责只有两件事：
- *   1. 页面加载时收集一份「此刻能拿到的访客环境快照」，POST 给 /api/track；
- *   2. 页面离开时把停留时长用 sendBeacon 补交，避免拖慢导航。
- *
- * 与 server.ts 的 /api/track 契约对齐，字段名与 Supabase 表的列一一对应。
- *
- * 设计原则：**全链路 best-effort**。统计是附加功能，任何一步失败（localStorage
- * 被禁、WebGL 拿不到、接口 500、网络断了）都必须静默吞掉 —— 访客浏览不受影响。
- * 所以这里没有任何一处会向上抛异常。
- */
+/** Privacy-conscious first-party analytics for visits, engaged time, and UI actions. */
 
-/** visitorKey 落在 localStorage：同一个浏览器 = 同一位访客。 */
 const VISITOR_KEY_STORAGE = "myspace_visitor_key";
+const HEARTBEAT_MS = 15_000;
+const EVENT_FLUSH_MS = 5_000;
+const MAX_EVENT_BATCH = 20;
 
-/**
- * StrictMode 双挂载守卫。**故意用模块级变量，不用 sessionStorage。**
- *
- * React 严格模式下 effect 会跑两次（挂载 → 卸载 → 再挂载），不拦会记两条。
- * 但守卫的寿命必须正好等于「这一次页面加载」：
- *   - 用 sessionStorage 会**跨刷新存活**（同一个标签页刷新时 sessionStorage 保留），
- *     于是访客按 F5 就再也不上报了 —— 刷新明明是一次新的页面加载，却被吞掉。
- *   - 模块级变量在每次页面加载时重新求值（刷新 = 新模块实例），正好覆盖
- *     StrictMode 的两次 effect，又不会拦掉真实的刷新。
- */
-let markedThisPageLoad = false;
+type NavigatorExtras = Navigator & {
+  deviceMemory?: number;
+  hardwareConcurrency?: number;
+  userAgentData?: { platform?: string };
+};
+
+interface TrackedEvent {
+  eventId: string;
+  eventName: "ui_click";
+  elementKey: string;
+  elementLabel: string;
+  elementType: string;
+  path: string;
+  occurredAt: string;
+}
+
+let started = false;
+let memoryVisitorKey = "";
 
 function randomHex(bytes = 16) {
   const buffer = new Uint8Array(bytes);
-  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
-    crypto.getRandomValues(buffer);
-  } else {
-    for (let i = 0; i < buffer.length; i += 1) buffer[i] = Math.floor(Math.random() * 256);
-  }
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) crypto.getRandomValues(buffer);
+  else for (let i = 0; i < buffer.length; i += 1) buffer[i] = Math.floor(Math.random() * 256);
   return Array.from(buffer, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/**
- * 读/建本机访客标识。
- * localStorage 不可用（无痕模式、Cookie 被禁）时退化成模块内内存值：至少本次
- * 会话内的多次上报是自洽的，只是关掉页面后就认不出是同一个人了 —— 这比抛异常好。
- */
-let memoryVisitorKey = "";
 function getVisitorKey() {
   try {
-    const hit = window.localStorage.getItem(VISITOR_KEY_STORAGE);
-    if (hit) return hit;
+    const existing = window.localStorage.getItem(VISITOR_KEY_STORAGE);
+    if (existing) return existing;
     const created = randomHex();
     window.localStorage.setItem(VISITOR_KEY_STORAGE, created);
     return created;
@@ -56,24 +44,15 @@ function getVisitorKey() {
   }
 }
 
-/**
- * 记住服务端归一化后的规范 key。
- *
- * 无痕窗口里每次都会重新生成一个随机 key，光靠 localStorage 是治不好的 ——
- * 服务端会拿设备指纹把这次的 key 归并到那台设备已有的访客上，并把规范 key 回下来。
- * 前台把它存回本地（存不进就存内存），这样同一个无痕窗口里后续上报也不会再飘。
- */
 function adoptVisitorKey(canonical: string) {
   if (!canonical) return;
   try {
     window.localStorage.setItem(VISITOR_KEY_STORAGE, canonical);
-    return;
   } catch {
     memoryVisitorKey = canonical;
   }
 }
 
-/** FNV-1a 32 位 → 8 位十六进制。只用来给「设备」一个稳定短指纹，不追求抗碰撞。 */
 function fingerprintOf(input: string) {
   let hash = 0x811c9dc5;
   for (let i = 0; i < input.length; i += 1) {
@@ -83,50 +62,39 @@ function fingerprintOf(input: string) {
   return hash.toString(16).padStart(8, "0");
 }
 
-/**
- * 显卡型号。这是指纹里区分度最高的一项（同一款手机/同一批机器往往一致，
- * 不同机器差别明显），也正是浏览器指纹的常规来源。拿不到就返回空串。
- */
 function readGpu(): string {
   try {
     const canvas = document.createElement("canvas");
     const gl = (canvas.getContext("webgl") || canvas.getContext("experimental-webgl")) as WebGLRenderingContext | null;
     if (!gl) return "";
     const debugInfo = gl.getExtension("WEBGL_debug_renderer_info");
-    const value = debugInfo
-      ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)
-      : gl.getParameter(gl.RENDERER);
-    return String(value || "").slice(0, 200);
+    return String(debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)).slice(0, 200);
   } catch {
     return "";
   }
 }
 
-type NavigatorExtras = Navigator & {
-  deviceMemory?: number;
-  hardwareConcurrency?: number;
-  userAgentData?: { platform?: string };
-  connection?: { effectiveType?: string };
-};
-
 function collectClient() {
   const nav = navigator as NavigatorExtras;
   const screenInfo = window.screen;
   const px = (value: number) => (Number.isFinite(value) ? value : null);
-
   return {
-    path: (window.location.pathname + window.location.search + window.location.hash).slice(0, 300),
-    referrer: String(document.referrer || "").slice(0, 500),
-    screen: screenInfo ? `${screenInfo.width}×${screenInfo.height}` : "",
-    viewport: `${window.innerWidth}×${window.innerHeight}`,
-    pixelRatio: px(window.devicePixelRatio),
-    colorDepth: px(screenInfo?.colorDepth),
-    timezone: (() => {
+    // Query strings and hashes can contain sensitive values and are unnecessary for this dashboard.
+    path: window.location.pathname.slice(0, 300),
+    referrer: (() => {
       try {
-        return String(Intl.DateTimeFormat().resolvedOptions().timeZone || "");
+        const url = new URL(document.referrer);
+        return `${url.origin}${url.pathname}`.slice(0, 500);
       } catch {
         return "";
       }
+    })(),
+    screen: screenInfo ? `${screenInfo.width}x${screenInfo.height}` : "",
+    viewport: `${window.innerWidth}x${window.innerHeight}`,
+    pixelRatio: px(window.devicePixelRatio),
+    colorDepth: px(screenInfo?.colorDepth),
+    timezone: (() => {
+      try { return String(Intl.DateTimeFormat().resolvedOptions().timeZone || ""); } catch { return ""; }
     })(),
     timezoneOffset: px(new Date().getTimezoneOffset()),
     language: String(nav.language || ""),
@@ -141,129 +109,192 @@ function collectClient() {
   };
 }
 
-type ClientSnapshot = ReturnType<typeof collectClient>;
+function normalizeLabel(value: string) {
+  return value.replace(/\s+/g, " ").trim().slice(0, 80);
+}
 
-function fingerprintSeed(client: ClientSnapshot) {
-  return [
-    client.screen,
-    client.viewport,
-    client.pixelRatio,
-    client.colorDepth,
-    client.timezone,
-    client.language,
-    client.languages,
-    client.platform,
-    client.cpuCores,
-    client.deviceMemory,
-    client.touchPoints,
-    client.gpu,
-    navigator.userAgent,
-  ].join("|");
+function eventFromClick(event: MouseEvent): TrackedEvent | null {
+  if (!event.isTrusted) return null;
+  const origin = event.target instanceof Element ? event.target : null;
+  const element = origin?.closest<HTMLElement>("[data-track],button,a,[role='button']");
+  if (!element || element.closest("[data-track-ignore]")) return null;
+
+  const label = normalizeLabel(
+    element.dataset.trackLabel || element.getAttribute("aria-label") || element.getAttribute("title") || element.innerText || "",
+  );
+  const section = element.closest<HTMLElement>("[data-section],section[id]");
+  const context = section?.dataset.section || section?.id || "page";
+  const explicit = normalizeLabel(element.dataset.track || element.id || "");
+  const elementType = element.tagName.toLowerCase() === "a" ? "link" : "button";
+  const elementKey = normalizeLabel(explicit || `${context}:${elementType}:${label || "unlabelled"}`);
+
+  return {
+    eventId: randomHex(16),
+    eventName: "ui_click",
+    elementKey,
+    elementLabel: label || "未命名控件",
+    elementType,
+    path: window.location.pathname.slice(0, 300),
+    occurredAt: new Date().toISOString(),
+  };
 }
 
 /**
- * 开始采集。返回清理函数（React useEffect 直接返回即可）。
- * 在 /admin 下不会被调用 —— App.tsx 对 /admin 走了提前 return 的分支。
+ * Starts one tracker for the lifetime of this page. The module singleton is safe under
+ * React StrictMode's mount/unmount/remount probe. Development is disabled unless explicitly
+ * enabled with VITE_ENABLE_ANALYTICS=true, so local tests do not pollute production data.
  */
 export function startVisitTracking(): () => void {
-  if (typeof window === "undefined" || typeof document === "undefined") return () => {};
-
-  let visitId: number | null = null;
-  let reportedMs = 0;
-
-  // 停留时长只累计「页面前台可见」的时间：切到别的标签页/锁屏期间不算，
-  // 否则挂了半天的后台标签会记出几小时的假停留。
-  let visibleAccumMs = 0;
-  let visibleSince = document.visibilityState === "visible" ? Date.now() : 0;
-
-  const visibleNow = () => visibleAccumMs + (visibleSince ? Date.now() - visibleSince : 0);
+  if (typeof window === "undefined" || typeof document === "undefined" || started) return () => {};
+  const viteEnv = (import.meta as ImportMeta & { env?: { PROD?: boolean; VITE_ENABLE_ANALYTICS?: string } }).env;
+  if (!viteEnv?.PROD && viteEnv?.VITE_ENABLE_ANALYTICS !== "true") return () => {};
+  started = true;
 
   const client = collectClient();
-  let visitorKey = getVisitorKey();
-
-  // 同一次页面加载只记一条：React 严格模式下 effect 会跑两次（见 markedThisPageLoad）。
-  if (markedThisPageLoad) return () => {};
-  markedThisPageLoad = true;
-
   const sessionId = randomHex(8);
+  let visitorKey = getVisitorKey();
+  let visitId: number | null = null;
+  let trackingToken = "";
+  let visibleAccumMs = 0;
+  let visibleSince = document.visibilityState === "visible" ? Date.now() : 0;
+  let reportedMs = 0;
+  let eventQueue: TrackedEvent[] = [];
+  let eventFlushInFlight = false;
+  let dwellFlushInFlight = false;
+  let visitSettled = false;
+  let trackingDisabled = false;
 
-  try {
-    void fetch("/api/track", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        visitorKey,
-        sessionId,
-        fingerprint: fingerprintOf(fingerprintSeed(client)),
-        client,
-      }),
-      keepalive: true,
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((json) => {
-        if (!json) return;
-        if (Number.isFinite(json.visitId)) visitId = Number(json.visitId);
-        // 服务端可能把这次访问归并到了同一台设备的既有访客上（指纹命中），
-        // 那就采纳它给的规范 key —— 见 adoptVisitorKey 的注释。
-        if (typeof json.visitorKey === "string") {
-          adoptVisitorKey(json.visitorKey);
-          visitorKey = json.visitorKey;
-        }
-      })
-      .catch(() => {});
-  } catch {
-    /* fetch 本身就抛（极少见）：记录失败不影响浏览 */
-  }
-
-  /** 交一次「上次交过之后又新增的可见时长」。增量上报，服务端是累加的。 */
-  const flushDwell = () => {
-    if (visitId == null) return;
-    const total = visibleNow();
-    const delta = total - reportedMs;
-    if (delta < 1000) return; // 不足 1 秒不值得写一次
-    reportedMs = total;
-
-    const payload = JSON.stringify({ visitId, visitorKey, dwellMs: delta });
+  const visibleNow = () => visibleAccumMs + (visibleSince ? Date.now() - visibleSince : 0);
+  const beacon = (url: string, body: unknown) => {
+    const payload = JSON.stringify(body);
     try {
-      if (typeof navigator.sendBeacon === "function") {
-        // sendBeacon 是离开页面时唯一可靠的通道：不占连接、不阻塞卸载。
-        navigator.sendBeacon("/api/track/dwell", new Blob([payload], { type: "application/json" }));
-        return;
-      }
+      return typeof navigator.sendBeacon === "function"
+        && navigator.sendBeacon(url, new Blob([payload], { type: "application/json" }));
     } catch {
-      /* 落到下面的 fetch 兜底 */
-    }
-    try {
-      void fetch("/api/track/dwell", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: payload,
-        keepalive: true,
-      });
-    } catch {
-      /* 忽略 */
+      return false;
     }
   };
 
+  const flushEvents = (useBeacon = false) => {
+    if (trackingDisabled) {
+      eventQueue = [];
+      return;
+    }
+    // Wait for canonical visitor/visit IDs so a slow initial request cannot orphan clicks.
+    if (!visitSettled || !eventQueue.length || eventFlushInFlight) return;
+    const events = eventQueue.splice(0, MAX_EVENT_BATCH);
+    const body = { visitId, visitorKey, sessionId, trackingToken, events };
+    if (useBeacon) {
+      if (!beacon("/api/track/events", body)) eventQueue = [...events, ...eventQueue];
+      return;
+    }
+    eventFlushInFlight = true;
+    void fetch("/api/track/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      keepalive: true,
+    })
+      .then((response) => { if (!response.ok) throw new Error("event upload failed"); })
+      .catch(() => { eventQueue = [...events, ...eventQueue]; })
+      .finally(() => {
+        eventFlushInFlight = false;
+        if (eventQueue.length >= MAX_EVENT_BATCH) flushEvents();
+      });
+  };
+
+  const flushDwell = (useBeacon = false) => {
+    if (visitId == null || dwellFlushInFlight) return;
+    const total = visibleNow();
+    const delta = total - reportedMs;
+    if (delta < 1000) return;
+    const body = { visitId, visitorKey, sessionId, trackingToken, dwellMs: Math.round(delta) };
+    if (useBeacon) {
+      if (beacon("/api/track/dwell", body)) reportedMs = total;
+      return;
+    }
+    dwellFlushInFlight = true;
+    void fetch("/api/track/dwell", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      keepalive: true,
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error("dwell upload failed");
+        reportedMs = Math.max(reportedMs, total);
+      })
+      .catch(() => {})
+      .finally(() => { dwellFlushInFlight = false; });
+  };
+
+  void fetch("/api/track", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      visitorKey,
+      sessionId,
+      fingerprint: fingerprintOf(Object.values(client).join("|") + navigator.userAgent),
+      client,
+    }),
+    keepalive: true,
+  })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((json) => {
+      if (!json || json.ignored || json.ok === false) {
+        trackingDisabled = true;
+        eventQueue = [];
+        return;
+      }
+      if (Number.isFinite(json.visitId)) visitId = Number(json.visitId);
+      if (typeof json.trackingToken === "string") trackingToken = json.trackingToken;
+      if (typeof json.visitorKey === "string") {
+        visitorKey = json.visitorKey;
+        adoptVisitorKey(visitorKey);
+      }
+      if (visitId == null || !trackingToken) {
+        trackingDisabled = true;
+        eventQueue = [];
+        return;
+      }
+      visitSettled = true;
+      flushEvents();
+    })
+    .catch(() => {
+      trackingDisabled = true;
+      eventQueue = [];
+    });
+
+  const onClick = (event: MouseEvent) => {
+    if (trackingDisabled) return;
+    const tracked = eventFromClick(event);
+    if (!tracked) return;
+    eventQueue.push(tracked);
+    if (eventQueue.length >= MAX_EVENT_BATCH) flushEvents();
+  };
   const onVisibility = () => {
     if (document.visibilityState === "hidden") {
-      // 先把当前这段可见时长结账，再上报。
       if (visibleSince) {
         visibleAccumMs += Date.now() - visibleSince;
         visibleSince = 0;
       }
-      flushDwell();
+      flushDwell(true);
+      flushEvents(true);
     } else if (!visibleSince) {
       visibleSince = Date.now();
     }
   };
-
-  window.addEventListener("pagehide", flushDwell);
-  document.addEventListener("visibilitychange", onVisibility);
-
-  return () => {
-    window.removeEventListener("pagehide", flushDwell);
-    document.removeEventListener("visibilitychange", onVisibility);
-    flushDwell();
+  const onPageHide = () => {
+    flushDwell(true);
+    flushEvents(true);
   };
+
+  document.addEventListener("click", onClick, true);
+  document.addEventListener("visibilitychange", onVisibility);
+  window.addEventListener("pagehide", onPageHide);
+  window.setInterval(() => flushDwell(), HEARTBEAT_MS);
+  window.setInterval(() => flushEvents(), EVENT_FLUSH_MS);
+
+  // The tracker intentionally lives for the page lifetime; see StrictMode note above.
+  return () => {};
 }

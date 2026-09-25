@@ -32,6 +32,7 @@ import {
   MapPin,
   MessagesSquare,
   MonitorSmartphone,
+  MousePointerClick,
   Music,
   Plus,
   RefreshCw,
@@ -2762,6 +2763,7 @@ function formatVisitAgo(iso?: string) {
 }
 
 function formatVisitDuration(ms?: number | null) {
+  if (ms == null) return "未上报";
   const total = Math.max(0, Math.round(Number(ms) || 0));
   if (total < 1000) return "不足 1 秒";
   const secs = Math.round(total / 1000);
@@ -5676,11 +5678,12 @@ export default function AdminApp() {
                 )}
 
                 {/* 统计数字用 .adm-panel 当底：只有色调、没有边框，不会在卡片里再套一层框。 */}
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
                   {[
                     { label: "访客数", value: visitsData?.stats.visitors ?? 0, hint: "同一浏览器算一位" },
                     { label: "总访问次数", value: visitsData?.stats.visits ?? 0, hint: "每次打开页面算一次" },
                     { label: "近 24 小时", value: visitsData?.stats.today ?? 0, hint: "最近一天的访问量" },
+                    { label: "按钮点击", value: visitsData?.stats.clicks ?? 0, hint: "全部有效点击" },
                   ].map((stat) => (
                     <div key={stat.label} className="adm-panel px-3 py-2.5">
                       <p className="text-xs text-zinc-400">{stat.label}</p>
@@ -5689,6 +5692,14 @@ export default function AdminApp() {
                     </div>
                   ))}
                 </div>
+
+                {visitsData?.configured && !visitsData.eventsConfigured && (
+                  <p className="adm-note adm-note-warn text-xs leading-5 text-amber-200">
+                    点击事件表尚未建立。请在 Supabase SQL Editor 重新执行一次
+                    <span className="mx-1 font-mono text-amber-100">supabase/schema.sql</span>
+                    ，现有访问数据不会被覆盖。
+                  </p>
+                )}
 
                 <div className="flex flex-wrap items-center gap-2">
                   <button
@@ -5739,6 +5750,43 @@ export default function AdminApp() {
                   <p className="flex items-center gap-2 text-sm text-zinc-400">
                     <Loader2 className="animate-spin text-emerald-300" size={14} /> 正在读取访问记录…
                   </p>
+                )}
+
+                {visitsData?.eventsConfigured && (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-end justify-between gap-2">
+                      <div>
+                        <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
+                          <MousePointerClick size={15} className="text-emerald-300" /> 按钮点击排行
+                        </h3>
+                        <p className="mt-1 text-[11px] leading-4 text-zinc-500">
+                          自动采集前台按钮和链接；独立访客按同一浏览器去重，不采集输入内容。
+                        </p>
+                      </div>
+                      <span className="text-[11px] text-zinc-500">共 {visitsData.clickStats.length} 个控件</span>
+                    </div>
+                    {visitsData.clickStats.length === 0 ? (
+                      <p className="adm-note text-xs leading-5 text-zinc-400">还没有按钮点击记录。</p>
+                    ) : (
+                      <div className="overflow-hidden rounded-lg border border-zinc-800/80">
+                        <div className="grid grid-cols-[minmax(0,1fr)_72px_72px] gap-2 border-b border-zinc-800 bg-white/[0.03] px-3 py-2 text-[10px] uppercase text-zinc-500 md:grid-cols-[minmax(0,1.4fr)_minmax(100px,.5fr)_80px_80px_140px]">
+                          <span>控件</span><span className="hidden md:block">页面</span><span className="text-right">点击</span><span className="text-right">访客</span><span className="hidden text-right md:block">最近点击</span>
+                        </div>
+                        {visitsData.clickStats.slice(0, 100).map((item) => (
+                          <div key={`${item.path}:${item.element_key}`} className="grid grid-cols-[minmax(0,1fr)_72px_72px] gap-2 border-b border-zinc-900 px-3 py-2.5 last:border-b-0 md:grid-cols-[minmax(0,1.4fr)_minmax(100px,.5fr)_80px_80px_140px] md:items-center">
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-medium text-zinc-200" title={item.element_label}>{item.element_label}</p>
+                              <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-600" title={item.element_key}>{item.element_key}</p>
+                            </div>
+                            <span className="hidden truncate font-mono text-[10px] text-zinc-500 md:block">{item.path}</span>
+                            <span className="text-right text-sm font-semibold tabular-nums text-emerald-300">{item.clicks}</span>
+                            <span className="text-right text-xs tabular-nums text-zinc-300">{item.unique_visitors}</span>
+                            <span className="hidden text-right text-[10px] text-zinc-500 md:block">{formatVisitTime(item.last_clicked_at)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {visitsData && !visitsLoading && visitsData.visitors.length === 0 && (
