@@ -154,6 +154,7 @@ export function startVisitTracking(): () => void {
   const sessionId = randomHex(8);
   let visitorKey = getVisitorKey();
   let visitId: number | null = null;
+  let trackingToken = "";
   let visibleAccumMs = 0;
   let visibleSince = document.visibilityState === "visible" ? Date.now() : 0;
   let reportedMs = 0;
@@ -182,7 +183,7 @@ export function startVisitTracking(): () => void {
     // Wait for canonical visitor/visit IDs so a slow initial request cannot orphan clicks.
     if (!visitSettled || !eventQueue.length || eventFlushInFlight) return;
     const events = eventQueue.splice(0, MAX_EVENT_BATCH);
-    const body = { visitId, visitorKey, sessionId, events };
+    const body = { visitId, visitorKey, sessionId, trackingToken, events };
     if (useBeacon) {
       if (!beacon("/api/track/events", body)) eventQueue = [...events, ...eventQueue];
       return;
@@ -207,7 +208,7 @@ export function startVisitTracking(): () => void {
     const total = visibleNow();
     const delta = total - reportedMs;
     if (delta < 1000) return;
-    const body = { visitId, visitorKey, dwellMs: Math.round(delta) };
+    const body = { visitId, visitorKey, sessionId, trackingToken, dwellMs: Math.round(delta) };
     if (useBeacon) {
       if (beacon("/api/track/dwell", body)) reportedMs = total;
       return;
@@ -246,9 +247,15 @@ export function startVisitTracking(): () => void {
         return;
       }
       if (Number.isFinite(json.visitId)) visitId = Number(json.visitId);
+      if (typeof json.trackingToken === "string") trackingToken = json.trackingToken;
       if (typeof json.visitorKey === "string") {
         visitorKey = json.visitorKey;
         adoptVisitorKey(visitorKey);
+      }
+      if (visitId == null || !trackingToken) {
+        trackingDisabled = true;
+        eventQueue = [];
+        return;
       }
       visitSettled = true;
       flushEvents();

@@ -1602,6 +1602,24 @@ async function startServer() {
     return /HeadlessChrome|Playwright|Puppeteer|Lighthouse|Googlebot|bingbot|YandexBot|Baiduspider|Bytespider|PetalBot|AhrefsBot|SemrushBot/i.test(userAgent);
   }
 
+  function trackingToken(visitId: number, visitorKey: string, sessionId: string) {
+    return crypto
+      .createHmac("sha256", getSessionSecret())
+      .update(`${visitId}:${visitorKey}:${sessionId}`)
+      .digest("base64url");
+  }
+
+  function validTrackingToken(token: unknown, visitId: number, visitorKey: string, sessionId: string) {
+    const supplied = String(token || "");
+    const expected = trackingToken(visitId, visitorKey, sessionId);
+    if (supplied.length !== expected.length) return false;
+    try {
+      return crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+    } catch {
+      return false;
+    }
+  }
+
   app.post("/api/track", async (req, res) => {
     try {
       if (!supabase) return res.json({ ok: false, reason: "supabase-not-configured" });
@@ -1755,7 +1773,13 @@ async function startServer() {
       // 把归一化之后的 key 回给前台：无痕窗口里前台本来每次都会生成新 key，
       // 收到这个值后它会**改用自己的 localStorage 存成这个规范 key**，
       // 于是连同一个无痕窗口内的后续上报都不会再飘。
-      res.json({ ok: true, visitId, visitorKey, mergedFrom });
+      res.json({
+        ok: true,
+        visitId,
+        visitorKey,
+        mergedFrom,
+        trackingToken: visitId == null ? "" : trackingToken(visitId, visitorKey, str(body.sessionId, 80)),
+      });
     } catch (err: any) {
       // 检测接口永远不要让前台看到 5xx
       res.json({ ok: false, reason: err?.message || "track-failed" });
@@ -1775,7 +1799,12 @@ async function startServer() {
       const sessionId = String(body.sessionId || "").slice(0, 80);
       const visitId = body.visitId == null ? null : Number(body.visitId);
       const rawEvents = Array.isArray(body.events) ? body.events.slice(0, 50) : [];
-      if (!visitorKey || rawEvents.length === 0) return res.status(400).json({ error: "visitorKey and events required" });
+      if (!visitorKey || visitId == null || !Number.isFinite(visitId) || visitId <= 0 || rawEvents.length === 0) {
+        return res.status(400).json({ error: "visit context and events required" });
+      }
+      if (!validTrackingToken(body.trackingToken, visitId, visitorKey, sessionId)) {
+        return res.status(403).json({ error: "invalid tracking context" });
+      }
 
       const allowedNames = new Set(["ui_click"]);
       const rows = rawEvents.flatMap((event: any) => {
@@ -1821,11 +1850,16 @@ async function startServer() {
       const dwellMs = Number.isFinite(rawMs) ? Math.max(0, Math.min(Math.round(rawMs), 6 * 60 * 60 * 1000)) : 0;
       const visitIdNum = Number(body.visitId);
       if (!Number.isFinite(visitIdNum)) return res.status(400).json({ error: "visitId required" });
+      const visitorKey = String(body.visitorKey || "").slice(0, 80);
+      const sessionId = String(body.sessionId || "").slice(0, 80);
+      if (!validTrackingToken(body.trackingToken, visitIdNum, visitorKey, sessionId)) {
+        return res.status(403).json({ error: "invalid tracking context" });
+      }
 
       // 新版 schema 用数据库函数在一个事务里原子累加，避免心跳与离开上报并发覆盖。
       const { error: rpcError } = await supabase.rpc("increment_portfolio_dwell", {
         p_visit_id: visitIdNum,
-        p_visitor_key: String(body.visitorKey || "").slice(0, 80),
+        p_visitor_key: visitorKey,
         p_dwell_ms: dwellMs,
       });
       if (!rpcError) return res.json({ ok: true });
@@ -1844,7 +1878,7 @@ async function startServer() {
         .select("visitor_key")
         .maybeSingle();
 
-      const key = data?.visitor_key || String(body.visitorKey || "").slice(0, 80);
+      const key = data?.visitor_key || visitorKey;
       if (key) {
         const { data: row } = await supabase
           .from("portfolio_visitors")
