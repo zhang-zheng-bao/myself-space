@@ -406,11 +406,24 @@ export interface VisitorRecord {
   last_os?: string;
 }
 
+/** Aggregated click count returned by the admin analytics endpoint. */
+export interface ClickStat {
+  element_key: string;
+  element_label: string;
+  element_type: string;
+  path: string;
+  clicks: number;
+  unique_visitors: number;
+  last_clicked_at: string;
+}
+
 /** GET /api/admin/visits 的响应。 */
 export interface VisitsPayload {
   visitors: VisitorRecord[];
   visits: VisitRecord[];
-  stats: { visitors: number; visits: number; today: number };
+  stats: { visitors: number; visits: number; today: number; clicks: number };
+  clickStats: ClickStat[];
+  eventsConfigured: boolean;
   /** 后端是否具备可写可读的存储（Supabase 已连 + 检测表已建） */
   configured: boolean;
   /** configured 为 false 时的原因："supabase-missing" | "tables-missing" */

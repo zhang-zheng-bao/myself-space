@@ -711,7 +711,7 @@ function AudioBlock({ tracks, autoplay, compact = false, onAutoplaySettled }: { 
           <strong>{zhText(currentTrack?.title) || "暂无音乐"}</strong>
           <span>{currentTrack ? zhText(currentTrack.artist) || "Unknown" : "请在后台上传音乐"}</span>
         </div>
-        <button type="button" onClick={togglePlay} disabled={!currentTrack} className="hero-audio__play" aria-label={isPlaying ? "暂停音乐" : "播放音乐"}>
+        <button type="button" data-track="music:toggle" onClick={togglePlay} disabled={!currentTrack} className="hero-audio__play" aria-label={isPlaying ? "暂停音乐" : "播放音乐"}>
           {isPlaying ? <Pause size={15} className="fill-current" /> : <Play size={15} className="translate-x-px fill-current" />}
         </button>
         <div className="hero-audio__wave">
@@ -738,9 +738,9 @@ function AudioBlock({ tracks, autoplay, compact = false, onAutoplaySettled }: { 
           />
         </div>
         <div className="hero-audio__time">{formatTime(currentTime)} / {formatTime(duration)}</div>
-        <button type="button" onClick={() => playIndex(trackIndex - 1)} disabled={playlist.length <= 1} className="hero-audio__skip" aria-label="上一首"><SkipBack size={14} /></button>
-        <button type="button" onClick={() => playIndex(trackIndex + 1)} disabled={playlist.length <= 1} className="hero-audio__skip" aria-label="下一首"><SkipForward size={14} /></button>
-        <button ref={queueButtonRef} type="button" className="hero-audio__queue" aria-label="音乐列表" title="音乐列表" aria-expanded={queueOpen} onClick={() => setQueueOpen(value => !value)}><ListMusic size={17} /></button>
+        <button type="button" data-track="music:previous" onClick={() => playIndex(trackIndex - 1)} disabled={playlist.length <= 1} className="hero-audio__skip" aria-label="上一首"><SkipBack size={14} /></button>
+        <button type="button" data-track="music:next" onClick={() => playIndex(trackIndex + 1)} disabled={playlist.length <= 1} className="hero-audio__skip" aria-label="下一首"><SkipForward size={14} /></button>
+        <button ref={queueButtonRef} type="button" data-track="music:queue" className="hero-audio__queue" aria-label="音乐列表" title="音乐列表" aria-expanded={queueOpen} onClick={() => setQueueOpen(value => !value)}><ListMusic size={17} /></button>
         <div className="hero-audio__progress"><span style={{ width: `${playbackPercent}%` }} /><input type="range" min={0} max={duration || 0} step={0.1} value={Math.min(currentTime, duration || 0)} disabled={!duration} aria-label="音乐进度" onChange={event => { const time = Number(event.target.value); if (audioRef.current) audioRef.current.currentTime = time; setCurrentTime(time); }} /></div>
       </div>
       {queueOpen && <section className="music-queue" aria-label="音乐列表">
@@ -749,7 +749,7 @@ function AudioBlock({ tracks, autoplay, compact = false, onAutoplaySettled }: { 
           <button type="button" aria-label="关闭音乐列表" title="关闭音乐列表" onClick={() => { setQueueOpen(false); queueButtonRef.current?.focus(); }}><X size={17} /></button>
         </header>
         <div className="music-queue__tracks">
-          {playlist.length === 0 ? <p className="music-queue__empty">暂无可播放的音乐</p> : playlist.map((track, index) => <button type="button" key={track.id || index} className="music-queue__track" data-current={index === trackIndex || undefined} aria-current={index === trackIndex ? "true" : undefined} aria-label={`播放 ${zhText(track.title) || "未命名音乐"}`} onClick={() => playIndex(index)}>
+          {playlist.length === 0 ? <p className="music-queue__empty">暂无可播放的音乐</p> : playlist.map((track, index) => <button type="button" key={track.id || index} data-track={`music:select:${track.id || index}`} className="music-queue__track" data-current={index === trackIndex || undefined} aria-current={index === trackIndex ? "true" : undefined} aria-label={`播放 ${zhText(track.title) || "未命名音乐"}`} onClick={() => playIndex(index)}>
             <span className="music-queue__number">{index === trackIndex && isPlaying ? <BarChart3 size={16} /> : String(index + 1).padStart(2, "0")}</span>
             <span className="music-queue__cover">{track.coverUrl ? <img src={track.coverUrl} alt="" referrerPolicy="no-referrer" /> : <ListMusic size={18} />}</span>
             <span className="music-queue__text"><strong>{zhText(track.title) || "未命名音乐"}</strong><small>{zhText(track.artist) || "未知作者"}{isInstrumental(track.lyrics) ? " · 纯音乐" : ""}</small></span>
@@ -2426,7 +2426,7 @@ function IntroDashboard({ data, onSelectWork, onNavigate }: {
       <section className="dashboard-section dashboard-works">
         <div className="section-heading-row">
           <div className="section-kicker"><span />我的作品 <b>/</b> MY WORKS</div>
-          <button type="button" onClick={() => onNavigate("works")}>查看全部作品 <ArrowRight size={14} /></button>
+          <button type="button" data-track="home:all-works" onClick={() => onNavigate("works")}>查看全部作品 <ArrowRight size={14} /></button>
         </div>
         {homeWorks.length > 0 ? (
           <div className="home-work-carousel" aria-label="我的作品自动轮播">
@@ -2434,7 +2434,7 @@ function IntroDashboard({ data, onSelectWork, onNavigate }: {
               {[0, 1].map((copyIndex) => (
                 <div className="home-work-carousel__group" key={copyIndex} aria-hidden={copyIndex === 1 || undefined}>
                   {homeWorks.map((work) => (
-                    <button type="button" key={`${copyIndex}-${work.id}`} tabIndex={copyIndex === 1 ? -1 : 0} onClick={() => onSelectWork(work)} className="featured-work">
+                    <button type="button" key={`${copyIndex}-${work.id}`} data-track={`home:work:${work.id}`} tabIndex={copyIndex === 1 ? -1 : 0} onClick={() => onSelectWork(work)} className="featured-work">
                       {work.images?.[0] ? <img src={work.images[0]} alt="" referrerPolicy="no-referrer" /> : <span className="featured-work__empty">NO IMAGE</span>}
                       <span className="featured-work__shade" />
                       <span className="featured-work__category">{categoryLabel(work.category)}</span>
@@ -2557,19 +2557,19 @@ export default function App() {
       <FloatingSentences config={floatingSentencesConfig} />
 
       <header className="site-header">
-        <button type="button" className="site-brand" onClick={() => setActiveTab("intro")}>
+        <button type="button" data-track="navigation:brand" className="site-brand" onClick={() => setActiveTab("intro")}>
           <strong>{data.profile.name}</strong>
           <span>我的空间 / MY SPACE</span>
           <i aria-hidden="true"><b /><b /><b /></i>
         </button>
         <nav className="site-nav" aria-label="主要导航">
           {visibleNavItems.map((item) => (
-            <button key={item.key} type="button" onClick={() => setActiveTab(item.key)} data-active={activeTab === item.key || undefined}>
+            <button key={item.key} type="button" data-track={`navigation:${item.key}`} onClick={() => setActiveTab(item.key)} data-active={activeTab === item.key || undefined}>
               <span>{item.label}</span>
             </button>
           ))}
         </nav>
-        <button type="button" className="mobile-menu-button" onClick={() => setMobileMenuOpen((open) => !open)} aria-label="打开导航">
+        <button type="button" data-track="navigation:mobile-menu" className="mobile-menu-button" onClick={() => setMobileMenuOpen((open) => !open)} aria-label="打开导航">
           {mobileMenuOpen ? <X size={19} /> : <Menu size={19} />}
         </button>
       </header>
@@ -2577,7 +2577,7 @@ export default function App() {
       {mobileMenuOpen && (
         <nav className="mobile-nav" aria-label="移动端导航">
           {visibleNavItems.map((item) => (
-            <button key={item.key} type="button" onClick={() => { setActiveTab(item.key); setMobileMenuOpen(false); }} data-active={activeTab === item.key || undefined}>
+            <button key={item.key} type="button" data-track={`navigation:mobile:${item.key}`} onClick={() => { setActiveTab(item.key); setMobileMenuOpen(false); }} data-active={activeTab === item.key || undefined}>
               <span>{item.label}</span><small>{item.sub}</small>
             </button>
           ))}
@@ -2596,8 +2596,8 @@ export default function App() {
             <h2>{zhText(data.profile.tagline)}</h2>
             <p>{zhText(data.profile.quote)}</p>
             <div className="hero-actions">
-              <button type="button" className="hero-action hero-action--primary" onClick={() => setActiveTab("works")}><BriefcaseBusiness size={17} />查看作品集<ArrowRight size={15} /></button>
-              <button type="button" className="hero-action" onClick={() => setActiveTab("contact")}><Mail size={17} />联系我</button>
+              <button type="button" data-track="hero:view-portfolio" className="hero-action hero-action--primary" onClick={() => setActiveTab("works")}><BriefcaseBusiness size={17} />查看作品集<ArrowRight size={15} /></button>
+              <button type="button" data-track="hero:contact" className="hero-action" onClick={() => setActiveTab("contact")}><Mail size={17} />联系我</button>
             </div>
           </div>
           <div className="hero-player"><AudioBlock tracks={data.musicTracks || []} autoplay={musicEntryReady && data.profile.musicAutoplay} onAutoplaySettled={completeMusicAttempt} compact /></div>

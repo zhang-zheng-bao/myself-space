@@ -1598,6 +1598,10 @@ async function startServer() {
     return true;
   }
 
+  function isAutomatedUserAgent(userAgent: string) {
+    return /HeadlessChrome|Playwright|Puppeteer|Lighthouse|Googlebot|bingbot|YandexBot|Baiduspider|Bytespider|PetalBot|AhrefsBot|SemrushBot/i.test(userAgent);
+  }
+
   app.post("/api/track", async (req, res) => {
     try {
       if (!supabase) return res.json({ ok: false, reason: "supabase-not-configured" });
@@ -1611,6 +1615,7 @@ async function startServer() {
 
       const c = body.client || {};
       const ua = String(req.headers["user-agent"] || "").slice(0, 500);
+      if (isAutomatedUserAgent(ua)) return res.json({ ok: true, ignored: true, reason: "automated-client" });
       const info = parseUserAgent(ua);
       const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
       const str = (v: unknown, max: number) => String(v ?? "").slice(0, max);
@@ -1757,6 +1762,57 @@ async function startServer() {
     }
   });
 
+  app.post("/api/track/events", async (req, res) => {
+    try {
+      if (!supabase) return res.json({ ok: false, reason: "supabase-not-configured" });
+      const ip = clientIp(req);
+      if (!trackAllowed(ip)) return res.status(429).json({ ok: false, reason: "too-many-requests" });
+      const ua = String(req.headers["user-agent"] || "").slice(0, 500);
+      if (isAutomatedUserAgent(ua)) return res.json({ ok: true, ignored: true });
+
+      const body = req.body || {};
+      const visitorKey = String(body.visitorKey || "").trim().slice(0, 80);
+      const sessionId = String(body.sessionId || "").slice(0, 80);
+      const visitId = body.visitId == null ? null : Number(body.visitId);
+      const rawEvents = Array.isArray(body.events) ? body.events.slice(0, 50) : [];
+      if (!visitorKey || rawEvents.length === 0) return res.status(400).json({ error: "visitorKey and events required" });
+
+      const allowedNames = new Set(["ui_click"]);
+      const rows = rawEvents.flatMap((event: any) => {
+        const eventName = String(event?.eventName || "").slice(0, 40);
+        const elementKey = String(event?.elementKey || "").trim().slice(0, 100);
+        if (!allowedNames.has(eventName) || !elementKey) return [];
+        const parsedTime = Date.parse(String(event?.occurredAt || ""));
+        return [{
+          event_id: String(event?.eventId || crypto.randomUUID()).slice(0, 80),
+          visit_id: visitId != null && Number.isFinite(visitId) && visitId > 0 ? visitId : null,
+          visitor_key: visitorKey,
+          session_id: sessionId,
+          event_name: eventName,
+          element_key: elementKey,
+          element_label: String(event?.elementLabel || "").slice(0, 80),
+          element_type: String(event?.elementType || "").slice(0, 20),
+          path: String(event?.path || "/").split(/[?#]/, 1)[0].slice(0, 300),
+          occurred_at: Number.isFinite(parsedTime) ? new Date(parsedTime).toISOString() : new Date().toISOString(),
+        }];
+      });
+      if (rows.length === 0) return res.status(400).json({ error: "no valid events" });
+
+      const { error } = await supabase
+        .from("portfolio_events")
+        .upsert(rows, { onConflict: "event_id", ignoreDuplicates: true });
+      if (error) {
+        if (/could not find the table|does not exist|schema cache/i.test(error.message)) {
+          return res.json({ ok: false, reason: "events-not-configured" });
+        }
+        return res.status(500).json({ error: error.message });
+      }
+      res.json({ ok: true, accepted: rows.length });
+    } catch (err: any) {
+      res.json({ ok: false, reason: err?.message || "events-failed" });
+    }
+  });
+
   app.post("/api/track/dwell", async (req, res) => {
     try {
       if (!supabase) return res.json({ ok: false });
@@ -1766,11 +1822,15 @@ async function startServer() {
       const visitIdNum = Number(body.visitId);
       if (!Number.isFinite(visitIdNum)) return res.status(400).json({ error: "visitId required" });
 
-      // 客户端送上来的是**增量**（见 src/tracking.ts: flushDwell 只发上次之后
-      // 新增的可见时长），所以这里必须累加，不能覆盖 —— 覆盖的话，一次访问里
-      // 只要发生了第二次 visibilitychange，这条访问的停留就只剩最后一段，
-      // 而后台「停留 X」读的正是 visit.dwell_ms（AdminApp 那行），于是数字偏小。
-      // 访客累计那一列本来就是加的，两列口径必须一致。
+      // 新版 schema 用数据库函数在一个事务里原子累加，避免心跳与离开上报并发覆盖。
+      const { error: rpcError } = await supabase.rpc("increment_portfolio_dwell", {
+        p_visit_id: visitIdNum,
+        p_visitor_key: String(body.visitorKey || "").slice(0, 80),
+        p_dwell_ms: dwellMs,
+      });
+      if (!rpcError) return res.json({ ok: true });
+
+      // 兼容尚未重跑 schema.sql 的旧部署；升级数据库后不会再走这段读后写逻辑。
       const { data: existing } = await supabase
         .from("portfolio_visits")
         .select("dwell_ms")
@@ -1806,7 +1866,15 @@ async function startServer() {
   app.get("/api/admin/visits", requireAdmin, async (req, res) => {
     try {
       if (!supabase) {
-        return res.json({ visitors: [], visits: [], stats: { visitors: 0, visits: 0, today: 0 }, configured: false, reason: "supabase-missing" });
+        return res.json({
+          visitors: [],
+          visits: [],
+          stats: { visitors: 0, visits: 0, today: 0, clicks: 0 },
+          clickStats: [],
+          eventsConfigured: false,
+          configured: false,
+          reason: "supabase-missing",
+        });
       }
 
       // 「表还没建」不等于「出错」：schema.sql 还没跑过时 PostgREST 会回一句
@@ -1816,7 +1884,9 @@ async function startServer() {
       const emptyPayload = (reason: string) => ({
         visitors: [],
         visits: [],
-        stats: { visitors: 0, visits: 0, today: 0 },
+        stats: { visitors: 0, visits: 0, today: 0, clicks: 0 },
+        clickStats: [],
+        eventsConfigured: false,
         configured: false,
         reason,
       } as const);
@@ -1849,6 +1919,38 @@ async function startServer() {
         .select("id", { count: "exact", head: true })
         .gte("created_at", sinceIso);
 
+      const { count: totalClicks, error: clickCountError } = await supabase
+        .from("portfolio_events")
+        .select("id", { count: "exact", head: true })
+        .eq("event_name", "ui_click");
+      const eventsConfigured = !clickCountError;
+      let clickStats: any[] = [];
+      if (eventsConfigured) {
+        const { data: aggregateRows, error: aggregateError } = await supabase.rpc("portfolio_click_stats", { p_limit: 100 });
+        if (!aggregateError) {
+          clickStats = aggregateRows || [];
+        } else {
+          // 兼容只建了事件表、尚未重跑最新函数的部署。
+          const { data: recentRows } = await supabase
+            .from("portfolio_events")
+            .select("element_key,element_label,element_type,path,visitor_key,occurred_at")
+            .eq("event_name", "ui_click")
+            .order("occurred_at", { ascending: false })
+            .limit(5000);
+          const clickMap = new Map<string, any>();
+          for (const row of recentRows || []) {
+            const mapKey = `${row.path}\u0000${row.element_key}`;
+            const current = clickMap.get(mapKey) || { ...row, clicks: 0, visitors: new Set<string>(), last_clicked_at: row.occurred_at };
+            current.clicks += 1;
+            current.visitors.add(row.visitor_key);
+            clickMap.set(mapKey, current);
+          }
+          clickStats = Array.from(clickMap.values())
+            .map(({ visitors: unique, visitor_key: _visitorKey, occurred_at: _occurredAt, ...row }) => ({ ...row, unique_visitors: unique.size }))
+            .sort((a, b) => b.clicks - a.clicks);
+        }
+      }
+
       res.json({
         visitors: visitors || [],
         visits: visits || [],
@@ -1856,7 +1958,10 @@ async function startServer() {
           visitors: visitors?.length || 0,
           visits: totalVisits || 0,
           today: todayVisits || 0,
+          clicks: totalClicks || 0,
         },
+        clickStats,
+        eventsConfigured,
         configured: true,
       });
     } catch (err: any) {
@@ -1902,15 +2007,23 @@ async function startServer() {
 
       let visitsQ = supabase.from("portfolio_visits").delete();
       let visitorsQ = supabase.from("portfolio_visitors").delete();
+      let eventsQ = supabase.from("portfolio_events").delete();
       if (all) {
         // PostgREST 的 delete 必须带过滤条件，否则会被拒；这里用一个恒真条件。
         visitsQ = visitsQ.not("visitor_key", "is", null);
         visitorsQ = visitorsQ.not("visitor_key", "is", null);
+        eventsQ = eventsQ.not("visitor_key", "is", null);
       } else {
         visitsQ = visitsQ.in("visitor_key", keys);
         visitorsQ = visitorsQ.in("visitor_key", keys);
+        eventsQ = eventsQ.in("visitor_key", keys);
       }
 
+      // 先删事件，避免访问外键被置空后再也无法按访客清理。旧 schema 没有事件表时忽略。
+      const { error: eErr } = await eventsQ;
+      if (eErr && !/could not find the table|does not exist|schema cache/i.test(eErr.message)) {
+        return res.status(500).json({ error: eErr.message });
+      }
       const { error: vErr } = await visitsQ;
       if (vErr) return res.status(500).json({ error: vErr.message });
       const { error: pErr } = await visitorsQ;

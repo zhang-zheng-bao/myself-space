@@ -136,7 +136,7 @@ export default function EntranceCinematic({ ready, soundReady, musicLeadSeconds 
   return (
     <div className="entrance-cinematic" data-phase={phase} role="dialog" aria-modal="true" aria-label="入场动画" onClick={phase === "door" ? openDoor : undefined}>
       <video ref={videoRef} className="entrance-cinematic__video" src="/entrance-cinematic.mp4" muted={muted} playsInline preload="auto" disablePictureInPicture onTimeUpdate={event => checkMusicEntry(event.currentTarget)} onEnded={finish} onError={finish} />
-      {phase === "door" && <button type="button" className="entrance-cinematic__door" onClick={openDoor} aria-label="按任意键开门，也可点击进入">
+      {phase === "door" && <button type="button" data-track="entrance:open-door" className="entrance-cinematic__door" onClick={openDoor} aria-label="按任意键开门，也可点击进入">
         <span className="entrance-cinematic__door-label">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M4 21V3h16v18" />
@@ -152,7 +152,7 @@ export default function EntranceCinematic({ ready, soundReady, musicLeadSeconds 
       </button>}
       {phase === "playing" && <>
         <div className="entrance-cinematic__controls">
-          <button type="button" className="entrance-cinematic__sound" aria-label={muted ? "开启动画声音" : "关闭动画声音"} title={muted ? "开启动画声音" : "关闭动画声音"} onClick={() => setMuted(value => !value)}>{muted ? <VolumeX size={18} /> : <Volume2 size={18} />}</button>
+          <button type="button" data-track="entrance:toggle-sound" className="entrance-cinematic__sound" aria-label={muted ? "开启动画声音" : "关闭动画声音"} title={muted ? "开启动画声音" : "关闭动画声音"} onClick={() => setMuted(value => !value)}>{muted ? <VolumeX size={18} /> : <Volume2 size={18} />}</button>
           <HoldToSkip onComplete={finish} />
         </div>
       </>}
