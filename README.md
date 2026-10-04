@@ -60,7 +60,12 @@ ADMIN_SESSION_SECRET="a-long-random-string"
 - `POST /api/track`：创建一次访问并返回 `visitId`。
 - `POST /api/track/dwell`：增量上报前台可见停留时间。
 - `POST /api/track/events`：批量写入按钮与链接点击事件。
-- `GET /api/admin/visits`：读取访客、访问和按钮点击排行。
+- `GET /api/admin/analytics/summary?range=today|7d|30d|all&humanOnly=1`：汇总指标、趋势、地区/来源/设备分布和按钮点击排行。
+- `GET /api/admin/analytics/visitors?range&humanOnly&page&pageSize&q`：分页搜索访客。
+- `GET /api/admin/analytics/visitors/:visitorKey/visits`：某访客最近 100 次访问明细。
+- `PATCH /api/admin/visits` / `POST /api/admin/visits/clear`：备注、拉黑、删除访客或清空统计。
+
+服务端会把每次访问标记为 `traffic_type`：`human`（真人）、`bot`（爬虫/扫描器/脚本 UA）、`local`（本机或内网 IP）。爬虫 UA 不写入；本机和内网访问会保留，但后台默认只显示真人。
 
 如果未配置 Supabase 环境变量，项目会临时使用 `src/data/portfolio.json` 作为本地兜底，方便先看页面和后台。
 
@@ -156,7 +161,7 @@ ADMIN_SESSION_SECRET="a-long-random-string"
 
 - 桌面首屏使用黄金分割 `38.2% / 61.8%` 双栏：左侧沉浸主视觉，右侧信息面板；顶部导航与主体使用同一分界。
 - 顶部导航高度为 `66px`；中文导航不显示英文副标题，当前项使用薄荷青底线和轻微外发光。
-- 左侧主图使用 `public/hero-creator-stage.png`，图片本身不包含 UI 或静态粒子。桌面以顶部为锚点放大约 `1.08`，裁掉多余底部；动态粒子由页面独立渲染，并使用右上向左下、左下向右上两组不规则轨迹。
+- 左侧主图是 5 秒静音循环视频 `public/hero-creator-stage.webm` / `.mp4`（720×960，3:4），首帧 `public/hero-creator-stage-poster.webp` 作为 poster；开启“减少动态效果”时只显示 poster，面板离开视口或标签页隐藏时暂停播放。素材本身不包含 UI 或静态粒子。桌面以顶部为锚点放大约 `1.08`，裁掉多余底部；动态粒子由页面独立渲染，并使用右上向左下、左下向右上两组不规则轨迹。
 - “关于我”下方三项数据的醒目数值、短标签和补充说明统一存放在 `profile.pageCopy.homeStats`，通过后台“站点资料 → 首页数据标签”编辑；未配置时使用代码默认值。
 - 首页“我的作品”读取全部作品，以双轨无缝方式持续从左向右轮播；卡片固定 `aspect-ratio: 1.92`，封面使用 `object-fit: cover`，悬停或键盘聚焦时暂停。
 - “作品展示”和“AI专区”共用三列两行布局：宽屏每页 6 项，缩略图固定 `1.92:1`；分类、徽章和作品标签叠放在图片内，不在图片上方另占一行。

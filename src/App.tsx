@@ -2274,7 +2274,7 @@ function preloadImage(url: string) {
 
 async function preloadInitialAssets(data: PortfolioData, flags: { treasuresVisible: boolean; aiZoneVisible: boolean }) {
   const urls = [
-    "/hero-creator-stage.png",
+    "/hero-creator-stage-poster.webp",
     data.profile.avatar,
     data.musicTracks?.find((track) => track.coverUrl)?.coverUrl,
     data.works?.find((work) => work.images?.[0])?.images?.[0],
@@ -2382,6 +2382,42 @@ function CareerTimeline({ experiences }: { experiences: PortfolioData["experienc
         ))}
       </div>
     </div>
+  );
+}
+
+function HeroArt() {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [reduced, setReduced] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  useEffect(() => {
+    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReduced(preference.matches);
+    preference.addEventListener("change", update);
+    return () => preference.removeEventListener("change", update);
+  }, []);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || reduced) return;
+    let visible = true;
+    // Only loop while the panel is on screen and the tab is in front.
+    const sync = () => {
+      if (visible && !document.hidden) void video.play().catch(() => {});
+      else video.pause();
+    };
+    const observer = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; sync(); });
+    observer.observe(video);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, [reduced]);
+  const alt = "年轻创作者与柴犬坐在发光创作台上";
+  if (reduced) return <img className="hero-panel__art" src="/hero-creator-stage-poster.webp" alt={alt} />;
+  return (
+    <video ref={videoRef} className="hero-panel__art" poster="/hero-creator-stage-poster.webp" muted loop playsInline preload="metadata" disablePictureInPicture role="img" aria-label={alt}>
+      <source src="/hero-creator-stage.webm" type="video/webm" />
+      <source src="/hero-creator-stage.mp4" type="video/mp4" />
+    </video>
   );
 }
 
@@ -2586,7 +2622,7 @@ export default function App() {
 
       <main className="portfolio-layout">
         <aside className="hero-panel">
-          <img className="hero-panel__art" src="/hero-creator-stage.png" alt="年轻创作者与柴犬坐在发光创作台上" />
+          <HeroArt />
           <span className="hero-panel__veil" />
           <DynamicParticles />
           <div className="hero-panel__aside" aria-hidden="true">HUMAN<br />×<br />AI<br />×<br />CREATIVE<br />×<br />A BETTER<br />TOMORROW</div>

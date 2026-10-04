@@ -148,6 +148,10 @@ export function startVisitTracking(): () => void {
   if (typeof window === "undefined" || typeof document === "undefined" || started) return () => {};
   const viteEnv = (import.meta as ImportMeta & { env?: { PROD?: boolean; VITE_ENABLE_ANALYTICS?: string } }).env;
   if (!viteEnv?.PROD && viteEnv?.VITE_ENABLE_ANALYTICS !== "true") return () => {};
+  // Even a production build opened on this machine (localhost:3002, AI preview browsers)
+  // is not a visitor. Automation drivers announce themselves through navigator.webdriver.
+  const localHost = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|0\.0\.0\.0)$/i.test(window.location.hostname);
+  if ((localHost && viteEnv?.VITE_ENABLE_ANALYTICS !== "true") || navigator.webdriver) return () => {};
   started = true;
 
   const client = collectClient();
