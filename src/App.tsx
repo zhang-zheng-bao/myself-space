@@ -687,6 +687,14 @@ function AudioBlock({ tracks, autoplay, compact = false, onAutoplaySettled }: { 
     }
   };
 
+  const toggleQueueTrack = (index: number) => {
+    if (index === trackIndex) {
+      void togglePlay();
+      return;
+    }
+    playIndex(index);
+  };
+
   if (compact) {
     return (
       <div className="hero-audio-shell" ref={playerRef}>
@@ -745,16 +753,23 @@ function AudioBlock({ tracks, autoplay, compact = false, onAutoplaySettled }: { 
       </div>
       {queueOpen && <section className="music-queue" aria-label="音乐列表">
         <header><strong>音乐列表 <small>{playlist.length} 首</small></strong>
-          <button type="button" onClick={() => setRepeatOne(value => !value)} aria-label={repeatOne ? "单曲循环，点击切换列表循环" : "列表循环，点击切换单曲循环"} aria-pressed={repeatOne} title={repeatOne ? "切换列表循环" : "切换单曲循环"}>{repeatOne ? <Repeat1 size={17} /> : <Repeat size={17} />}<span>{repeatOne ? "单曲循环" : "列表循环"}</span></button>
+          <div className="music-queue__repeat" role="group" aria-label="循环模式">
+            <button type="button" onClick={() => setRepeatOne(false)} aria-label="列表循环" aria-pressed={!repeatOne} title="列表循环"><Repeat size={15} /><span>列表循环</span></button>
+            <button type="button" onClick={() => setRepeatOne(true)} aria-label="单曲循环" aria-pressed={repeatOne} title="单曲循环"><Repeat1 size={15} /><span>单曲循环</span></button>
+          </div>
           <button type="button" aria-label="关闭音乐列表" title="关闭音乐列表" onClick={() => { setQueueOpen(false); queueButtonRef.current?.focus(); }}><X size={17} /></button>
         </header>
         <div className="music-queue__tracks">
-          {playlist.length === 0 ? <p className="music-queue__empty">暂无可播放的音乐</p> : playlist.map((track, index) => <button type="button" key={track.id || index} data-track={`music:select:${track.id || index}`} className="music-queue__track" data-current={index === trackIndex || undefined} aria-current={index === trackIndex ? "true" : undefined} aria-label={`播放 ${zhText(track.title) || "未命名音乐"}`} onClick={() => playIndex(index)}>
+          {playlist.length === 0 ? <p className="music-queue__empty">暂无可播放的音乐</p> : playlist.map((track, index) => {
+            const current = index === trackIndex;
+            const playing = current && isPlaying;
+            const title = zhText(track.title) || "未命名音乐";
+            return <button type="button" key={track.id || index} data-track={`music:select:${track.id || index}`} className="music-queue__track" data-current={current || undefined} aria-current={current ? "true" : undefined} aria-label={`${playing ? "暂停" : "播放"} ${title}`} onClick={() => toggleQueueTrack(index)}>
             <span className="music-queue__number">{index === trackIndex && isPlaying ? <BarChart3 size={16} /> : String(index + 1).padStart(2, "0")}</span>
             <span className="music-queue__cover">{track.coverUrl ? <img src={track.coverUrl} alt="" referrerPolicy="no-referrer" /> : <ListMusic size={18} />}</span>
-            <span className="music-queue__text"><strong>{zhText(track.title) || "未命名音乐"}</strong><small>{zhText(track.artist) || "未知作者"}{isInstrumental(track.lyrics) ? " · 纯音乐" : ""}</small></span>
-            <Play size={14} />
-          </button>)}
+            <span className="music-queue__text"><strong>{title}</strong><small>{zhText(track.artist) || "未知作者"}{isInstrumental(track.lyrics) ? " · 纯音乐" : ""}</small></span>
+            <span className="music-queue__track-action" aria-hidden="true">{playing ? <Pause size={14} className="fill-current" /> : <Play size={14} className="fill-current" />}</span>
+          </button>})}
         </div>
       </section>}
       {playbackError && <p className="music-queue__error" role="status">{playbackError}</p>}
