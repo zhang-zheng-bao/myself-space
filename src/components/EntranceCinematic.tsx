@@ -23,6 +23,10 @@ export default function EntranceCinematic({ ready, soundReady, musicLeadSeconds 
     if (phase !== "door" || reduced) return;
     const handleKey = (event: KeyboardEvent) => {
       if (event.repeat || event.isComposing) return;
+      // Leave Tab, Esc, function keys and browser shortcuts alone; only
+      // Enter, Space and printable keys count as "any key".
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key !== "Enter" && event.key !== " " && event.key.length !== 1) return;
       event.preventDefault();
       openDoor();
     };
@@ -82,8 +86,16 @@ export default function EntranceCinematic({ ready, soundReady, musicLeadSeconds 
     // The click on the door already starts playback. This retry is only a
     // fallback for keyboard activation or a browser race during mounting.
     if (video.paused) attemptPlay();
+    // Esc skips at once; the door click already granted user activation, so
+    // the music entry that follows is still allowed to play.
+    const skipOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      finish();
+    };
     window.addEventListener("pointerdown", retryPlayback);
     window.addEventListener("keydown", retryPlayback);
+    window.addEventListener("keydown", skipOnEscape);
     // A failed or stalled download must not trap visitors in the intro.
     let lastTime = video.currentTime;
     let stalledSince = performance.now();
@@ -99,6 +111,7 @@ export default function EntranceCinematic({ ready, soundReady, musicLeadSeconds 
       window.clearInterval(watchdog);
       window.removeEventListener("pointerdown", retryPlayback);
       window.removeEventListener("keydown", retryPlayback);
+      window.removeEventListener("keydown", skipOnEscape);
     };
   }, [phase, reduced]);
 
@@ -135,15 +148,16 @@ export default function EntranceCinematic({ ready, soundReady, musicLeadSeconds 
   if (phase === "done") return null;
   return (
     <div className="entrance-cinematic" data-phase={phase} role="dialog" aria-modal="true" aria-label="入场动画" onClick={phase === "door" ? openDoor : undefined}>
-      <video ref={videoRef} className="entrance-cinematic__video" src="/entrance-cinematic.mp4" muted={muted} playsInline preload="auto" disablePictureInPicture onTimeUpdate={event => checkMusicEntry(event.currentTarget)} onEnded={finish} onError={finish} />
-      {phase === "door" && <button type="button" className="entrance-cinematic__door" onClick={openDoor} aria-label="按任意键开门，也可点击进入">
+      <video ref={videoRef} className="entrance-cinematic__video" src="/entrance-cinematic.mp4" poster="/entrance-cinematic-poster.webp" muted={muted} playsInline preload="auto" disablePictureInPicture onTimeUpdate={event => checkMusicEntry(event.currentTarget)} onEnded={finish} onError={finish} />
+      {phase === "door" && <button type="button" data-track="entrance:open-door" className="entrance-cinematic__door" onClick={openDoor} aria-label="开门进入">
         <span className="entrance-cinematic__door-label">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M4 21V3h16v18" />
             <path d="M7 5l9 2v14l-9-2Z" />
             <path d="M13 13v1" />
           </svg>
-          <span>按任意键开门</span>
+          <span className="entrance-cinematic__door-hint--key">按任意键开门</span>
+          <span className="entrance-cinematic__door-hint--touch">轻触开门</span>
         </span>
         <svg className="entrance-cinematic__door-guide" viewBox="0 0 224 100" preserveAspectRatio="none" aria-hidden="true">
           <path d="M0 92 L64 28 H224" />
@@ -152,7 +166,7 @@ export default function EntranceCinematic({ ready, soundReady, musicLeadSeconds 
       </button>}
       {phase === "playing" && <>
         <div className="entrance-cinematic__controls">
-          <button type="button" className="entrance-cinematic__sound" aria-label={muted ? "开启动画声音" : "关闭动画声音"} title={muted ? "开启动画声音" : "关闭动画声音"} onClick={() => setMuted(value => !value)}>{muted ? <VolumeX size={18} /> : <Volume2 size={18} />}</button>
+          <button type="button" data-track="entrance:toggle-sound" className="entrance-cinematic__sound" aria-label={muted ? "开启动画声音" : "关闭动画声音"} title={muted ? "开启动画声音" : "关闭动画声音"} onClick={() => setMuted(value => !value)}>{muted ? <VolumeX size={18} /> : <Volume2 size={18} />}</button>
           <HoldToSkip onComplete={finish} />
         </div>
       </>}

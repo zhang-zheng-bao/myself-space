@@ -32,6 +32,7 @@ import {
   MapPin,
   MessagesSquare,
   MonitorSmartphone,
+  MousePointerClick,
   Music,
   Plus,
   RefreshCw,
@@ -43,7 +44,7 @@ import {
   X,
   ZoomIn,
 } from "lucide-react";
-import { Experience, GalleryItem, HomeStatCopy, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, VisitRecord, VisitorRecord, VisitsPayload, Work, WorkLink, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder, sectionMeta } from "./types";
+import { Experience, GalleryItem, HomeStatCopy, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, AnalyticsCount, AnalyticsRange, AnalyticsSummaryPayload, AnalyticsVisitorsPayload, TrafficType, VisitRecord, VisitorRecord, Work, WorkLink, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder, sectionMeta } from "./types";
 
 const emptyWork: Work = {
   id: "",
@@ -354,6 +355,51 @@ function ArrayEditor({
   );
 }
 
+/**
+ * 标签输入：已有标签显示成小胶囊，输入框回车或逗号添加，退格删最后一个。
+ * 作品标签通常就两三个短词，用 ArrayEditor 一行一个输入框太占地方。
+ */
+function TagsField({ label, tags, onChange }: { label: string; tags: string[]; onChange: (tags: string[]) => void }) {
+  const [draft, setDraft] = useState("");
+  const commit = () => {
+    const parts = draft.split(/[,，、]/).map((part) => part.trim()).filter(Boolean);
+    if (parts.length) onChange([...tags, ...parts.filter((part) => !tags.includes(part))]);
+    setDraft("");
+  };
+
+  return (
+    <label className="grid gap-1.5">
+      <span className="text-xs font-medium text-zinc-400">{label}</span>
+      <div className={`${inputBaseClass} flex min-h-11 flex-wrap items-center gap-1.5 px-2 py-1.5 focus-within:border-emerald-400`}>
+        {tags.filter(Boolean).map((tag, index) => (
+          <span key={`${tag}-${index}`} className="inline-flex items-center gap-1 rounded bg-white/[0.08] py-0.5 pl-2 pr-1 text-xs text-zinc-200">
+            {tag}
+            <button
+              type="button"
+              onClick={(event) => { event.preventDefault(); onChange(tags.filter((_, i) => i !== index)); }}
+              className="rounded px-0.5 text-zinc-500 hover:text-red-300"
+              aria-label={`删除标签「${tag}」`}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <input
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === "," || event.key === "，") { event.preventDefault(); commit(); }
+            else if (event.key === "Backspace" && !draft && tags.length) onChange(tags.slice(0, -1));
+          }}
+          onBlur={commit}
+          placeholder={tags.length ? "" : "输入后回车"}
+          className="min-w-[5rem] flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-600"
+        />
+      </div>
+    </label>
+  );
+}
+
 function uid(prefix: string) {
   const randomId = globalThis.crypto?.randomUUID?.()
     || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -574,6 +620,7 @@ function Field({
   value,
   onChange,
   textarea,
+  rows = 3,
   placeholder,
   hint,
 }: {
@@ -581,6 +628,8 @@ function Field({
   value?: string;
   onChange: (value: string) => void;
   textarea?: boolean;
+  /** textarea 初始行数。内容多的字段给大一点，免得一打开就要拖角。 */
+  rows?: number;
   placeholder?: string;
   /** 常驻的辅助说明（不是 placeholder 那种一输入就消失的提示），放在输入框下方。 */
   hint?: string;
@@ -588,14 +637,14 @@ function Field({
   const fieldClass = `${inputBaseClass} px-3`;
 
   return (
-    <label className="grid gap-1.5">
+    <label className="grid content-start gap-1.5">
       <span className="text-xs font-medium text-zinc-400">{label}</span>
       {textarea ? (
         <textarea
           value={value || ""}
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
-          rows={3}
+          rows={rows}
           className={`${fieldClass} min-h-[88px] resize-y py-2.5 leading-6`}
         />
       ) : (
@@ -1053,7 +1102,7 @@ function WorkVideoPanel({ work }: { work: Work }) {
        * 反面教材就是 ① 和 ② —— 探针里「渲染比例 == 源比例」那条断言存在的意义。
        */}
       <div
-        className="mx-auto block max-h-[420px] w-auto max-w-full"
+        className="mx-auto block max-h-[360px] w-auto max-w-full"
         style={{ aspectRatio: ratio }}
       >
         <video
@@ -1072,7 +1121,7 @@ function WorkVideoPanel({ work }: { work: Work }) {
           className="h-full w-full rounded-lg object-contain"
         />
       </div>
-      <p className="text-[10px] leading-5 text-zinc-500">按视频原始比例显示，不套 16:9 的框。</p>
+      <p className="text-[10px] leading-5 text-zinc-500">按视频原始比例显示。</p>
     </div>
   );
 }
@@ -1099,12 +1148,13 @@ function WorkPreview({ work }: { work: Work }) {
        * 这里把宽高上限交给容器（固定列宽 180px），图片自己用 `object-contain` 按
        * 原始比例落进去，容器底色用面板色而不是纯黑 —— 留白也是「留槽色」，看着不像黑边。
        */}
-      <div className="grid gap-3 lg:grid-cols-[180px_1fr]">
+      {/* 侧栏只有 320px 宽，封面和文案改成上下排；封面仍按原比例 object-contain，不加黑框。 */}
+      <div className="grid gap-3">
         {firstImage ? (
           <button
             type="button"
             onClick={() => setZoom(true)}
-            className="group relative flex h-[101px] items-center justify-center overflow-hidden rounded-lg bg-white/[0.04]"
+            className="group relative flex aspect-video items-center justify-center overflow-hidden rounded-lg bg-white/[0.04]"
             aria-label="放大预览封面"
           >
             <img src={firstImage} alt={work.title || "作品预览"} className="max-h-full w-auto max-w-full rounded-md object-contain" />
@@ -1113,7 +1163,7 @@ function WorkPreview({ work }: { work: Work }) {
             </span>
           </button>
         ) : (
-          <div className="flex h-[101px] items-center justify-center overflow-hidden rounded-lg bg-white/[0.04]">
+          <div className="flex aspect-video items-center justify-center overflow-hidden rounded-lg bg-white/[0.04]">
             <span className="text-[11px] text-zinc-600">暂无图片</span>
           </div>
         )}
@@ -1399,10 +1449,13 @@ function WorkImagesEditor({
   images,
   onChange,
   onRemove,
+  actions,
 }: {
   images: string[];
   onChange: (images: string[]) => void;
   onRemove?: (url: string) => void;
+  /** 标题行右侧的额外按钮（上传图片），和「新增」放一起，不再单独占一行。 */
+  actions?: React.ReactNode;
 }) {
   const normalizedImages = images || [];
   // -1 = 没开。存的是**原数组下标**，这样删除/新增后不会错位到别的图上。
@@ -1410,33 +1463,46 @@ function WorkImagesEditor({
 
   return (
     <div>
-      <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-xs font-medium text-zinc-500">图片 URL（第一张为前台封面）</span>
-        <button type="button" onClick={() => onChange([...normalizedImages, ""])} className="inline-flex items-center gap-1 rounded-md border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-600">
-          <Plus size={12} /> 新增
-        </button>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-medium text-zinc-400">图片 · {normalizedImages.filter(Boolean).length} 张（第一张为前台封面）</span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {actions}
+          <button type="button" onClick={() => onChange([...normalizedImages, ""])} className="inline-flex items-center gap-1 rounded-md border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-600">
+            <Plus size={12} /> 填地址
+          </button>
+        </div>
       </div>
-      <div className="grid gap-2 md:grid-cols-2">
+      {normalizedImages.length === 0 && (
+        <p className="rounded-lg bg-white/[0.03] px-3 py-4 text-center text-xs text-zinc-500">还没有图片。上传、粘贴地址，或把图片直接拖进弹窗。</p>
+      )}
+      {/*
+       * 卡片式：缩略图在上、地址和操作在下。原来缩略图和输入框左右并排，
+       * 双栏下输入框只剩六七个字符宽，「封面 / 放大」被挤成竖排。
+       */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {normalizedImages.map((item, index) => (
-          <div key={index} className="flex gap-2 rounded-lg bg-white/[0.03] p-2">
-            {item ? (
-              /* 缩略图本身是个按钮 —— 96×64 加 object-cover 裁掉一圈，
-                 光看它认不出选的是哪张，所以「点开放大」得是主交互。 */
-              <button
-                type="button"
-                onClick={() => setZoomIndex(index)}
-                className="group relative h-16 w-24 shrink-0 overflow-hidden rounded-md bg-black"
-                aria-label={`放大预览第 ${index + 1} 张图片`}
-              >
-                <img src={item} alt={`作品图片 ${index + 1}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
-                <span className="absolute inset-0 flex items-center justify-center bg-black/55 opacity-0 transition group-hover:opacity-100">
-                  <ZoomIn size={16} className="text-white" />
-                </span>
-              </button>
-            ) : (
-              <div className="flex h-16 w-24 shrink-0 items-center justify-center rounded-md bg-white/[0.05] text-[10px] text-zinc-600">空白</div>
-            )}
-            <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <div key={index} className="overflow-hidden rounded-lg bg-white/[0.03]">
+            <div className="relative">
+              {item ? (
+                <button
+                  type="button"
+                  onClick={() => setZoomIndex(index)}
+                  className="group relative block aspect-video w-full overflow-hidden bg-black"
+                  aria-label={`放大预览第 ${index + 1} 张图片`}
+                >
+                  <img src={item} alt={`作品图片 ${index + 1}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                  <span className="absolute inset-0 flex items-center justify-center bg-black/55 opacity-0 transition group-hover:opacity-100">
+                    <ZoomIn size={18} className="text-white" />
+                  </span>
+                </button>
+              ) : (
+                <div className="flex aspect-video items-center justify-center bg-white/[0.04] text-[11px] text-zinc-600">待填地址</div>
+              )}
+              {index === 0 && item && (
+                <span className="pointer-events-none absolute left-1.5 top-1.5 rounded bg-emerald-400 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-950">封面</span>
+              )}
+            </div>
+            <div className="space-y-1.5 p-1.5">
               <input
                 value={item}
                 onChange={(event) => {
@@ -1444,30 +1510,22 @@ function WorkImagesEditor({
                   next[index] = event.target.value;
                   onChange(next);
                 }}
-                placeholder="图片地址"
-                className="w-full rounded border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-emerald-400"
+                placeholder="https:// 图片地址"
+                aria-label={`第 ${index + 1} 张图片地址`}
+                className="w-full rounded border border-zinc-800 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100 outline-none focus:border-emerald-400"
               />
-              <div className="flex gap-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (index === 0) return;
-                    const next = [...normalizedImages];
-                    const [cover] = next.splice(index, 1);
-                    onChange([cover, ...next]);
-                  }}
-                  disabled={index === 0}
-                  className="rounded border border-zinc-800 px-1.5 py-0.5 text-[10px] text-emerald-300 hover:border-emerald-500 disabled:text-zinc-600 disabled:hover:border-zinc-800"
-                >
-                  {index === 0 ? "封面" : "设封面"}
-                </button>
-                {item && (
+              <div className="flex items-center gap-1">
+                {index > 0 && item && (
                   <button
                     type="button"
-                    onClick={() => setZoomIndex(index)}
-                    className="inline-flex items-center gap-1 rounded border border-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400 hover:border-zinc-600 hover:text-zinc-200"
+                    onClick={() => {
+                      const next = [...normalizedImages];
+                      const [cover] = next.splice(index, 1);
+                      onChange([cover, ...next]);
+                    }}
+                    className="whitespace-nowrap rounded border border-zinc-800 px-1.5 py-0.5 text-[10px] text-emerald-300 hover:border-emerald-500"
                   >
-                    <ZoomIn size={11} /> 放大
+                    设为封面
                   </button>
                 )}
                 <button
@@ -1477,11 +1535,11 @@ function WorkImagesEditor({
                     // 删掉的正是正在放大的那张 ⇒ 关掉，否则会停在空索引上。
                     if (zoomIndex === index) setZoomIndex(-1);
                   }}
-                  className="rounded border border-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500 hover:border-red-500 hover:text-red-300"
+                  className="ml-auto rounded border border-zinc-800 px-1.5 py-0.5 text-zinc-500 hover:border-red-500 hover:text-red-300"
                   type="button"
-                  aria-label="删除"
+                  aria-label={`删除第 ${index + 1} 张图片`}
                 >
-                  <Trash2 size={13} />
+                  <Trash2 size={12} />
                 </button>
               </div>
             </div>
@@ -1587,6 +1645,7 @@ function EditorModal({
   onClose,
   footer,
   dragActive = false,
+  size = "md",
   children,
 }: {
   /** 只用于 role="dialog" 的 aria-label，不渲染出来。 */
@@ -1596,6 +1655,8 @@ function EditorModal({
   footer?: React.ReactNode;
   /** 有文件正被拖到这个弹窗上：只加一圈高亮，让人知道松手会落在这里。 */
   dragActive?: boolean;
+  /** 弹窗宽度。只有四个字段的经历用 sm，带侧栏预览的作品用 lg，其余保持原来的 md。 */
+  size?: "sm" | "md" | "lg";
   children: React.ReactNode;
 }) {
   useEffect(() => {
@@ -1615,7 +1676,7 @@ function EditorModal({
         aria-label="关闭编辑弹窗"
         tabIndex={-1}
       />
-      <div className="adm-modal relative flex max-h-full w-full max-w-4xl flex-col" role="dialog" aria-modal="true" aria-label={title} data-drag={dragActive ? "true" : "false"}>
+      <div className={`adm-modal relative flex max-h-full w-full flex-col ${size === "sm" ? "max-w-2xl" : size === "lg" ? "max-w-6xl" : "max-w-4xl"}`} role="dialog" aria-modal="true" aria-label={title} data-drag={dragActive ? "true" : "false"}>
         {dragActive && (
           /*
            * 拖拽提示：固定的小卡片，落在**视口中央**，不再贴着弹窗顶部。
@@ -2260,47 +2321,61 @@ function WorkListEditor({
         const mediaKind = getMediaKind(work.videoUrl);
         return (
           <EditorModal
+            size="lg"
             title={work.title?.trim() || "未命名" + noun}
             dragActive={dragActive}
             onClose={() => { setExpandedId(null); setPendingMigrateId(null); }}
             footer={renderSaveButton()}
           >
-            <div className="space-y-3">
+            {/*
+             * 双栏：左边填表，右边固定显示前台效果和视频。原来五个模块上下堆，
+             * 改标题要滚回顶部才能看到效果，视频预览又在一屏以外。
+             * 窄屏时表单在上、预览排到最后，打开弹窗先看到能编辑的字段。
+             */}
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
+            <aside className="order-last space-y-3 lg:sticky lg:top-0">
               <section className="adm-panel p-3">
                 <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-zinc-500">前台效果 / PREVIEW</p>
                 <WorkPreview work={work} />
               </section>
+              {work.videoUrl && (
+                <section className="adm-panel space-y-2 p-3">
+                  <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-500">媒体预览 / VIDEO</p>
+                  <WorkVideoPanel work={work} />
+                </section>
+              )}
+            </aside>
 
+            <div className="min-w-0 space-y-3">
               <section className="adm-panel space-y-3 p-3">
                 <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-500">基本信息 / BASIC</p>
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <Field label="标题" value={work.title} onChange={(value) => update((draft) => { readItems(draft)[index].title = value; })} />
                   <SelectField label="分类" value={work.category} options={categoryOptions} onChange={(value) => update((draft) => { readItems(draft)[index].category = value; })} />
                   <Field label="右上角绿色标签" value={work.badgeText || ""} onChange={(value) => update((draft) => { readItems(draft)[index].badgeText = value; })} placeholder="例如：支持在线播放" />
+                  <TagsField
+                    label="标签"
+                    tags={work.tags || []}
+                    onChange={(next) => update((draft) => { readItems(draft)[index].tags = next; })}
+                  />
                 </div>
-                <ArrayEditor
-                  label="标签"
-                  items={work.tags || []}
-                  onChange={(next) => update((draft) => { readItems(draft)[index].tags = next; })}
-                />
                 <Field label="简介" value={work.description} onChange={(value) => update((draft) => { readItems(draft)[index].description = value; })} textarea />
               </section>
 
-              <section className="adm-panel space-y-3 p-3">
+              <section className="adm-panel space-y-4 p-3">
                 <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-500">图片与媒体 / MEDIA</p>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div>
-                    <WorkImagesEditor
-                      images={work.images || []}
-                      onChange={(next) => { void updateAndSave((draft) => { readItems(draft)[index].images = next; }); }}
-                      onRemove={(url) => { void deleteMedia([url]); }}
-                    />
-                    <label className="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-zinc-600">
-                      <ImagePlus size={16} /> 上传图片
+                <WorkImagesEditor
+                  images={work.images || []}
+                  onChange={(next) => { void updateAndSave((draft) => { readItems(draft)[index].images = next; }); }}
+                  onRemove={(url) => { void deleteMedia([url]); }}
+                  actions={
+                    <label className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-600">
+                      <ImagePlus size={12} /> 上传图片
                       <input className="hidden" type="file" accept="image/*" onChange={(event) => upload(event, (url) => updateAndSave((draft) => { readItems(draft)[index].images = [...(readItems(draft)[index].images || []), url]; }))} />
                     </label>
-                  </div>
-                  <div>
+                  }
+                />
+                <div className="border-t border-zinc-800/60 pt-3">
                     <ClearableField
                       label="视频 / 音乐地址"
                       value={work.videoUrl}
@@ -2346,19 +2421,7 @@ function WorkListEditor({
                         />
                       </div>
                     )}
-                  </div>
                 </div>
-              </section>
-
-              {/*
-               * 视频预览独立成一个模块（宝：视频预览不该挤在「前台效果」里，
-               * 而且要单独给一个模块、比例跟着视频本身走）。
-               * 位置放在媒体之后、链接之前 —— 挨着它的来源字段。
-               * 纯音频 / 外链也在这里收口，所以 MEDIA 里不再重复放播放器。
-               */}
-              <section className="adm-panel space-y-3 p-3">
-                <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-500">视频预览 / VIDEO</p>
-                <WorkVideoPanel work={work} />
               </section>
 
               <section className="adm-panel space-y-3 p-3">
@@ -2406,8 +2469,7 @@ function WorkListEditor({
                   ))}
                 </div>
               </section>
-
-
+            </div>
             </div>
           </EditorModal>
         );
@@ -2602,6 +2664,23 @@ function PoemSummary({ item, index, active, onEdit, onDelete }: {
   );
 }
 
+/**
+ * 经历的前台效果。照着首页时间线（App.tsx 的 career-copy）的排版画一份：
+ * 绿色时间 + 「@ 身份」一行，下面是大字标题和简介 —— 改字段时立刻能看出它落在前台哪个位置。
+ */
+function ExperiencePreview({ exp }: { exp: Experience }) {
+  return (
+    <div className="border-l-2 border-zinc-700/50 pl-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-0.5">
+        <time className="font-mono text-[11px] font-bold text-emerald-300">{exp.period || "时间"}</time>
+        <span className="text-[11px] text-zinc-500">@ {exp.company || "身份 / 组织"}</span>
+      </div>
+      <h3 className="mt-1 font-serif text-[15px] font-bold text-white">{exp.role || "标题"}</h3>
+      <p className="mt-1 text-xs leading-5 text-zinc-400">{exp.desc || "简介"}</p>
+    </div>
+  );
+}
+
 function ExperienceSummary({ exp, index, active, onEdit, onDelete }: {
   exp: Experience;
   index: number;
@@ -2627,8 +2706,8 @@ function ExperienceSummary({ exp, index, active, onEdit, onDelete }: {
       </div>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-sm font-semibold text-white">{exp.role || "未填写角色"}</span>
-          <span className="rounded bg-white/[0.07] px-1.5 py-0.5 text-xs text-zinc-400">{exp.company || "未填写组织"}</span>
+          <span className="truncate text-sm font-semibold text-white">{exp.role || "未填写标题"}</span>
+          <span className="rounded bg-white/[0.07] px-1.5 py-0.5 text-xs text-zinc-400">{exp.company || "未填写身份"}</span>
         </div>
         <p className="mt-1 line-clamp-2 text-sm leading-5 text-zinc-400">{exp.desc || "暂无简介，点「编辑」补上。"}</p>
       </div>
@@ -2762,6 +2841,7 @@ function formatVisitAgo(iso?: string) {
 }
 
 function formatVisitDuration(ms?: number | null) {
+  if (ms == null) return "未上报";
   const total = Math.max(0, Math.round(Number(ms) || 0));
   if (total < 1000) return "不足 1 秒";
   const secs = Math.round(total / 1000);
@@ -2800,6 +2880,121 @@ function formatUtcOffset(minutesBehindUtc?: number | null) {
   const abs = Math.abs(total);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `UTC${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+}
+
+const TRAFFIC_TAGS: Record<TrafficType, { label: string; className: string }> = {
+  human: { label: "真人", className: "bg-emerald-400/10 text-emerald-300" },
+  bot: { label: "爬虫", className: "bg-rose-400/10 text-rose-300" },
+  local: { label: "本机", className: "bg-sky-400/10 text-sky-300" },
+};
+
+function TrafficTag({ type }: { type?: TrafficType }) {
+  const tag = TRAFFIC_TAGS[type || "human"];
+  return <span className={`rounded px-1.5 py-0.5 text-[10px] ${tag.className}`}>{tag.label}</span>;
+}
+
+/**
+ * 访问趋势柱状图。纯 SVG，不为一张图引图表库。
+ * 数据是稀疏的（没人来的那天后端不返回），这里按范围补齐空档，柱子才对得上日期。
+ */
+function VisitTrendChart({ series, bucket, range }: {
+  series: Array<{ bucket: string; visits: number; visitors: number }>;
+  bucket: "hour" | "day";
+  range: AnalyticsRange;
+}) {
+  const slots = useMemo(() => {
+    const byKey = new Map(series.map((s) => [s.bucket.slice(0, bucket === "hour" ? 13 : 10), s]));
+    const keys: string[] = [];
+    // 后端按北京时间切桶，这里也用北京时间生成刻度。
+    const shanghai = (ms: number) => new Date(ms + 8 * 3_600_000).toISOString();
+    const now = Date.now();
+    if (bucket === "hour") {
+      const today = shanghai(now).slice(0, 10);
+      for (let h = 0; h < 24; h += 1) keys.push(`${today}T${String(h).padStart(2, "0")}`);
+    } else {
+      const span = range === "7d" ? 7 : range === "30d" ? 30 : 0;
+      if (span) {
+        for (let d = span - 1; d >= 0; d -= 1) keys.push(shanghai(now - d * 86_400_000).slice(0, 10));
+      } else {
+        keys.push(...[...byKey.keys()].sort());
+      }
+    }
+    return keys.map((key) => ({ key, visits: byKey.get(key)?.visits ?? 0, visitors: byKey.get(key)?.visitors ?? 0 }));
+  }, [series, bucket, range]);
+
+  const [picked, setPicked] = useState<string | null>(null);
+
+  if (slots.length === 0) return <p className="text-xs text-zinc-500">这段时间没有访问。</p>;
+  const max = Math.max(1, ...slots.map((s) => s.visits));
+  const label = (key: string) => (bucket === "hour" ? `${key.slice(11, 13)}时` : key.slice(5));
+  // 手机上 8 个刻度会挤在一起，少画几个。
+  const every = Math.ceil(slots.length / 6);
+  const current = slots.find((s) => s.key === picked);
+
+  /*
+   * 柱子用 HTML flex 而不是 SVG viewBox：viewBox 整体缩放时，手机宽度下 10px 的刻度字
+   * 会被缩到五六像素看不清。flex 柱子只拉伸宽度，字号保持不变。
+   * 触屏没有 hover，所以点一下柱子在说明行里显示明细。
+   */
+  return (
+    <figure className="space-y-1.5">
+      <div className="flex h-28 items-end gap-px sm:gap-0.5" role="img" aria-label="访问趋势柱状图">
+        {slots.map((slot) => (
+          <button
+            key={slot.key}
+            type="button"
+            onClick={() => setPicked((prev) => (prev === slot.key ? null : slot.key))}
+            title={`${label(slot.key)}：${slot.visits} 次访问，${slot.visitors} 位访客`}
+            aria-label={`${label(slot.key)}：${slot.visits} 次访问，${slot.visitors} 位访客`}
+            className="flex h-full min-w-0 flex-1 items-end"
+          >
+            <span
+              className={`block w-full rounded-t-sm transition-colors ${picked === slot.key ? "bg-emerald-300" : "bg-emerald-400/70 hover:bg-emerald-300"}`}
+              style={{ height: slot.visits ? `${Math.max(2, (slot.visits / max) * 100)}%` : 0 }}
+            />
+          </button>
+        ))}
+      </div>
+      <div className="flex text-[10px] text-zinc-500" aria-hidden="true">
+        {slots.map((slot, i) => (
+          <span key={slot.key} className="min-w-0 flex-1 overflow-visible whitespace-nowrap">
+            {i % every === 0 ? label(slot.key) : ""}
+          </span>
+        ))}
+      </div>
+      <figcaption className="text-[11px] text-zinc-500" aria-live="polite">
+        {current
+          ? `${label(current.key)}：${current.visits} 次访问，${current.visitors} 位访客`
+          : `峰值 ${max} 次 · 点柱子看明细`}
+      </figcaption>
+    </figure>
+  );
+}
+
+function TopList({ title, items, total }: { title: string; items: AnalyticsCount[]; total: number }) {
+  return (
+    <div className="adm-panel space-y-1.5 px-3 py-2.5">
+      <p className="text-xs font-semibold text-zinc-300">{title}</p>
+      {items.length === 0 ? (
+        <p className="text-[11px] text-zinc-500">暂无数据</p>
+      ) : (
+        items.map((item) => {
+          const pct = total ? Math.round((item.n / total) * 100) : 0;
+          return (
+            <div key={item.label} className="space-y-0.5">
+              <div className="flex items-center justify-between gap-2 text-[11px]">
+                <span className="min-w-0 truncate text-zinc-300" title={item.label}>{item.label}</span>
+                <span className="shrink-0 tabular-nums text-zinc-500">{item.n} · {pct}%</span>
+              </div>
+              <div className="h-1 rounded bg-white/[0.05]">
+                <div className="h-1 rounded bg-emerald-400/60" style={{ width: `${pct}%` }} />
+              </div>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
 }
 
 /** 单次访问的明细块。数据是只读的，所以这里只是一堆键值对，没有任何编辑控件。 */
@@ -2841,6 +3036,10 @@ function VisitTimelineItem({ visit }: {
           <span className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-zinc-400">{visit.path}</span>
         )}
         {visit.ip && <span className="font-mono text-[10px] text-zinc-600">{visit.ip}</span>}
+        {visit.traffic_type && visit.traffic_type !== "human" && <TrafficTag type={visit.traffic_type} />}
+        {(visit.country || visit.city) && (
+          <span className="text-[10px] text-zinc-500">{[visit.country, visit.region, visit.city].filter(Boolean).join(" · ")}</span>
+        )}
       </div>
 
       <dl className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] md:grid-cols-3">
@@ -2952,7 +3151,17 @@ export default function AdminApp() {
   // 站点检测（访问记录）。这份数据不在 /api/portfolio 里，是独立接口按需拉的，
   // 所以不参与 dirty / SaveCurrentButton 那套「编辑-保存」流程 —— 它只有「读」和
   // 「打标注」两种动作，改完立刻回写，不需要草稿态。
-  const [visitsData, setVisitsData] = useState<VisitsPayload | null>(null);
+  // 概览（卡片 / 趋势 / 分布 / 点击排行）和访客列表是两个接口：翻页、搜索只重拉列表。
+  const [analytics, setAnalytics] = useState<AnalyticsSummaryPayload | null>(null);
+  const [visitorPage, setVisitorPage] = useState<AnalyticsVisitorsPayload | null>(null);
+  const [analyticsRange, setAnalyticsRange] = useState<AnalyticsRange>("7d");
+  // 默认只看真人：爬虫和本机预览浏览器是大头，混在一起数字没有意义。
+  const [analyticsHumanOnly, setAnalyticsHumanOnly] = useState(true);
+  const [analyticsView, setAnalyticsView] = useState<"overview" | "visitors" | "clicks">("overview");
+  const [visitorQuery, setVisitorQuery] = useState("");
+  const [visitorQueryDraft, setVisitorQueryDraft] = useState("");
+  const [visitorPageNo, setVisitorPageNo] = useState(1);
+  const [visitorVisits, setVisitorVisits] = useState<{ key: string; visits: VisitRecord[]; loading: boolean } | null>(null);
   const [visitsLoading, setVisitsLoading] = useState(false);
   const [visitsError, setVisitsError] = useState("");
   const [visitsBusyKey, setVisitsBusyKey] = useState("");
@@ -2961,18 +3170,45 @@ export default function AdminApp() {
   // 两段式确认：存 "all"（清空全部）或某位访客的 visitorKey（删这一位），null 表示没在确认。
   const [visitsConfirm, setVisitsConfirm] = useState<string | null>(null);
 
+  const analyticsParams = () => `range=${analyticsRange}&humanOnly=${analyticsHumanOnly ? 1 : 0}`;
+
+  async function fetchAdminJson<T>(url: string): Promise<T> {
+    const res = await fetch(url);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || `读取失败（${res.status}）`);
+    return json as T;
+  }
+
+  async function loadVisitorPage() {
+    const query = visitorQuery ? `&q=${encodeURIComponent(visitorQuery)}` : "";
+    setVisitorPage(await fetchAdminJson<AnalyticsVisitorsPayload>(`/api/admin/analytics/visitors?${analyticsParams()}&page=${visitorPageNo}&pageSize=20${query}`));
+  }
+
   async function loadVisits() {
     setVisitsLoading(true);
     setVisitsError("");
     try {
-      const res = await fetch("/api/admin/visits?limit=500");
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || `读取失败（${res.status}）`);
-      setVisitsData(json as VisitsPayload);
+      const summary = await fetchAdminJson<AnalyticsSummaryPayload>(`/api/admin/analytics/summary?${analyticsParams()}`);
+      setAnalytics(summary);
+      if (summary.configured) await loadVisitorPage();
     } catch (err: any) {
       setVisitsError(err?.message || "读取访问记录失败");
     } finally {
       setVisitsLoading(false);
+    }
+  }
+
+  async function openVisitor(visitor: VisitorRecord) {
+    setVisitsExpandedKey(visitor.visitor_key);
+    setVisitsLabelDraft(visitor.label || "");
+    setVisitsConfirm(null);
+    setVisitorVisits({ key: visitor.visitor_key, visits: [], loading: true });
+    try {
+      const json = await fetchAdminJson<{ visits: VisitRecord[] }>(`/api/admin/analytics/visitors/${encodeURIComponent(visitor.visitor_key)}/visits`);
+      setVisitorVisits((prev) => (prev?.key === visitor.visitor_key ? { key: visitor.visitor_key, visits: json.visits, loading: false } : prev));
+    } catch (err: any) {
+      setVisitsError(err?.message || "读取访问明细失败");
+      setVisitorVisits((prev) => (prev?.key === visitor.visitor_key ? { ...prev, loading: false } : prev));
     }
   }
 
@@ -2988,7 +3224,7 @@ export default function AdminApp() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "保存失败");
       // 就地合并，不为一次改名把整页记录重拉一遍。
-      setVisitsData((prev) =>
+      setVisitorPage((prev) =>
         prev
           ? { ...prev, visitors: prev.visitors.map((v) => (v.visitor_key === visitorKey ? { ...v, ...patch } : v)) }
           : prev,
@@ -3045,9 +3281,15 @@ export default function AdminApp() {
   useEffect(() => {
     if (active !== "tracking") return;
     void loadVisits();
-    // eslint 无此项目，依赖只取 active 是刻意的：loadVisits 每次渲染都是新函数，
+    // eslint 无此项目，依赖只取筛选条件是刻意的：loadVisits 每次渲染都是新函数，
     // 挂进依赖会导致「一加载完就再加载」的死循环。
-  }, [active]);
+  }, [active, analyticsRange, analyticsHumanOnly]);
+
+  // 翻页 / 搜索只重拉访客列表，概览不动。首次加载由上面的 effect 负责。
+  useEffect(() => {
+    if (active !== "tracking" || !analytics?.configured) return;
+    loadVisitorPage().catch((err: any) => setVisitsError(err?.message || "读取访客失败"));
+  }, [visitorPageNo, visitorQuery]);
 
   // 侧栏导航。图标和文字都给（只用图标会牺牲可发现性），顺序按「先看结构、再看内容、
   // 最后是设置」排：站点资料 + 模块管理是站点的结构层；中间是各栏目的内容；
@@ -4335,22 +4577,69 @@ export default function AdminApp() {
                 {experienceModalIndex >= 0 && (() => {
                   const exp = data.experiences[experienceModalIndex];
                   const index = experienceModalIndex;
+                  const total = data.experiences.length;
+                  const goTo = (to: number) => setExpandedExperienceId(rowKey(data.experiences[to].id, to));
+                  const descLines = (exp.desc || "").split("\n").filter((line) => line.trim()).length;
                   return (
                     <EditorModal
-                      title={exp.role?.trim() || "未填写角色"}
+                      size="sm"
+                      title={exp.role?.trim() || "未填写标题"}
                       onClose={() => setExpandedExperienceId(null)}
                       footer={
-                        <SaveCurrentButton label="保存全部" />
+                        <>
+                          {/* 连着改好几条时不用关了再开：上一条 / 下一条直接切。改动都在草稿里，不会丢。 */}
+                          <div className="mr-auto flex items-center gap-1 text-xs text-zinc-500">
+                            <button type="button" disabled={index === 0} onClick={() => goTo(index - 1)} className="rounded-md border border-zinc-800 px-2 py-1 text-zinc-300 hover:border-zinc-600 disabled:opacity-40">上一条</button>
+                            <span className="px-1 font-mono">{index + 1} / {total}</span>
+                            <button type="button" disabled={index === total - 1} onClick={() => goTo(index + 1)} className="rounded-md border border-zinc-800 px-2 py-1 text-zinc-300 hover:border-zinc-600 disabled:opacity-40">下一条</button>
+                          </div>
+                          <SaveCurrentButton label="保存全部" />
+                        </>
                       }
                     >
-                      <section className="adm-panel space-y-3 p-3">
-                        <div className="grid gap-3 md:grid-cols-3">
-                          <Field label="时间" value={exp.period} onChange={(value) => update((draft) => { draft.experiences[index].period = value; })} />
-                          <Field label="组织/公司" value={exp.role} onChange={(value) => update((draft) => { draft.experiences[index].role = value; })} />
-                          <Field label="角色" value={exp.company} onChange={(value) => update((draft) => { draft.experiences[index].company = value; })} />
-                        </div>
-                        <Field label="简介" value={exp.desc} onChange={(value) => update((draft) => { draft.experiences[index].desc = value; })} textarea />
-                      </section>
+                      <div className="space-y-3">
+                        <section className="adm-panel p-3">
+                          <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-zinc-500">前台效果 / PREVIEW</p>
+                          <ExperiencePreview exp={exp} />
+                        </section>
+                        {/*
+                         * 字段名对齐前台：role 是时间线上的大字标题，company 显示成「@ 负责人」。
+                         * 原来标签写反了（role 标成「组织/公司」），填的人只能靠猜。
+                         * 数据字段不动，只改标签和顺序 —— 先填标题，再填时间和身份。
+                         */}
+                        <section className="adm-panel space-y-3 p-3">
+                          <Field
+                            label="标题"
+                            value={exp.role}
+                            onChange={(value) => update((draft) => { draft.experiences[index].role = value; })}
+                            placeholder="例如：APP 产品原型设计"
+                            hint="时间线上最醒目的那一行。"
+                          />
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <Field
+                              label="时间"
+                              value={exp.period}
+                              onChange={(value) => update((draft) => { draft.experiences[index].period = value; })}
+                              placeholder="例如：2025.09 - 2025.12"
+                            />
+                            <Field
+                              label="身份 / 组织"
+                              value={exp.company}
+                              onChange={(value) => update((draft) => { draft.experiences[index].company = value; })}
+                              placeholder="例如：负责人、某某公司"
+                              hint="前台显示为「@ 负责人」。"
+                            />
+                          </div>
+                          <Field
+                            label="简介"
+                            value={exp.desc}
+                            onChange={(value) => update((draft) => { draft.experiences[index].desc = value; })}
+                            textarea
+                            rows={Math.min(10, Math.max(4, descLines + 1))}
+                            hint={`${(exp.desc || "").length} 字`}
+                          />
+                        </section>
+                      </div>
                     </EditorModal>
                   );
                 })()}
@@ -5651,20 +5940,19 @@ export default function AdminApp() {
             {active === "tracking" && (
               <Section
                 title="站点检测"
-                description="访客每次打开网站都会记一条：IP 与归属地、设备、系统、浏览器、屏幕、时区与停留时长。同一个浏览器重复访问会归到同一位访客，点开就能看到他在什么时间来过、每次待了多久。"
+                description="访客每次打开网站都会记一条：IP 与归属地、设备、浏览器、停留时长和按钮点击。爬虫、扫描器直接不记录；本机和内网访问会记下来但默认隐藏。"
               >
                 {visitsError && (
                   <p className="adm-note adm-note-warn text-xs leading-5 text-amber-200" role="alert">{visitsError}</p>
                 )}
 
-                {visitsData && !visitsData.configured && (
+                {analytics && !analytics.configured && (
                   <p className="adm-note adm-note-warn text-xs leading-5 text-amber-200">
-                    {visitsData.reason === "tables-missing" ? (
+                    {analytics.reason === "tables-missing" ? (
                       <>
                         检测数据表还没建。把项目里的{" "}
                         <span className="font-mono text-amber-100">supabase/schema.sql</span> 整份粘进
-                        Supabase 控制台的 SQL Editor 跑一次（脚本是幂等的，重复跑没有副作用），
-                        然后点上面的「刷新记录」即可开始积累数据。
+                        Supabase 控制台的 SQL Editor 跑一次（脚本是幂等的，重复跑没有副作用），然后点「刷新」。
                       </>
                     ) : (
                       <>
@@ -5675,22 +5963,39 @@ export default function AdminApp() {
                   </p>
                 )}
 
-                {/* 统计数字用 .adm-panel 当底：只有色调、没有边框，不会在卡片里再套一层框。 */}
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { label: "访客数", value: visitsData?.stats.visitors ?? 0, hint: "同一浏览器算一位" },
-                    { label: "总访问次数", value: visitsData?.stats.visits ?? 0, hint: "每次打开页面算一次" },
-                    { label: "近 24 小时", value: visitsData?.stats.today ?? 0, hint: "最近一天的访问量" },
-                  ].map((stat) => (
-                    <div key={stat.label} className="adm-panel px-3 py-2.5">
-                      <p className="text-xs text-zinc-400">{stat.label}</p>
-                      <p className="mt-0.5 text-2xl font-semibold tabular-nums text-white">{stat.value}</p>
-                      <p className="mt-0.5 text-[10px] leading-4 text-zinc-500">{stat.hint}</p>
-                    </div>
-                  ))}
-                </div>
+                {analytics?.configured && analytics.schemaReady === false && (
+                  <p className="adm-note adm-note-warn text-xs leading-5 text-amber-200">
+                    数据库还是旧版结构：统计暂时在服务端临时计算（最多取最近 1 万条）。在 Supabase SQL Editor 重新执行一次
+                    <span className="mx-1 font-mono text-amber-100">supabase/schema.sql</span>
+                    即可给历史记录打上「真人 / 爬虫 / 本机」标签并改用数据库统计，现有数据不会被删除。
+                  </p>
+                )}
 
                 <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex rounded-lg border border-zinc-800 p-0.5" role="group" aria-label="时间范围">
+                    {([["today", "今天"], ["7d", "7 天"], ["30d", "30 天"], ["all", "全部"]] as const).map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        aria-pressed={analyticsRange === key}
+                        onClick={() => { setAnalyticsRange(key); setVisitorPageNo(1); }}
+                        className={`min-h-8 rounded-md px-2.5 text-xs transition-colors duration-200 ${analyticsRange === key ? "bg-white/[0.1] text-white" : "text-zinc-400 hover:text-white"}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <label className="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-zinc-800 px-3 text-xs text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={analyticsHumanOnly}
+                      onChange={(event) => { setAnalyticsHumanOnly(event.target.checked); setVisitorPageNo(1); }}
+                      className="accent-emerald-400"
+                    />
+                    只看真人
+                  </label>
+
                   <button
                     type="button"
                     onClick={() => { void loadVisits(); }}
@@ -5698,13 +6003,13 @@ export default function AdminApp() {
                     className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-zinc-800 px-3 text-sm text-zinc-300 transition-colors duration-200 hover:border-zinc-600 hover:text-white disabled:opacity-60"
                   >
                     {visitsLoading ? <Loader2 className="animate-spin" size={14} /> : <RefreshCw size={14} />}
-                    {visitsLoading ? "读取中…" : "刷新记录"}
+                    {visitsLoading ? "读取中…" : "刷新"}
                   </button>
 
                   {visitsConfirm === "all" ? (
                     <>
                       <span className="text-xs leading-5 text-amber-200">
-                        确定清空全部访问记录？访客的备注与屏蔽标记也会一起删掉，且无法恢复。
+                        确定清空全部访问记录（包括隐藏的爬虫和本机记录）？备注与屏蔽标记也会一起删掉，且无法恢复。
                       </span>
                       <button
                         type="button"
@@ -5725,162 +6030,313 @@ export default function AdminApp() {
                     <button
                       type="button"
                       onClick={() => setVisitsConfirm("all")}
-                      disabled={!visitsData || visitsData.stats.visits === 0}
-                      className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-zinc-800 px-3 text-sm text-zinc-300 transition-colors duration-200 hover:border-rose-500/60 hover:text-rose-200 disabled:opacity-40"
+                      disabled={!analytics?.configured}
+                      className="ml-auto inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-zinc-800 px-3 text-sm text-zinc-400 transition-colors duration-200 hover:border-rose-500/60 hover:text-rose-200 disabled:opacity-40"
                     >
                       <Trash2 size={14} /> 清空全部
                     </button>
                   )}
-
-                  <span className="text-[11px] text-zinc-500">最多显示最近 500 条访问、1000 位访客</span>
                 </div>
 
-                {visitsLoading && !visitsData && (
+                {visitsLoading && !analytics && (
                   <p className="flex items-center gap-2 text-sm text-zinc-400">
                     <Loader2 className="animate-spin text-emerald-300" size={14} /> 正在读取访问记录…
                   </p>
                 )}
 
-                {visitsData && !visitsLoading && visitsData.visitors.length === 0 && (
-                  <p className="adm-note text-xs leading-5 text-zinc-400">
-                    还没有任何访问记录。换一台设备或换个浏览器打开一次前台首页，这里就会出现第一位访客。
-                  </p>
-                )}
-
-                {visitsData && visitsData.visitors.map((visitor) => {
-                  const expanded = visitsExpandedKey === visitor.visitor_key;
-                  const records = (visitsData.visits || []).filter((v) => v.visitor_key === visitor.visitor_key);
-                  const busy = visitsBusyKey === visitor.visitor_key;
+                {analytics?.configured && analytics.summary && (() => {
+                  const s = analytics.summary;
+                  const hidden = s.hiddenBots + s.hiddenLocal;
                   return (
-                    // 被标记为屏蔽的访客用琥珀色条目，跟正常访客的绿色区分开。
-                    <EditorRow key={visitor.visitor_key} expanded={expanded} tone={visitor.blocked ? "amber" : "emerald"}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setVisitsExpandedKey(visitor.visitor_key);
-                          setVisitsLabelDraft(visitor.label || "");
-                          setVisitsConfirm(null);
-                        }}
-                        className="grid w-full gap-2 p-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-400/40 md:grid-cols-[1fr_auto] md:items-center"
-                      >
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="truncate text-sm font-semibold text-white">
-                              {visitor.label || `访客 ${shortVisitorKey(visitor.visitor_key)}`}
-                            </span>
-                            {visitor.blocked && (
-                              <span className="inline-flex items-center gap-1 rounded bg-amber-400/10 px-1.5 py-0.5 text-[10px] text-amber-300">
-                                <Ban size={10} /> 已屏蔽标记
-                              </span>
-                            )}
-                            <span className="inline-flex items-center gap-1 rounded bg-white/[0.07] px-1.5 py-0.5 text-[10px] text-zinc-400">
-                              <MapPin size={10} /> {visitorLocation(visitor)}
-                            </span>
-                            <span className="inline-flex items-center gap-1 rounded bg-white/[0.07] px-1.5 py-0.5 text-[10px] text-zinc-400">
-                              <MonitorSmartphone size={10} /> {visitorDevice(visitor)}
-                            </span>
+                    <>
+                      {/* 统计数字用 .adm-panel 当底：只有色调、没有边框，不会在卡片里再套一层框。 */}
+                      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                        {[
+                          { label: analyticsHumanOnly ? "真人访客" : "访客", value: String(s.visitors), hint: "同一浏览器算一位" },
+                          { label: "访问次数", value: String(s.visits), hint: "每次打开页面算一次" },
+                          { label: "平均停留", value: s.avgDwellMs ? formatVisitDuration(s.avgDwellMs) : "—", hint: `${Math.round(s.bounceRate * 100)}% 的访问不足 10 秒` },
+                          { label: "按钮点击", value: String(s.clicks), hint: "前台按钮与链接" },
+                        ].map((stat) => (
+                          <div key={stat.label} className="adm-panel px-3 py-2.5">
+                            <p className="text-xs text-zinc-400">{stat.label}</p>
+                            <p className="mt-0.5 text-2xl font-semibold tabular-nums text-white">{stat.value}</p>
+                            <p className="mt-0.5 text-[10px] leading-4 text-zinc-500">{stat.hint}</p>
                           </div>
-                          <p className="mt-1 text-xs leading-5 text-zinc-400">
-                            访问 <span className="font-semibold tabular-nums text-zinc-200">{visitor.visit_count}</span> 次
-                            · 累计停留 <span className="font-semibold text-zinc-200">{formatVisitDuration(visitor.total_dwell_ms)}</span>
-                            · 最近一次 {formatVisitTime(visitor.last_seen)}（{formatVisitAgo(visitor.last_seen)}）
-                          </p>
-                          <p className="mt-0.5 font-mono text-[10px] text-zinc-600">
-                            {visitor.last_ip || "IP 未知"} · {visitor.visitor_key} · 首次 {formatVisitTime(visitor.first_seen)}
-                          </p>
-                        </div>
-                        <span className="justify-self-start rounded-lg bg-white/[0.07] px-2.5 py-1 text-xs text-zinc-300 md:justify-self-end">
-                          {expanded ? "查看中…" : `查看 ${records.length} 次访问`}
-                        </span>
-                      </button>
+                        ))}
+                      </div>
 
-                      {expanded && (
-                        <EditorModal
-                          title={visitor.label || "访客 " + shortVisitorKey(visitor.visitor_key)}
-                          onClose={() => { setVisitsExpandedKey(null); setVisitsConfirm(null); }}
-                          footer={
-                            <p className="mr-auto text-[11px] leading-5 text-zinc-500">
-                              备注与屏蔽标记即时保存；删除不可恢复，所以要点两次。
-                            </p>
-                          }
-                        >
-                          <div className="flex flex-wrap items-end gap-2">
-                            <label className="grid min-w-[200px] flex-1 gap-1.5">
-                              <span className="text-xs font-medium text-zinc-400">备注名（只改后台显示，方便认出自己人）</span>
-                              <input
-                                value={visitsLabelDraft}
-                                onChange={(event) => setVisitsLabelDraft(event.target.value)}
-                                placeholder="例如：我自己 / 客户张三 / 疑似爬虫"
-                                className={`${inputBaseClass} min-h-10 px-3 py-2`}
-                              />
-                            </label>
-                            <button
-                              type="button"
-                              onClick={() => { void patchVisitor(visitor.visitor_key, { label: visitsLabelDraft.trim() }); }}
-                              disabled={busy}
-                              className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-emerald-300 px-3 text-sm font-semibold text-zinc-950 transition-colors duration-200 hover:bg-emerald-200 disabled:opacity-60"
-                            >
-                              {busy ? <Loader2 className="animate-spin" size={14} /> : null} 保存备注
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => { void patchVisitor(visitor.visitor_key, { blocked: !visitor.blocked }); }}
-                              disabled={busy}
-                              className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-zinc-800 px-3 text-sm text-zinc-300 transition-colors duration-200 hover:border-amber-500/60 hover:text-amber-200 disabled:opacity-60"
-                            >
-                              <Ban size={14} /> {visitor.blocked ? "取消屏蔽标记" : "标记为屏蔽"}
-                            </button>
-
-                            {visitsConfirm === visitor.visitor_key ? (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => { void clearVisits([visitor.visitor_key]); }}
-                                  className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-rose-400 px-3 text-sm font-semibold text-zinc-950 transition-colors duration-200 hover:bg-rose-300"
-                                >
-                                  <Trash2 size={14} /> 确认删除
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setVisitsConfirm(null)}
-                                  className="inline-flex min-h-10 items-center rounded-lg border border-zinc-800 px-3 text-sm text-zinc-300 hover:border-zinc-600"
-                                >
-                                  取消
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => setVisitsConfirm(visitor.visitor_key)}
-                                className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-zinc-800 px-3 text-sm text-zinc-300 transition-colors duration-200 hover:border-rose-500/60 hover:text-rose-200"
-                              >
-                                <Trash2 size={14} /> 删除该访客
-                              </button>
-                            )}
-                          </div>
-
-                          <p className="adm-note text-[11px] leading-5 text-zinc-400">
-                            「屏蔽标记」只是给这条记录打个记号、方便把它和真人访客区分开
-                            <span className="text-zinc-300">（前台是纯展示站点，不做准入，所以它不会真的拦住对方访问）</span>。
-                            删除则是把这位访客和名下的全部访问记录一起从数据库里抹掉，不可恢复。
-                          </p>
-
-                          <div className="space-y-2">
-                            <p className="text-xs font-semibold text-zinc-300">访问记录 · 共 {records.length} 条</p>
-                            {records.length === 0 ? (
-                              <p className="text-xs leading-5 text-zinc-500">
-                                这位访客的明细不落在本次读取窗口里（列表按时间倒序只取最近 500 条），
-                                但上面的「访问次数 / 累计停留 / 最近一次」是聚合表里的全量值，不受影响。
-                              </p>
-                            ) : (
-                              records.map((visit) => <VisitTimelineItem key={visit.id} visit={visit} />)
-                            )}
-                          </div>
-                        </EditorModal>
+                      {analyticsHumanOnly && hidden > 0 && (
+                        <p className="text-[11px] leading-5 text-zinc-500">
+                          已隐藏 {s.hiddenBots} 次爬虫 / 扫描器访问和 {s.hiddenLocal} 次本机 / 内网访问。
+                          <button type="button" onClick={() => setAnalyticsHumanOnly(false)} className="ml-1 text-emerald-300 underline-offset-2 hover:underline">
+                            显示全部
+                          </button>
+                        </p>
                       )}
-                    </EditorRow>
+
+                      <div className="flex gap-1 border-b border-zinc-800" role="tablist" aria-label="站点检测视图">
+                        {([["overview", "概览"], ["visitors", `访客${visitorPage ? ` · ${visitorPage.total}` : ""}`], ["clicks", "行为"]] as const).map(([key, label]) => (
+                          <button
+                            key={key}
+                            type="button"
+                            role="tab"
+                            aria-selected={analyticsView === key}
+                            onClick={() => setAnalyticsView(key)}
+                            className={`-mb-px border-b-2 px-3 py-2 text-sm transition-colors duration-200 ${analyticsView === key ? "border-emerald-400 text-white" : "border-transparent text-zinc-400 hover:text-white"}`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {analyticsView === "overview" && (
+                        <div className="space-y-3">
+                          <div className="adm-panel px-3 py-3">
+                            <p className="mb-2 text-xs font-semibold text-zinc-300">{analytics.bucket === "hour" ? "今日每小时访问" : "每日访问"}</p>
+                            <VisitTrendChart series={s.series} bucket={analytics.bucket || "day"} range={analyticsRange} />
+                          </div>
+                          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                            <TopList title="地区" items={s.cities} total={s.visits} />
+                            <TopList title="国家" items={s.countries} total={s.visits} />
+                            <TopList title="来源" items={s.referrers} total={s.visits} />
+                            <TopList title="设备" items={s.devices} total={s.visits} />
+                            <TopList title="系统 / 浏览器" items={s.browsers} total={s.visits} />
+                          </div>
+                        </div>
+                      )}
+
+                      {analyticsView === "clicks" && (
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-end justify-between gap-2">
+                            <div>
+                              <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
+                                <MousePointerClick size={15} className="text-emerald-300" /> 按钮点击排行
+                              </h3>
+                              <p className="mt-1 text-[11px] leading-4 text-zinc-500">
+                                自动采集前台按钮和链接；独立访客按同一浏览器去重，不采集输入内容。
+                              </p>
+                            </div>
+                            <span className="text-[11px] text-zinc-500">共 {analytics.clickStats?.length ?? 0} 个控件</span>
+                          </div>
+                          {!analytics.eventsConfigured ? (
+                            <p className="adm-note adm-note-warn text-xs leading-5 text-amber-200">
+                              点击事件表尚未建立。请在 Supabase SQL Editor 重新执行一次
+                              <span className="mx-1 font-mono text-amber-100">supabase/schema.sql</span>，现有访问数据不会被覆盖。
+                            </p>
+                          ) : !analytics.clickStats?.length ? (
+                            <p className="adm-note text-xs leading-5 text-zinc-400">这段时间还没有按钮点击记录。</p>
+                          ) : (
+                            <div className="overflow-hidden rounded-lg border border-zinc-800/80">
+                              <div className="grid grid-cols-[minmax(0,1fr)_72px_72px] gap-2 border-b border-zinc-800 bg-white/[0.03] px-3 py-2 text-[10px] uppercase text-zinc-500 md:grid-cols-[minmax(0,1.4fr)_minmax(100px,.5fr)_80px_80px_140px]">
+                                <span>控件</span><span className="hidden md:block">页面</span><span className="text-right">点击</span><span className="text-right">访客</span><span className="hidden text-right md:block">最近点击</span>
+                              </div>
+                              {analytics.clickStats.map((item) => (
+                                <div key={`${item.path}:${item.element_key}`} className="grid grid-cols-[minmax(0,1fr)_72px_72px] gap-2 border-b border-zinc-900 px-3 py-2.5 last:border-b-0 md:grid-cols-[minmax(0,1.4fr)_minmax(100px,.5fr)_80px_80px_140px] md:items-center">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-xs font-medium text-zinc-200" title={item.element_label}>{item.element_label}</p>
+                                    <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-600" title={item.element_key}>{item.element_key}</p>
+                                  </div>
+                                  <span className="hidden truncate font-mono text-[10px] text-zinc-500 md:block">{item.path}</span>
+                                  <span className="text-right text-sm font-semibold tabular-nums text-emerald-300">{item.clicks}</span>
+                                  <span className="text-right text-xs tabular-nums text-zinc-300">{item.unique_visitors}</span>
+                                  <span className="hidden text-right text-[10px] text-zinc-500 md:block">{formatVisitTime(item.last_clicked_at)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
                   );
-                })}
+                })()}
+
+                {analytics?.configured && analyticsView === "visitors" && visitorPage && (() => {
+                  const pages = Math.max(1, Math.ceil(visitorPage.total / visitorPage.pageSize));
+                  return (
+                    <div className="space-y-2">
+                      <form
+                        className="flex flex-wrap items-center gap-2"
+                        onSubmit={(event) => { event.preventDefault(); setVisitorPageNo(1); setVisitorQuery(visitorQueryDraft.trim()); }}
+                      >
+                        <input
+                          value={visitorQueryDraft}
+                          onChange={(event) => setVisitorQueryDraft(event.target.value)}
+                          placeholder="搜索备注、IP、城市或访客 ID"
+                          aria-label="搜索访客"
+                          className={`${inputBaseClass} min-h-9 min-w-[220px] flex-1 px-3 py-1.5 text-sm`}
+                        />
+                        <button type="submit" className="inline-flex min-h-9 items-center rounded-lg border border-zinc-800 px-3 text-sm text-zinc-300 hover:border-zinc-600 hover:text-white">
+                          搜索
+                        </button>
+                        {visitorQuery && (
+                          <button
+                            type="button"
+                            onClick={() => { setVisitorQueryDraft(""); setVisitorQuery(""); setVisitorPageNo(1); }}
+                            className="text-xs text-zinc-400 hover:text-white"
+                          >
+                            清除
+                          </button>
+                        )}
+                        <span className="ml-auto text-[11px] text-zinc-500">按最近访问排序 · 共 {visitorPage.total} 位</span>
+                      </form>
+
+                      {visitorPage.visitors.length === 0 && (
+                        <p className="adm-note text-xs leading-5 text-zinc-400">
+                          {visitorQuery ? "没有匹配的访客。" : "这段时间没有访客。换个时间范围，或取消「只看真人」看看被隐藏的记录。"}
+                        </p>
+                      )}
+
+                      {visitorPage.visitors.map((visitor) => {
+                        const expanded = visitsExpandedKey === visitor.visitor_key;
+                        const busy = visitsBusyKey === visitor.visitor_key;
+                        const records = visitorVisits?.key === visitor.visitor_key ? visitorVisits : null;
+                        return (
+                          // 被标记为屏蔽的访客用琥珀色条目，跟正常访客的绿色区分开。
+                          <EditorRow key={visitor.visitor_key} expanded={expanded} tone={visitor.blocked ? "amber" : "emerald"}>
+                            <button
+                              type="button"
+                              onClick={() => { void openVisitor(visitor); }}
+                              className="grid w-full gap-1 p-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-400/40 md:grid-cols-[1fr_auto] md:items-center"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="truncate text-sm font-semibold text-white">
+                                    {visitor.label || `访客 ${shortVisitorKey(visitor.visitor_key)}`}
+                                  </span>
+                                  <TrafficTag type={visitor.traffic_type} />
+                                  {visitor.blocked && (
+                                    <span className="inline-flex items-center gap-1 rounded bg-amber-400/10 px-1.5 py-0.5 text-[10px] text-amber-300">
+                                      <Ban size={10} /> 已屏蔽标记
+                                    </span>
+                                  )}
+                                  <span className="inline-flex items-center gap-1 text-[11px] text-zinc-400">
+                                    <MapPin size={11} /> {visitorLocation(visitor)}
+                                  </span>
+                                  <span className="inline-flex items-center gap-1 text-[11px] text-zinc-400">
+                                    <MonitorSmartphone size={11} /> {visitorDevice(visitor)}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-xs leading-5 text-zinc-500">
+                                  <span className="tabular-nums text-zinc-300">{visitor.visit_count}</span> 次访问
+                                  · 累计停留 <span className="text-zinc-300">{formatVisitDuration(visitor.total_dwell_ms)}</span>
+                                  · {visitor.last_ip || "IP 未知"}
+                                </p>
+                              </div>
+                              <span className="text-xs text-zinc-400 md:text-right" title={formatVisitTime(visitor.last_seen)}>
+                                {formatVisitAgo(visitor.last_seen)}
+                              </span>
+                            </button>
+
+                            {expanded && (
+                              <EditorModal
+                                title={visitor.label || "访客 " + shortVisitorKey(visitor.visitor_key)}
+                                onClose={() => { setVisitsExpandedKey(null); setVisitsConfirm(null); setVisitorVisits(null); }}
+                                footer={
+                                  <p className="mr-auto text-[11px] leading-5 text-zinc-500">
+                                    备注与屏蔽标记即时保存；删除不可恢复，所以要点两次。
+                                  </p>
+                                }
+                              >
+                                <div className="flex flex-wrap items-end gap-2">
+                                  <label className="grid min-w-[200px] flex-1 gap-1.5">
+                                    <span className="text-xs font-medium text-zinc-400">备注名（只改后台显示，方便认出自己人）</span>
+                                    <input
+                                      value={visitsLabelDraft}
+                                      onChange={(event) => setVisitsLabelDraft(event.target.value)}
+                                      placeholder="例如：我自己 / 客户张三 / 疑似爬虫"
+                                      className={`${inputBaseClass} min-h-10 px-3 py-2`}
+                                    />
+                                  </label>
+                                  <button
+                                    type="button"
+                                    onClick={() => { void patchVisitor(visitor.visitor_key, { label: visitsLabelDraft.trim() }); }}
+                                    disabled={busy}
+                                    className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-emerald-300 px-3 text-sm font-semibold text-zinc-950 transition-colors duration-200 hover:bg-emerald-200 disabled:opacity-60"
+                                  >
+                                    {busy ? <Loader2 className="animate-spin" size={14} /> : null} 保存备注
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => { void patchVisitor(visitor.visitor_key, { blocked: !visitor.blocked }); }}
+                                    disabled={busy}
+                                    className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-zinc-800 px-3 text-sm text-zinc-300 transition-colors duration-200 hover:border-amber-500/60 hover:text-amber-200 disabled:opacity-60"
+                                  >
+                                    <Ban size={14} /> {visitor.blocked ? "取消屏蔽标记" : "标记为屏蔽"}
+                                  </button>
+                                  {visitsConfirm === visitor.visitor_key ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => { void clearVisits([visitor.visitor_key]); }}
+                                        className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-rose-400 px-3 text-sm font-semibold text-zinc-950 transition-colors duration-200 hover:bg-rose-300"
+                                      >
+                                        <Trash2 size={14} /> 确认删除
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setVisitsConfirm(null)}
+                                        className="inline-flex min-h-10 items-center rounded-lg border border-zinc-800 px-3 text-sm text-zinc-300 hover:border-zinc-600"
+                                      >
+                                        取消
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => setVisitsConfirm(visitor.visitor_key)}
+                                      className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-zinc-800 px-3 text-sm text-zinc-300 transition-colors duration-200 hover:border-rose-500/60 hover:text-rose-200"
+                                    >
+                                      <Trash2 size={14} /> 删除该访客
+                                    </button>
+                                  )}
+                                </div>
+
+                                <p className="font-mono text-[10px] leading-5 text-zinc-600">
+                                  {visitor.visitor_key} · 首次 {formatVisitTime(visitor.first_seen)} · 最近 {formatVisitTime(visitor.last_seen)}
+                                </p>
+
+                                <div className="space-y-2">
+                                  <p className="text-xs font-semibold text-zinc-300">
+                                    访问记录 · {records?.loading ? "读取中…" : `最近 ${records?.visits.length ?? 0} 条`}
+                                  </p>
+                                  {records?.loading ? (
+                                    <p className="flex items-center gap-2 text-xs text-zinc-500"><Loader2 className="animate-spin" size={12} /> 正在读取…</p>
+                                  ) : !records?.visits.length ? (
+                                    <p className="text-xs leading-5 text-zinc-500">没有读到这位访客的访问明细。</p>
+                                  ) : (
+                                    records.visits.map((visit) => <VisitTimelineItem key={visit.id} visit={visit} />)
+                                  )}
+                                </div>
+                              </EditorModal>
+                            )}
+                          </EditorRow>
+                        );
+                      })}
+
+                      {pages > 1 && (
+                        <nav className="flex items-center justify-center gap-2 pt-1" aria-label="访客分页">
+                          <button
+                            type="button"
+                            disabled={visitorPageNo <= 1}
+                            onClick={() => setVisitorPageNo((n) => Math.max(1, n - 1))}
+                            className="inline-flex min-h-8 items-center rounded-lg border border-zinc-800 px-3 text-xs text-zinc-300 hover:border-zinc-600 disabled:opacity-40"
+                          >
+                            上一页
+                          </button>
+                          <span className="text-xs tabular-nums text-zinc-400">{visitorPageNo} / {pages}</span>
+                          <button
+                            type="button"
+                            disabled={visitorPageNo >= pages}
+                            onClick={() => setVisitorPageNo((n) => Math.min(pages, n + 1))}
+                            className="inline-flex min-h-8 items-center rounded-lg border border-zinc-800 px-3 text-xs text-zinc-300 hover:border-zinc-600 disabled:opacity-40"
+                          >
+                            下一页
+                          </button>
+                        </nav>
+                      )}
+                    </div>
+                  );
+                })()}
               </Section>
             )}
 

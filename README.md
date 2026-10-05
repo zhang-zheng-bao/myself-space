@@ -57,8 +57,53 @@ ADMIN_SESSION_SECRET="a-long-random-string"
 - `GET /api/admin/session`：检查登录状态。
 - `PUT /api/admin/portfolio`：保存完整站点内容。
 - `POST /api/admin/upload`：上传图片、视频、音乐、PDF、压缩包等媒体到 Storage。
+- `POST /api/track`：创建一次访问并返回 `visitId`。
+- `POST /api/track/dwell`：增量上报前台可见停留时间。
+- `POST /api/track/events`：批量写入按钮与链接点击事件。
+- `GET /api/admin/analytics/summary?range=today|7d|30d|all&humanOnly=1`：汇总指标、趋势、地区/来源/设备分布和按钮点击排行。
+- `GET /api/admin/analytics/visitors?range&humanOnly&page&pageSize&q`：分页搜索访客。
+- `GET /api/admin/analytics/visitors/:visitorKey/visits`：某访客最近 100 次访问明细。
+- `PATCH /api/admin/visits` / `POST /api/admin/visits/clear`：备注、拉黑、删除访客或清空统计。
+
+服务端会把每次访问标记为 `traffic_type`：`human`（真人）、`bot`（爬虫/扫描器/脚本 UA）、`local`（本机或内网 IP）。爬虫 UA 不写入；本机和内网访问会保留，但后台默认只显示真人。
 
 如果未配置 Supabase 环境变量，项目会临时使用 `src/data/portfolio.json` 作为本地兜底，方便先看页面和后台。
+
+## 统计与埋点规范
+
+本站使用第一方假名化统计，不接入第三方 Cookie。生产构建自动启用；本地开发默认关闭，避免开发刷新和 Playwright 验收污染真实数据。需要专门调试时，在 `.env` 临时设置 `VITE_ENABLE_ANALYTICS="true"`。
+
+### 统计口径
+
+- 一次完整页面加载记为一次访问，同一浏览器的匿名 `visitor_key` 记为一位访客。
+- 停留时长只累计页面位于前台可见状态的时间；每 15 秒增量心跳，页面隐藏或离开时用 `sendBeacon` 补交。
+- `dwell_ms = null` 表示浏览器未成功上报，后台显示“未上报”；`0-999ms` 才显示“不足 1 秒”，两者不能混为一谈。
+- 自动化浏览器、搜索引擎爬虫和 Lighthouse 不进入访问与点击统计。
+- 按钮点击排行按“页面路径 + `element_key`”聚合，同时展示总点击和匿名独立访客数。
+- 每条事件带随机 `event_id`，网络失败会重试，服务端按该 ID 去重，避免一次点击被重复累计。
+- 创建访问时服务端签发上下文令牌；点击和停留心跳必须携带有效签名，不能伪造访客或访问编号污染统计。
+- 按钮排行通过数据库函数对全部原始事件聚合；规模继续增长时可增加按日汇总表，不改变前台事件格式。
+
+### 控件命名
+
+全站会自动采集 `button`、`a`、`role="button"`。关键业务操作必须显式添加稳定的 `data-track`，采用 `区域:动作[:对象ID]`：
+
+```tsx
+<button data-track="hero:view-portfolio">查看作品集</button>
+<button data-track={`work:open:${work.id}`}>查看项目</button>
+```
+
+- `data-track` 是统计主键，发布后不要随展示文案一起修改。
+- `data-track-label` 可指定后台展示名；未指定时依次读取 `aria-label`、`title`、按钮可见文字。
+- 不需要统计的区域在祖先节点加 `data-track-ignore`。
+- 禁止把姓名、手机号、邮箱、搜索词、输入值、歌词或其他用户内容放进 `data-track`。
+- 新增核心转化流程时，先定义事件命名，再开发界面；不要用 CSS 类名或 DOM 层级作为业务主键。
+
+### 数据与隐私
+
+`portfolio_events` 保存控件键、控件标签、页面路径、假名访客、会话和发生时间，不保存输入框值、查询参数或 URL hash。`portfolio_visits` 的 referrer 只保留 origin 与 pathname。三张统计表启用 RLS，浏览器 anon/authenticated 角色无权直读，只能由 Express 的 service role 访问。上线前应在网站隐私说明中披露统计目的、字段和保留周期；如面向要求同意后才能分析的地区，需在 `startVisitTracking()` 前接入同意状态。
+
+首次启用或升级统计功能后，需要在 Supabase SQL Editor 重新执行完整的 `supabase/schema.sql`。脚本幂等，不会清空已有访问记录。
 
 ## 前台视觉规范
 
@@ -116,7 +161,7 @@ ADMIN_SESSION_SECRET="a-long-random-string"
 
 - 桌面首屏使用黄金分割 `38.2% / 61.8%` 双栏：左侧沉浸主视觉，右侧信息面板；顶部导航与主体使用同一分界。
 - 顶部导航高度为 `66px`；中文导航不显示英文副标题，当前项使用薄荷青底线和轻微外发光。
-- 左侧主图使用 `public/hero-creator-stage.png`，图片本身不包含 UI 或静态粒子。桌面以顶部为锚点放大约 `1.08`，裁掉多余底部；动态粒子由页面独立渲染，并使用右上向左下、左下向右上两组不规则轨迹。
+- 左侧主图是 5 秒静音循环视频 `public/hero-creator-stage.webm` / `.mp4`（720×960，3:4），首帧 `public/hero-creator-stage-poster.webp` 作为 poster；开启“减少动态效果”时只显示 poster，面板离开视口或标签页隐藏时暂停播放。素材本身不包含 UI 或静态粒子。桌面以顶部为锚点放大约 `1.08`，裁掉多余底部；动态粒子由页面独立渲染，并使用右上向左下、左下向右上两组不规则轨迹。
 - “关于我”下方三项数据的醒目数值、短标签和补充说明统一存放在 `profile.pageCopy.homeStats`，通过后台“站点资料 → 首页数据标签”编辑；未配置时使用代码默认值。
 - 首页“我的作品”读取全部作品，以双轨无缝方式持续从左向右轮播；卡片固定 `aspect-ratio: 1.92`，封面使用 `object-fit: cover`，悬停或键盘聚焦时暂停。
 - “作品展示”和“AI专区”共用三列两行布局：宽屏每页 6 项，缩略图固定 `1.92:1`；分类、徽章和作品标签叠放在图片内，不在图片上方另占一行。

@@ -61,6 +61,11 @@ html.portfolio-document body {
 .entrance-cinematic__door { position: absolute; top: calc(55% - 92px); left: calc(50% - max(1vw, 1.777778vh)); width: min(224px, 45vw); height: 100px; padding: 0; border: 0; background: transparent; color: #dce8fa; cursor: pointer; }
 .entrance-cinematic__door-label { position: absolute; top: 0; left: 29%; right: 0; z-index: 1; display: flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; font: 14px/22px "Noto Serif SC", "Songti SC", serif; letter-spacing: 0; text-shadow: 0 2px 6px #020714; transition: color 220ms ease; }
 .entrance-cinematic__door-label svg { flex: none; }
+.entrance-cinematic__door-hint--touch { display: none; }
+@media (hover: none) and (pointer: coarse) {
+  .entrance-cinematic__door-hint--key { display: none; }
+  .entrance-cinematic__door-hint--touch { display: inline; }
+}
 .entrance-cinematic__door-guide { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 .entrance-cinematic__door-guide path { fill: none; stroke: rgba(196, 216, 248, 0.5); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-linejoin: round; transition: stroke 220ms ease; }
 .entrance-cinematic__door-point { position: absolute; left: -2.5px; bottom: 5.5px; width: 5px; height: 5px; border-radius: 50%; background: rgba(222, 235, 255, 0.65); box-shadow: 0 0 5px rgba(168, 199, 255, 0.3); }

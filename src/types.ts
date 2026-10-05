@@ -383,6 +383,7 @@ export interface VisitRecord {
   dnt?: string;
   fingerprint?: string;
   dwell_ms?: number | null;
+  traffic_type?: TrafficType;
   created_at: string;
 }
 
@@ -404,15 +405,63 @@ export interface VisitorRecord {
   last_device?: string;
   last_browser?: string;
   last_os?: string;
+  traffic_type?: TrafficType;
 }
 
-/** GET /api/admin/visits 的响应。 */
-export interface VisitsPayload {
-  visitors: VisitorRecord[];
-  visits: VisitRecord[];
-  stats: { visitors: number; visits: number; today: number };
-  /** 后端是否具备可写可读的存储（Supabase 已连 + 检测表已建） */
+/** Aggregated click count returned by the admin analytics endpoint. */
+export interface ClickStat {
+  element_key: string;
+  element_label: string;
+  element_type: string;
+  path: string;
+  clicks: number;
+  unique_visitors: number;
+  last_clicked_at: string;
+}
+
+/** 流量分类：真人 / 爬虫扫描器 / 本机内网。 */
+export type TrafficType = "human" | "bot" | "local";
+
+export type AnalyticsRange = "today" | "7d" | "30d" | "all";
+
+export interface AnalyticsCount {
+  label: string;
+  n: number;
+}
+
+/** GET /api/admin/analytics/summary 的响应。 */
+export interface AnalyticsSummaryPayload {
   configured: boolean;
   /** configured 为 false 时的原因："supabase-missing" | "tables-missing" */
   reason?: string;
+  /** 数据库是否已跑新版 schema.sql（有 traffic_type 与统计函数） */
+  schemaReady?: boolean;
+  eventsConfigured?: boolean;
+  range?: AnalyticsRange;
+  humanOnly?: boolean;
+  bucket?: "hour" | "day";
+  summary?: {
+    visits: number;
+    visitors: number;
+    avgDwellMs: number;
+    bounceRate: number;
+    clicks: number;
+    hiddenBots: number;
+    hiddenLocal: number;
+    series: Array<{ bucket: string; visits: number; visitors: number }>;
+    countries: AnalyticsCount[];
+    cities: AnalyticsCount[];
+    devices: AnalyticsCount[];
+    browsers: AnalyticsCount[];
+    referrers: AnalyticsCount[];
+  };
+  clickStats?: ClickStat[];
+}
+
+/** GET /api/admin/analytics/visitors 的响应。 */
+export interface AnalyticsVisitorsPayload {
+  visitors: VisitorRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
 }

@@ -44,8 +44,8 @@ export default function HoldToSkip({ onComplete }: { onComplete: () => void }) {
   }, []);
 
   return (
-    <button type="button" className="entrance-cinematic__skip" data-holding={holding || undefined}
-      aria-label="长按跳过动画"
+    <button type="button" data-track="entrance:skip" className="entrance-cinematic__skip" data-holding={holding || undefined}
+      aria-label="长按跳过动画，或按 Esc 键" aria-keyshortcuts="Escape" title="长按跳过，或按 Esc"
       onPointerDown={event => {
         if (event.button !== 0 || !event.isPrimary) return;
         event.currentTarget.setPointerCapture(event.pointerId);

@@ -221,10 +221,12 @@ function parseUserAgent(uaRaw: string): UaInfo {
   return { deviceType, browser, browserVersion, os, osVersion, engine };
 }
 
-/** 取真实客户端 IP：trust proxy 已开，X-Forwarded-For 的第一段就是访客。 */
+/**
+ * 取真实客户端 IP。trust proxy = 1 时 req.ip 是「上一跳代理追加的那一段」；
+ * 直接读 X-Forwarded-For 的第一段会被访客自己伪造的请求头带偏。
+ */
 function clientIp(req: Request) {
-  const raw = String(req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim();
-  const ip = raw.replace(/^::ffff:/, "");
+  const ip = String(req.ip || req.socket.remoteAddress || "").replace(/^::ffff:/, "");
   return ip === "::1" ? "127.0.0.1" : ip;
 }
 
@@ -235,7 +237,76 @@ function isPrivateIp(ip: string) {
   return false;
 }
 
+export type TrafficType = "human" | "bot" | "local";
+
+/**
+ * 流量分类，规则与 supabase/schema.sql 里的 portfolio_classify_traffic 一致（改一边要同步另一边）。
+ * - local：本机 / 内网（开发、AI 预览浏览器、同机反代没带 XFF）
+ * - bot：不是 Mozilla 开头、没有浏览器内核标识，或带爬虫 / 扫描器 / 自动化关键字
+ */
+export function classifyTraffic(userAgent: string, ip: string): TrafficType {
+  if (isPrivateIp(ip)) return "local";
+  return isBotUserAgent(userAgent) ? "bot" : "human";
+}
+
+export function isBotUserAgent(userAgent: string) {
+  const ua = userAgent || "";
+  if (!/^mozilla\//i.test(ua) || !/(applewebkit|gecko)\//i.test(ua)) return true;
+  return /bot|crawl|spider|slurp|scan|inspect|headless|phantom|playwright|puppeteer|selenium|lighthouse|curl|wget|python|go-http|java\/|okhttp|axios|node-fetch|httpclient|libwww|rootevidence|measurement|palo alto|censys|webindexer|facebookexternalhit|preview|monitor|uptime/i.test(ua);
+}
+
 type GeoInfo = { country: string; region: string; city: string; isp: string; raw: unknown };
+
+/*
+ * 归属地统一成中文。首选的 ip-api 用 lang=zh-CN 直接返回中文；它限流或超时时才会落到
+ * ipapi.co / ipwho.is，这两家只有英文，不转换的话后台会同时出现「中国」和「China」两条。
+ * 国家用 ISO 代码交给 Intl.DisplayNames；国内省份和常见城市查表，写法对齐 ip-api 的输出。
+ * 海外城市 ip-api 自己也常给英文，查不到的保留原文。
+ */
+const zhRegionNames = new Intl.DisplayNames(["zh-CN"], { type: "region" });
+
+const CN_PROVINCES: Record<string, string> = {
+  beijing: "北京市", tianjin: "天津市", shanghai: "上海市", chongqing: "重庆市",
+  hebei: "河北", shanxi: "山西", liaoning: "辽宁", jilin: "吉林", heilongjiang: "黑龙江",
+  jiangsu: "江苏", zhejiang: "浙江", anhui: "安徽", fujian: "福建", jiangxi: "江西",
+  shandong: "山东", henan: "河南", hubei: "湖北", hunan: "湖南", guangdong: "广东",
+  hainan: "海南", sichuan: "四川", guizhou: "贵州", yunnan: "云南", shaanxi: "陕西",
+  gansu: "甘肃", qinghai: "青海", taiwan: "台湾", "inner mongolia": "内蒙古", neimenggu: "内蒙古",
+  guangxi: "广西", tibet: "西藏", xizang: "西藏", ningxia: "宁夏", xinjiang: "新疆",
+  "hong kong": "香港", macau: "澳门", macao: "澳门",
+};
+
+const CN_CITIES: Record<string, string> = {
+  beijing: "北京", shanghai: "上海", tianjin: "天津", chongqing: "重庆", guangzhou: "广州市",
+  shenzhen: "深圳", hangzhou: "杭州", nanjing: "南京", suzhou: "苏州", wuxi: "无锡", hefei: "合肥",
+  wuhan: "武汉", chengdu: "成都", "xi'an": "西安", xian: "西安", changsha: "长沙", zhengzhou: "郑州",
+  jinan: "济南", qingdao: "青岛", xiamen: "厦门", fuzhou: "福州", ningbo: "宁波", dongguan: "东莞",
+  foshan: "佛山", shenyang: "沈阳", dalian: "大连", harbin: "哈尔滨", changchun: "长春",
+  kunming: "昆明", guiyang: "贵阳", nanning: "南宁", nanchang: "南昌", taiyuan: "太原",
+  shijiazhuang: "石家庄", lanzhou: "兰州", urumqi: "乌鲁木齐", haikou: "海口", wuhu: "芜湖",
+  "hong kong": "香港", macau: "澳门", taipei: "台北",
+};
+
+const hasCjk = (s: string) => /[㐀-鿿]/.test(s);
+const geoKey = (s: string) =>
+  s.toLowerCase().replace(/\s+(sheng|shi|province|municipality|city|(zhuangzu |huizu |weiwu'?er )?autonomous region|zizhiqu|sar)$/i, "").trim();
+
+export function toZhGeo(country: string, region: string, city: string, countryCode?: string) {
+  let zhCountry = country;
+  const code = (countryCode || "").toUpperCase();
+  if (!hasCjk(country)) {
+    try {
+      if (/^[A-Z]{2}$/.test(code)) zhCountry = zhRegionNames.of(code) || country;
+    } catch {
+      // 非法代码时保留原文
+    }
+    if (zhCountry === country && /^china$/i.test(country)) zhCountry = "中国";
+  }
+  const inChina = zhCountry === "中国" || ["CN", "HK", "MO", "TW"].includes(code);
+  const zhRegion = inChina && !hasCjk(region) ? CN_PROVINCES[geoKey(region)] || region : region;
+  const zhCity = inChina && !hasCjk(city) ? CN_CITIES[geoKey(city)] || city : city;
+  return { country: zhCountry, region: zhRegion, city: zhCity };
+}
 
 const geoCache = new Map<string, { at: number; value: GeoInfo | null }>();
 const GEO_TTL_MS = 6 * 60 * 60 * 1000;
@@ -291,6 +362,11 @@ export async function lookupIpGeo(ip: string): Promise<GeoInfo | null> {
         raw: c,
       };
     }
+  }
+
+  if (info) {
+    const raw = info.raw as { country_code?: string; countryCode?: string };
+    Object.assign(info, toZhGeo(info.country, info.region, info.city, raw?.country_code || raw?.countryCode));
   }
 
   geoCache.set(ip, { at: Date.now(), value: info });
@@ -1598,6 +1674,29 @@ async function startServer() {
     return true;
   }
 
+  /** 爬虫和扫描器直接不落库；本机 / 内网照常记录但打 local 标，后台默认隐藏。 */
+  const isAutomatedUserAgent = isBotUserAgent;
+
+  const missingSchema = (m?: string) => /could not find the (table|function)|does not exist|schema cache|column .* of relation/i.test(m || "");
+
+  function trackingToken(visitId: number, visitorKey: string, sessionId: string) {
+    return crypto
+      .createHmac("sha256", getSessionSecret())
+      .update(`${visitId}:${visitorKey}:${sessionId}`)
+      .digest("base64url");
+  }
+
+  function validTrackingToken(token: unknown, visitId: number, visitorKey: string, sessionId: string) {
+    const supplied = String(token || "");
+    const expected = trackingToken(visitId, visitorKey, sessionId);
+    if (supplied.length !== expected.length) return false;
+    try {
+      return crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+    } catch {
+      return false;
+    }
+  }
+
   app.post("/api/track", async (req, res) => {
     try {
       if (!supabase) return res.json({ ok: false, reason: "supabase-not-configured" });
@@ -1611,6 +1710,7 @@ async function startServer() {
 
       const c = body.client || {};
       const ua = String(req.headers["user-agent"] || "").slice(0, 500);
+      if (isAutomatedUserAgent(ua)) return res.json({ ok: true, ignored: true, reason: "automated-client" });
       const info = parseUserAgent(ua);
       const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
       const str = (v: unknown, max: number) => String(v ?? "").slice(0, max);
@@ -1650,9 +1750,8 @@ async function startServer() {
         }
       }
 
-      const { data, error } = await supabase
-        .from("portfolio_visits")
-        .insert({
+      const trafficType = classifyTraffic(ua, ip);
+      const visitRow = {
           visitor_key: visitorKey,
           session_id: str(body.sessionId, 80),
           ip,
@@ -1681,9 +1780,17 @@ async function startServer() {
           cookie_enabled: typeof c.cookieEnabled === "boolean" ? c.cookieEnabled : null,
           dnt: str(c.dnt, 20),
           fingerprint: fps,
-        })
+      };
+
+      let { data, error } = await supabase
+        .from("portfolio_visits")
+        .insert({ ...visitRow, traffic_type: trafficType })
         .select("id")
         .single();
+      // 数据库还没跑新版 schema.sql（没有 traffic_type 列）时退回旧字段，不能把记录写丢。
+      if (error && missingSchema(error.message)) {
+        ({ data, error } = await supabase.from("portfolio_visits").insert(visitRow).select("id").single());
+      }
 
       if (error) return res.status(500).json({ error: error.message });
       const visitId: number | null = data?.id ?? null;
@@ -1714,6 +1821,22 @@ async function startServer() {
         }
 
         try {
+          // 新版 schema：一条 upsert 原子自增，归属地查不到时保留旧值。
+          const { error: rpcError } = await supabase.rpc("record_portfolio_visitor", {
+            p_visitor_key: visitorKey,
+            p_traffic_type: trafficType,
+            p_ip: ip,
+            p_country: country,
+            p_region: region,
+            p_city: city,
+            p_isp: isp,
+            p_device: info.deviceType,
+            p_browser: info.browser,
+            p_os: info.os,
+          });
+          if (!rpcError) return;
+
+          // 兼容尚未重跑 schema.sql 的旧部署。
           const nowIso = new Date().toISOString();
           // 先保证访客行存在（并发下 PK 冲突直接忽略），再自增计数。
           await supabase
@@ -1733,10 +1856,7 @@ async function startServer() {
               visit_count: Number(row?.visit_count || 0) + 1,
               page_views: Number(row?.page_views || 0) + 1,
               last_ip: ip,
-              last_country: country,
-              last_region: region,
-              last_city: city,
-              last_isp: isp,
+              ...(country ? { last_country: country, last_region: region, last_city: city, last_isp: isp } : {}),
               last_device: info.deviceType,
               last_browser: info.browser,
               last_os: info.os,
@@ -1750,27 +1870,100 @@ async function startServer() {
       // 把归一化之后的 key 回给前台：无痕窗口里前台本来每次都会生成新 key，
       // 收到这个值后它会**改用自己的 localStorage 存成这个规范 key**，
       // 于是连同一个无痕窗口内的后续上报都不会再飘。
-      res.json({ ok: true, visitId, visitorKey, mergedFrom });
+      res.json({
+        ok: true,
+        visitId,
+        visitorKey,
+        mergedFrom,
+        trackingToken: visitId == null ? "" : trackingToken(visitId, visitorKey, str(body.sessionId, 80)),
+      });
     } catch (err: any) {
       // 检测接口永远不要让前台看到 5xx
       res.json({ ok: false, reason: err?.message || "track-failed" });
     }
   });
 
+  app.post("/api/track/events", async (req, res) => {
+    try {
+      if (!supabase) return res.json({ ok: false, reason: "supabase-not-configured" });
+      const ip = clientIp(req);
+      if (!trackAllowed(ip)) return res.status(429).json({ ok: false, reason: "too-many-requests" });
+      const ua = String(req.headers["user-agent"] || "").slice(0, 500);
+      if (isAutomatedUserAgent(ua)) return res.json({ ok: true, ignored: true });
+
+      const body = req.body || {};
+      const visitorKey = String(body.visitorKey || "").trim().slice(0, 80);
+      const sessionId = String(body.sessionId || "").slice(0, 80);
+      const visitId = body.visitId == null ? null : Number(body.visitId);
+      const rawEvents = Array.isArray(body.events) ? body.events.slice(0, 50) : [];
+      if (!visitorKey || visitId == null || !Number.isFinite(visitId) || visitId <= 0 || rawEvents.length === 0) {
+        return res.status(400).json({ error: "visit context and events required" });
+      }
+      if (!validTrackingToken(body.trackingToken, visitId, visitorKey, sessionId)) {
+        return res.status(403).json({ error: "invalid tracking context" });
+      }
+
+      const allowedNames = new Set(["ui_click"]);
+      const rows = rawEvents.flatMap((event: any) => {
+        const eventName = String(event?.eventName || "").slice(0, 40);
+        const elementKey = String(event?.elementKey || "").trim().slice(0, 100);
+        if (!allowedNames.has(eventName) || !elementKey) return [];
+        const parsedTime = Date.parse(String(event?.occurredAt || ""));
+        return [{
+          event_id: String(event?.eventId || crypto.randomUUID()).slice(0, 80),
+          visit_id: visitId != null && Number.isFinite(visitId) && visitId > 0 ? visitId : null,
+          visitor_key: visitorKey,
+          session_id: sessionId,
+          event_name: eventName,
+          element_key: elementKey,
+          element_label: String(event?.elementLabel || "").slice(0, 80),
+          element_type: String(event?.elementType || "").slice(0, 20),
+          path: String(event?.path || "/").split(/[?#]/, 1)[0].slice(0, 300),
+          occurred_at: Number.isFinite(parsedTime) ? new Date(parsedTime).toISOString() : new Date().toISOString(),
+        }];
+      });
+      if (rows.length === 0) return res.status(400).json({ error: "no valid events" });
+
+      const { error } = await supabase
+        .from("portfolio_events")
+        .upsert(rows, { onConflict: "event_id", ignoreDuplicates: true });
+      if (error) {
+        if (/could not find the table|does not exist|schema cache/i.test(error.message)) {
+          return res.json({ ok: false, reason: "events-not-configured" });
+        }
+        return res.status(500).json({ error: error.message });
+      }
+      res.json({ ok: true, accepted: rows.length });
+    } catch (err: any) {
+      res.json({ ok: false, reason: err?.message || "events-failed" });
+    }
+  });
+
   app.post("/api/track/dwell", async (req, res) => {
     try {
       if (!supabase) return res.json({ ok: false });
+      if (!trackAllowed(clientIp(req))) return res.status(429).json({ ok: false, reason: "too-many-requests" });
+      if (isAutomatedUserAgent(String(req.headers["user-agent"] || ""))) return res.json({ ok: true, ignored: true });
       const body = req.body || {};
       const rawMs = Number(body.dwellMs);
       const dwellMs = Number.isFinite(rawMs) ? Math.max(0, Math.min(Math.round(rawMs), 6 * 60 * 60 * 1000)) : 0;
       const visitIdNum = Number(body.visitId);
       if (!Number.isFinite(visitIdNum)) return res.status(400).json({ error: "visitId required" });
+      const visitorKey = String(body.visitorKey || "").slice(0, 80);
+      const sessionId = String(body.sessionId || "").slice(0, 80);
+      if (!validTrackingToken(body.trackingToken, visitIdNum, visitorKey, sessionId)) {
+        return res.status(403).json({ error: "invalid tracking context" });
+      }
 
-      // 客户端送上来的是**增量**（见 src/tracking.ts: flushDwell 只发上次之后
-      // 新增的可见时长），所以这里必须累加，不能覆盖 —— 覆盖的话，一次访问里
-      // 只要发生了第二次 visibilitychange，这条访问的停留就只剩最后一段，
-      // 而后台「停留 X」读的正是 visit.dwell_ms（AdminApp 那行），于是数字偏小。
-      // 访客累计那一列本来就是加的，两列口径必须一致。
+      // 新版 schema 用数据库函数在一个事务里原子累加，避免心跳与离开上报并发覆盖。
+      const { error: rpcError } = await supabase.rpc("increment_portfolio_dwell", {
+        p_visit_id: visitIdNum,
+        p_visitor_key: visitorKey,
+        p_dwell_ms: dwellMs,
+      });
+      if (!rpcError) return res.json({ ok: true });
+
+      // 兼容尚未重跑 schema.sql 的旧部署；升级数据库后不会再走这段读后写逻辑。
       const { data: existing } = await supabase
         .from("portfolio_visits")
         .select("dwell_ms")
@@ -1784,7 +1977,7 @@ async function startServer() {
         .select("visitor_key")
         .maybeSingle();
 
-      const key = data?.visitor_key || String(body.visitorKey || "").slice(0, 80);
+      const key = data?.visitor_key || visitorKey;
       if (key) {
         const { data: row } = await supabase
           .from("portfolio_visitors")
@@ -1803,64 +1996,208 @@ async function startServer() {
     }
   });
 
-  app.get("/api/admin/visits", requireAdmin, async (req, res) => {
+  /* ---------------- 后台读取：概览 / 访客分页 / 单个访客明细 ----------------
+   * 新版 schema 下统计全部在 SQL 函数里算；数据库还没跑新 schema.sql 时，
+   * 退回到「拉最近一批原始行、在 Node 里按同一套规则分类再聚合」，结果口径一致，
+   * 只是数据量大了会慢 —— 所以后台会提示去跑一次 schema.sql。 */
+
+  const ANALYTICS_RANGES = new Set(["today", "7d", "30d", "all"]);
+  const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+  function analyticsQuery(req: Request) {
+    const range = ANALYTICS_RANGES.has(String(req.query.range)) ? String(req.query.range) : "7d";
+    const humanOnly = req.query.humanOnly !== "0";
+    let since: string | null = null;
+    if (range === "today") {
+      // 「今天」按北京时间零点切，不是滚动 24 小时。
+      const local = new Date(Date.now() + SHANGHAI_OFFSET_MS);
+      local.setUTCHours(0, 0, 0, 0);
+      since = new Date(local.getTime() - SHANGHAI_OFFSET_MS).toISOString();
+    } else if (range !== "all") {
+      since = new Date(Date.now() - (range === "7d" ? 7 : 30) * 24 * 60 * 60 * 1000).toISOString();
+    }
+    return { range, humanOnly, since, bucket: range === "today" ? "hour" : "day" };
+  }
+
+  /** 旧 schema 兜底：按访问行推出每位访客的类型（human > local > bot，与 SQL 回填规则一致）。 */
+  async function legacyVisitRows(since: string | null) {
+    let q = supabase!
+      .from("portfolio_visits")
+      .select("visitor_key,ip,user_agent,referrer,country,region,city,device_type,os,browser,dwell_ms,created_at")
+      .order("created_at", { ascending: false })
+      .limit(10000);
+    if (since) q = q.gte("created_at", since);
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data || []).map((row: any) => ({ ...row, traffic_type: classifyTraffic(row.user_agent, row.ip) as TrafficType }));
+  }
+
+  function mergeVisitorTypes(rows: Array<{ visitor_key: string; traffic_type: TrafficType }>) {
+    const types = new Map<string, TrafficType>();
+    for (const row of rows) {
+      const prev = types.get(row.visitor_key);
+      if (prev === "human" || (prev === "local" && row.traffic_type === "bot")) continue;
+      types.set(row.visitor_key, row.traffic_type);
+    }
+    return types;
+  }
+
+  function topCounts(values: string[], limit = 6) {
+    const counts = new Map<string, number>();
+    for (const value of values) counts.set(value, (counts.get(value) || 0) + 1);
+    return [...counts].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([label, n]) => ({ label, n }));
+  }
+
+  function legacySummary(rows: any[], humanOnly: boolean, bucket: string) {
+    const v = humanOnly ? rows.filter((r) => r.traffic_type === "human") : rows;
+    const dwell = v.map((r) => Number(r.dwell_ms) || 0).filter((ms) => ms > 0);
+    const series = new Map<string, { visits: number; visitors: Set<string> }>();
+    for (const row of v) {
+      const local = new Date(Date.parse(row.created_at) + SHANGHAI_OFFSET_MS).toISOString();
+      const key = bucket === "hour" ? `${local.slice(0, 13)}:00` : `${local.slice(0, 10)}T00:00`;
+      const slot = series.get(key) || { visits: 0, visitors: new Set<string>() };
+      slot.visits += 1;
+      slot.visitors.add(row.visitor_key);
+      series.set(key, slot);
+    }
+    const join = (sep: string, ...parts: string[]) => parts.filter(Boolean).join(sep) || "未知";
+    return {
+      visits: v.length,
+      visitors: new Set(v.map((r) => r.visitor_key)).size,
+      avgDwellMs: dwell.length ? Math.round(dwell.reduce((a, b) => a + b, 0) / dwell.length) : 0,
+      bounceRate: v.length ? Number((v.filter((r) => (Number(r.dwell_ms) || 0) < 10_000).length / v.length).toFixed(3)) : 0,
+      clicks: 0,
+      hiddenBots: rows.filter((r) => r.traffic_type === "bot").length,
+      hiddenLocal: rows.filter((r) => r.traffic_type === "local").length,
+      series: [...series].sort((a, b) => a[0].localeCompare(b[0])).map(([key, slot]) => ({ bucket: key, visits: slot.visits, visitors: slot.visitors.size })),
+      countries: topCounts(v.map((r) => r.country || "未知")),
+      cities: topCounts(v.map((r) => join(" · ", r.region, r.city))),
+      devices: topCounts(v.map((r) => r.device_type || "未知")),
+      browsers: topCounts(v.map((r) => join(" / ", r.os, r.browser))),
+      referrers: topCounts(v.map((r) => String(r.referrer || "").match(/^[a-z]+:\/\/([^/:?#]+)/i)?.[1] || "直接访问")),
+    };
+  }
+
+  async function loadClickStats(since: string | null, humanOnly: boolean, humanKeys: Set<string> | null) {
+    const { data, error } = await supabase!.rpc("portfolio_click_stats", { p_limit: 100, p_since: since, p_human_only: humanOnly });
+    if (!error) return { clickStats: data || [], clicks: null as number | null };
+
+    let q = supabase!
+      .from("portfolio_events")
+      .select("element_key,element_label,element_type,path,visitor_key,occurred_at")
+      .eq("event_name", "ui_click")
+      .order("occurred_at", { ascending: false })
+      .limit(5000);
+    if (since) q = q.gte("occurred_at", since);
+    const { data: rows, error: rowsError } = await q;
+    if (rowsError) throw rowsError;
+    const kept = (rows || []).filter((row: any) => !humanOnly || !humanKeys || humanKeys.has(row.visitor_key));
+    const clickMap = new Map<string, any>();
+    for (const row of kept) {
+      const mapKey = `${row.path}\u0000${row.element_key}`;
+      const current = clickMap.get(mapKey) || { ...row, clicks: 0, visitors: new Set<string>(), last_clicked_at: row.occurred_at };
+      current.clicks += 1;
+      current.visitors.add(row.visitor_key);
+      clickMap.set(mapKey, current);
+    }
+    const clickStats = Array.from(clickMap.values())
+      .map(({ visitors: unique, visitor_key: _visitorKey, occurred_at: _occurredAt, ...row }) => ({ ...row, unique_visitors: unique.size }))
+      .sort((a, b) => b.clicks - a.clicks)
+      .slice(0, 100);
+    return { clickStats, clicks: kept.length };
+  }
+
+  app.get("/api/admin/analytics/summary", requireAdmin, async (req, res) => {
     try {
-      if (!supabase) {
-        return res.json({ visitors: [], visits: [], stats: { visitors: 0, visits: 0, today: 0 }, configured: false, reason: "supabase-missing" });
+      if (!supabase) return res.json({ configured: false, reason: "supabase-missing" });
+      const { range, humanOnly, since, bucket } = analyticsQuery(req);
+
+      const { error: tableError } = await supabase.from("portfolio_visits").select("id", { head: true, count: "exact" }).limit(1);
+      if (tableError) {
+        if (missingSchema(tableError.message)) return res.json({ configured: false, reason: "tables-missing" });
+        return res.status(500).json({ error: tableError.message });
       }
+      const { error: eventsError } = await supabase.from("portfolio_events").select("id", { head: true, count: "exact" }).limit(1);
+      const eventsConfigured = !eventsError;
 
-      // 「表还没建」不等于「出错」：schema.sql 还没跑过时 PostgREST 会回一句
-      // 「Could not find the table ... in the schema cache」，直接把这句话丢给用户
-      // 是没法行动的。识别出来，改成 configured:false + reason，让后台给一句能照做的事。
-      const missingTable = (m?: string) => /could not find the table|does not exist|schema cache|relation .* does not exist/i.test(m || "");
-      const emptyPayload = (reason: string) => ({
-        visitors: [],
-        visits: [],
-        stats: { visitors: 0, visits: 0, today: 0 },
-        configured: false,
-        reason,
-      } as const);
+      const { data: summary, error: summaryError } = await supabase.rpc("portfolio_visit_summary", {
+        p_since: since,
+        p_human_only: humanOnly,
+        p_bucket: bucket,
+      });
 
-      const limit = Math.min(Math.max(Number(req.query.limit) || 300, 1), 2000);
-      const onlyKey = String(req.query.visitorKey || "").trim();
-
-      let vq = supabase.from("portfolio_visits").select("*").order("created_at", { ascending: false }).limit(limit);
-      if (onlyKey) vq = vq.eq("visitor_key", onlyKey);
-      const { data: visits, error: vErr } = await vq;
-      if (vErr) {
-        if (missingTable(vErr.message)) return res.json(emptyPayload("tables-missing"));
-        return res.status(500).json({ error: vErr.message });
+      if (!summaryError) {
+        const clicks = eventsConfigured ? await loadClickStats(since, humanOnly, null) : { clickStats: [] };
+        return res.json({ configured: true, schemaReady: true, eventsConfigured, range, humanOnly, bucket, summary, clickStats: clicks.clickStats });
       }
+      if (!missingSchema(summaryError.message)) return res.status(500).json({ error: summaryError.message });
 
-      let pq = supabase.from("portfolio_visitors").select("*").order("last_seen", { ascending: false }).limit(1000);
-      if (onlyKey) pq = pq.eq("visitor_key", onlyKey);
-      const { data: visitors, error: pErr } = await pq;
-      if (pErr) {
-        if (missingTable(pErr.message)) return res.json(emptyPayload("tables-missing"));
-        return res.status(500).json({ error: pErr.message });
-      }
+      const rows = await legacyVisitRows(since);
+      const legacy = legacySummary(rows, humanOnly, bucket);
+      const types = mergeVisitorTypes(rows);
+      const humanKeys = new Set([...types].filter(([, t]) => t === "human").map(([k]) => k));
+      const clicks = eventsConfigured ? await loadClickStats(since, humanOnly, humanKeys) : { clickStats: [], clicks: 0 };
+      legacy.clicks = clicks.clicks ?? 0;
+      res.json({ configured: true, schemaReady: false, eventsConfigured, range, humanOnly, bucket, summary: legacy, clickStats: clicks.clickStats });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "summary-failed" });
+    }
+  });
 
-      const sinceIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const { count: totalVisits } = await supabase
+  // 访客分页列表：范围按 last_seen 过滤（「这段时间内来过的人」），支持备注 / IP / 城市 / key 搜索。
+  app.get("/api/admin/analytics/visitors", requireAdmin, async (req, res) => {
+    try {
+      if (!supabase) return res.json({ visitors: [], total: 0 });
+      const { humanOnly, since } = analyticsQuery(req);
+      const pageSize = Math.min(Math.max(Number(req.query.pageSize) || 20, 5), 100);
+      const page = Math.max(Number(req.query.page) || 1, 1);
+      // 去掉 PostgREST or() 语法里有特殊含义的字符，避免拼出畸形过滤条件。
+      const search = String(req.query.q || "").replace(/[,()*%\\:"']/g, " ").trim().slice(0, 60);
+
+      const build = (withType: boolean) => {
+        let q = supabase!.from("portfolio_visitors").select("*", { count: "exact" }).order("last_seen", { ascending: false });
+        if (since) q = q.gte("last_seen", since);
+        if (withType && humanOnly) q = q.eq("traffic_type", "human");
+        if (search) {
+          q = q.or(["label", "last_ip", "last_city", "last_region", "last_country", "visitor_key"].map((col) => `${col}.ilike.*${search}*`).join(","));
+        }
+        return q;
+      };
+
+      const from = (page - 1) * pageSize;
+      const { data, count, error } = await build(true).range(from, from + pageSize - 1);
+      if (!error) return res.json({ visitors: data || [], total: count || 0, page, pageSize });
+      if (!missingSchema(error.message)) return res.status(500).json({ error: error.message });
+
+      // 旧 schema：访客表没有 traffic_type，用访问行推断后在内存里分页。
+      const { data: all, error: allError } = await build(false).limit(2000);
+      if (allError) return res.status(500).json({ error: allError.message });
+      const types = mergeVisitorTypes(await legacyVisitRows(null));
+      const typed = (all || []).map((v: any) => ({ ...v, traffic_type: types.get(v.visitor_key) || "human" }));
+      const kept = humanOnly ? typed.filter((v) => v.traffic_type === "human") : typed;
+      res.json({ visitors: kept.slice(from, from + pageSize), total: kept.length, page, pageSize });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "visitors-failed" });
+    }
+  });
+
+  // 单个访客的访问明细，点开时才拉。
+  app.get("/api/admin/analytics/visitors/:visitorKey/visits", requireAdmin, async (req, res) => {
+    try {
+      if (!supabase) return res.json({ visits: [] });
+      const visitorKey = String(req.params.visitorKey || "").slice(0, 80);
+      const { data, error } = await supabase
         .from("portfolio_visits")
-        .select("id", { count: "exact", head: true });
-      const { count: todayVisits } = await supabase
-        .from("portfolio_visits")
-        .select("id", { count: "exact", head: true })
-        .gte("created_at", sinceIso);
-
+        .select("*")
+        .eq("visitor_key", visitorKey)
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (error) return res.status(500).json({ error: error.message });
       res.json({
-        visitors: visitors || [],
-        visits: visits || [],
-        stats: {
-          visitors: visitors?.length || 0,
-          visits: totalVisits || 0,
-          today: todayVisits || 0,
-        },
-        configured: true,
+        visits: (data || []).map((row: any) => ({ ...row, traffic_type: row.traffic_type || classifyTraffic(row.user_agent, row.ip) })),
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: err?.message || "visits-failed" });
     }
   });
 
@@ -1902,15 +2239,23 @@ async function startServer() {
 
       let visitsQ = supabase.from("portfolio_visits").delete();
       let visitorsQ = supabase.from("portfolio_visitors").delete();
+      let eventsQ = supabase.from("portfolio_events").delete();
       if (all) {
         // PostgREST 的 delete 必须带过滤条件，否则会被拒；这里用一个恒真条件。
         visitsQ = visitsQ.not("visitor_key", "is", null);
         visitorsQ = visitorsQ.not("visitor_key", "is", null);
+        eventsQ = eventsQ.not("visitor_key", "is", null);
       } else {
         visitsQ = visitsQ.in("visitor_key", keys);
         visitorsQ = visitorsQ.in("visitor_key", keys);
+        eventsQ = eventsQ.in("visitor_key", keys);
       }
 
+      // 先删事件，避免访问外键被置空后再也无法按访客清理。旧 schema 没有事件表时忽略。
+      const { error: eErr } = await eventsQ;
+      if (eErr && !/could not find the table|does not exist|schema cache/i.test(eErr.message)) {
+        return res.status(500).json({ error: eErr.message });
+      }
       const { error: vErr } = await visitsQ;
       if (vErr) return res.status(500).json({ error: vErr.message });
       const { error: pErr } = await visitorsQ;

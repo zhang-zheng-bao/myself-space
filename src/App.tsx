@@ -719,7 +719,7 @@ function AudioBlock({ tracks, autoplay, compact = false, onAutoplaySettled }: { 
           <strong>{zhText(currentTrack?.title) || "暂无音乐"}</strong>
           <span>{currentTrack ? zhText(currentTrack.artist) || "Unknown" : "请在后台上传音乐"}</span>
         </div>
-        <button type="button" onClick={togglePlay} disabled={!currentTrack} className="hero-audio__play" aria-label={isPlaying ? "暂停音乐" : "播放音乐"}>
+        <button type="button" data-track="music:toggle" onClick={togglePlay} disabled={!currentTrack} className="hero-audio__play" aria-label={isPlaying ? "暂停音乐" : "播放音乐"}>
           {isPlaying ? <Pause size={15} className="fill-current" /> : <Play size={15} className="translate-x-px fill-current" />}
         </button>
         <div className="hero-audio__wave">
@@ -746,9 +746,9 @@ function AudioBlock({ tracks, autoplay, compact = false, onAutoplaySettled }: { 
           />
         </div>
         <div className="hero-audio__time">{formatTime(currentTime)} / {formatTime(duration)}</div>
-        <button type="button" onClick={() => playIndex(trackIndex - 1)} disabled={playlist.length <= 1} className="hero-audio__skip" aria-label="上一首"><SkipBack size={14} /></button>
-        <button type="button" onClick={() => playIndex(trackIndex + 1)} disabled={playlist.length <= 1} className="hero-audio__skip" aria-label="下一首"><SkipForward size={14} /></button>
-        <button ref={queueButtonRef} type="button" className="hero-audio__queue" aria-label="音乐列表" title="音乐列表" aria-expanded={queueOpen} onClick={() => setQueueOpen(value => !value)}><ListMusic size={17} /></button>
+        <button type="button" data-track="music:previous" onClick={() => playIndex(trackIndex - 1)} disabled={playlist.length <= 1} className="hero-audio__skip" aria-label="上一首"><SkipBack size={14} /></button>
+        <button type="button" data-track="music:next" onClick={() => playIndex(trackIndex + 1)} disabled={playlist.length <= 1} className="hero-audio__skip" aria-label="下一首"><SkipForward size={14} /></button>
+        <button ref={queueButtonRef} type="button" data-track="music:queue" className="hero-audio__queue" aria-label="音乐列表" title="音乐列表" aria-expanded={queueOpen} onClick={() => setQueueOpen(value => !value)}><ListMusic size={17} /></button>
         <div className="hero-audio__progress"><span style={{ width: `${playbackPercent}%` }} /><input type="range" min={0} max={duration || 0} step={0.1} value={Math.min(currentTime, duration || 0)} disabled={!duration} aria-label="音乐进度" onChange={event => { const time = Number(event.target.value); if (audioRef.current) audioRef.current.currentTime = time; setCurrentTime(time); }} /></div>
       </div>
       {queueOpen && <section className="music-queue" aria-label="音乐列表">
@@ -764,7 +764,7 @@ function AudioBlock({ tracks, autoplay, compact = false, onAutoplaySettled }: { 
             const current = index === trackIndex;
             const playing = current && isPlaying;
             const title = zhText(track.title) || "未命名音乐";
-            return <button type="button" key={track.id || index} className="music-queue__track" data-current={current || undefined} aria-current={current ? "true" : undefined} aria-label={`${playing ? "暂停" : "播放"} ${title}`} onClick={() => toggleQueueTrack(index)}>
+            return <button type="button" key={track.id || index} data-track={`music:select:${track.id || index}`} className="music-queue__track" data-current={current || undefined} aria-current={current ? "true" : undefined} aria-label={`${playing ? "暂停" : "播放"} ${title}`} onClick={() => toggleQueueTrack(index)}>
             <span className="music-queue__number">{index === trackIndex && isPlaying ? <BarChart3 size={16} /> : String(index + 1).padStart(2, "0")}</span>
             <span className="music-queue__cover">{track.coverUrl ? <img src={track.coverUrl} alt="" referrerPolicy="no-referrer" /> : <ListMusic size={18} />}</span>
             <span className="music-queue__text"><strong>{title}</strong><small>{zhText(track.artist) || "未知作者"}{isInstrumental(track.lyrics) ? " · 纯音乐" : ""}</small></span>
@@ -2289,7 +2289,7 @@ function preloadImage(url: string) {
 
 async function preloadInitialAssets(data: PortfolioData, flags: { treasuresVisible: boolean; aiZoneVisible: boolean }) {
   const urls = [
-    "/hero-creator-stage.png",
+    "/hero-creator-stage-poster.webp",
     data.profile.avatar,
     data.musicTracks?.find((track) => track.coverUrl)?.coverUrl,
     data.works?.find((work) => work.images?.[0])?.images?.[0],
@@ -2400,6 +2400,42 @@ function CareerTimeline({ experiences }: { experiences: PortfolioData["experienc
   );
 }
 
+function HeroArt() {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [reduced, setReduced] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  useEffect(() => {
+    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReduced(preference.matches);
+    preference.addEventListener("change", update);
+    return () => preference.removeEventListener("change", update);
+  }, []);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || reduced) return;
+    let visible = true;
+    // Only loop while the panel is on screen and the tab is in front.
+    const sync = () => {
+      if (visible && !document.hidden) void video.play().catch(() => {});
+      else video.pause();
+    };
+    const observer = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; sync(); });
+    observer.observe(video);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, [reduced]);
+  const alt = "年轻创作者与柴犬坐在发光创作台上";
+  if (reduced) return <img className="hero-panel__art" src="/hero-creator-stage-poster.webp" alt={alt} />;
+  return (
+    <video ref={videoRef} className="hero-panel__art" poster="/hero-creator-stage-poster.webp" muted loop playsInline preload="metadata" disablePictureInPicture role="img" aria-label={alt}>
+      <source src="/hero-creator-stage.webm" type="video/webm" />
+      <source src="/hero-creator-stage.mp4" type="video/mp4" />
+    </video>
+  );
+}
+
 function IntroDashboard({ data, onSelectWork, onNavigate }: {
   data: PortfolioData;
   onSelectWork: (work: Work) => void;
@@ -2441,7 +2477,7 @@ function IntroDashboard({ data, onSelectWork, onNavigate }: {
       <section className="dashboard-section dashboard-works">
         <div className="section-heading-row">
           <div className="section-kicker"><span />我的作品 <b>/</b> MY WORKS</div>
-          <button type="button" onClick={() => onNavigate("works")}>查看全部作品 <ArrowRight size={14} /></button>
+          <button type="button" data-track="home:all-works" onClick={() => onNavigate("works")}>查看全部作品 <ArrowRight size={14} /></button>
         </div>
         {homeWorks.length > 0 ? (
           <div className="home-work-carousel" aria-label="我的作品自动轮播">
@@ -2449,7 +2485,7 @@ function IntroDashboard({ data, onSelectWork, onNavigate }: {
               {[0, 1].map((copyIndex) => (
                 <div className="home-work-carousel__group" key={copyIndex} aria-hidden={copyIndex === 1 || undefined}>
                   {homeWorks.map((work) => (
-                    <button type="button" key={`${copyIndex}-${work.id}`} tabIndex={copyIndex === 1 ? -1 : 0} onClick={() => onSelectWork(work)} className="featured-work">
+                    <button type="button" key={`${copyIndex}-${work.id}`} data-track={`home:work:${work.id}`} tabIndex={copyIndex === 1 ? -1 : 0} onClick={() => onSelectWork(work)} className="featured-work">
                       {work.images?.[0] ? <img src={work.images[0]} alt="" referrerPolicy="no-referrer" /> : <span className="featured-work__empty">NO IMAGE</span>}
                       <span className="featured-work__shade" />
                       <span className="featured-work__category">{categoryLabel(work.category)}</span>
@@ -2572,19 +2608,19 @@ export default function App() {
       <FloatingSentences config={floatingSentencesConfig} />
 
       <header className="site-header">
-        <button type="button" className="site-brand" onClick={() => setActiveTab("intro")}>
+        <button type="button" data-track="navigation:brand" className="site-brand" onClick={() => setActiveTab("intro")}>
           <strong>{data.profile.name}</strong>
           <span>我的空间 / MY SPACE</span>
           <i aria-hidden="true"><b /><b /><b /></i>
         </button>
         <nav className="site-nav" aria-label="主要导航">
           {visibleNavItems.map((item) => (
-            <button key={item.key} type="button" onClick={() => setActiveTab(item.key)} data-active={activeTab === item.key || undefined}>
+            <button key={item.key} type="button" data-track={`navigation:${item.key}`} onClick={() => setActiveTab(item.key)} data-active={activeTab === item.key || undefined}>
               <span>{item.label}</span>
             </button>
           ))}
         </nav>
-        <button type="button" className="mobile-menu-button" onClick={() => setMobileMenuOpen((open) => !open)} aria-label="打开导航">
+        <button type="button" data-track="navigation:mobile-menu" className="mobile-menu-button" onClick={() => setMobileMenuOpen((open) => !open)} aria-label="打开导航">
           {mobileMenuOpen ? <X size={19} /> : <Menu size={19} />}
         </button>
       </header>
@@ -2592,7 +2628,7 @@ export default function App() {
       {mobileMenuOpen && (
         <nav className="mobile-nav" aria-label="移动端导航">
           {visibleNavItems.map((item) => (
-            <button key={item.key} type="button" onClick={() => { setActiveTab(item.key); setMobileMenuOpen(false); }} data-active={activeTab === item.key || undefined}>
+            <button key={item.key} type="button" data-track={`navigation:mobile:${item.key}`} onClick={() => { setActiveTab(item.key); setMobileMenuOpen(false); }} data-active={activeTab === item.key || undefined}>
               <span>{item.label}</span><small>{item.sub}</small>
             </button>
           ))}
@@ -2601,7 +2637,7 @@ export default function App() {
 
       <main className="portfolio-layout">
         <aside className="hero-panel">
-          <img className="hero-panel__art" src="/hero-creator-stage.png" alt="年轻创作者与柴犬坐在发光创作台上" />
+          <HeroArt />
           <span className="hero-panel__veil" />
           <DynamicParticles />
           <div className="hero-panel__aside" aria-hidden="true">HUMAN<br />×<br />AI<br />×<br />CREATIVE<br />×<br />A BETTER<br />TOMORROW</div>
@@ -2611,8 +2647,8 @@ export default function App() {
             <h2>{zhText(data.profile.tagline)}</h2>
             <p>{zhText(data.profile.quote)}</p>
             <div className="hero-actions">
-              <button type="button" className="hero-action hero-action--primary" onClick={() => setActiveTab("works")}><BriefcaseBusiness size={17} />查看作品集<ArrowRight size={15} /></button>
-              <button type="button" className="hero-action" onClick={() => setActiveTab("contact")}><Mail size={17} />联系我</button>
+              <button type="button" data-track="hero:view-portfolio" className="hero-action hero-action--primary" onClick={() => setActiveTab("works")}><BriefcaseBusiness size={17} />查看作品集<ArrowRight size={15} /></button>
+              <button type="button" data-track="hero:contact" className="hero-action" onClick={() => setActiveTab("contact")}><Mail size={17} />联系我</button>
             </div>
           </div>
           <div className="hero-player"><AudioBlock tracks={data.musicTracks || []} autoplay={musicEntryReady && data.profile.musicAutoplay} onAutoplaySettled={completeMusicAttempt} compact /></div>
