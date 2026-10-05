@@ -54,7 +54,7 @@ html.portfolio-document body {
   font-weight: var(--weight-regular);
 }
 
-.entrance-cinematic { position: fixed; inset: 0; z-index: 2000; overflow: hidden; background: #000; opacity: 1; color: #f0f6f3; font-family: "Microsoft YaHei", system-ui, sans-serif; }
+.entrance-cinematic { position: fixed; inset: 0; z-index: 2000; overflow: hidden; background: #000; opacity: 1; color: #f0f6f3; font-family: "Microsoft YaHei", system-ui, sans-serif; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none; }
 .entrance-cinematic[data-phase="reveal"] { opacity: 0; transition: opacity 1000ms cubic-bezier(0.22, 1, 0.36, 1); }
 .entrance-cinematic__video { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center; }
 /* Anchor to the seam at 49% of the centered, cover-sized 16:9 video. */
@@ -614,6 +614,85 @@ html.portfolio-document body {
   .featured-work { flex-basis: min(78vw, 290px); }
   .skill-strip { grid-template-columns: repeat(2, 1fr); }
   .career-copy > div { align-items: flex-start; flex-direction: column; gap: 2px; }
+}
+
+/* 柴犬小助手：右下角头像 + 弹出对话面板。层级在页面弹窗（50）之下、导航（40）之上。 */
+.shiba-assistant { position: fixed; right: max(20px, env(safe-area-inset-right)); bottom: max(20px, env(safe-area-inset-bottom)); z-index: 45; display: flex; flex-direction: column; align-items: flex-end; gap: 12px; font-family: "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif; }
+.shiba-assistant__dock { position: relative; translate: var(--dock-x, 0) var(--dock-y, 0); }
+/* 招呼气泡贴在悬浮球旁边冒出来，默认往左；球在屏幕左半边时往右。 */
+.shiba-assistant__greeting { position: absolute; top: 50%; right: calc(100% + 12px); display: flex; align-items: flex-start; gap: 2px; width: max-content; max-width: min(240px, calc(100vw - 100px)); padding: 10px 6px 10px 14px; border: 1px solid rgba(98, 245, 206, 0.35); border-radius: 14px; background: rgba(10, 17, 20, 0.97); color: var(--portfolio-text); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45); translate: 0 -50%; transform-origin: right center; animation: shibaGreetIn 360ms var(--portfolio-ease) both; }
+.shiba-assistant__greeting::after { position: absolute; top: 50%; right: -6px; width: 10px; height: 10px; border-top: 1px solid rgba(98, 245, 206, 0.35); border-right: 1px solid rgba(98, 245, 206, 0.35); background: inherit; content: ""; transform: translateY(-50%) rotate(45deg); }
+.shiba-assistant__greeting[data-side="right"] { right: auto; left: calc(100% + 12px); transform-origin: left center; }
+.shiba-assistant__greeting[data-side="right"]::after { right: auto; left: -6px; transform: translateY(-50%) rotate(-135deg); }
+@keyframes shibaGreetIn { from { opacity: 0; transform: scale(0.85); } }
+.shiba-assistant__greeting-text { padding: 0; color: inherit; font-size: 13px; line-height: 1.6; text-align: left; cursor: pointer; }
+.shiba-assistant__greeting-text:hover { color: var(--portfolio-accent); }
+.shiba-assistant__greeting-close { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 6px; color: var(--portfolio-muted); cursor: pointer; }
+.shiba-assistant__greeting-close:hover { background: rgba(255, 255, 255, 0.08); color: var(--portfolio-text); }
+.shiba-assistant__greeting button:focus-visible { outline: 2px solid var(--portfolio-accent); outline-offset: 2px; }
+.shiba-assistant__launcher { position: relative; display: grid; place-items: center; width: 46px; height: 46px; padding: 0; overflow: hidden; border: 1px solid rgba(98, 245, 206, 0.45); border-radius: 50%; background: #0b1214; color: var(--portfolio-accent); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 0 0 4px rgba(98, 245, 206, 0.08); cursor: pointer; touch-action: none; transition: transform 220ms var(--portfolio-ease), box-shadow 220ms ease; }
+.shiba-assistant__launcher img { width: 100%; height: 100%; object-fit: cover; pointer-events: none; -webkit-user-drag: none; }
+.shiba-assistant__launcher[data-dragging] { cursor: grabbing; transform: scale(1.08); transition: box-shadow 220ms ease; user-select: none; }
+.shiba-assistant__launcher:hover { transform: translateY(-2px) scale(1.04); box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5), 0 0 0 6px rgba(98, 245, 206, 0.14); }
+.shiba-assistant__launcher:focus-visible { outline: 2px solid var(--portfolio-accent); outline-offset: 3px; }
+.shiba-assistant:not([data-open]) .shiba-assistant__launcher::after { position: absolute; inset: -1px; border: 2px solid rgba(98, 245, 206, 0.6); border-radius: 50%; content: ""; animation: shibaPulse 2.6s ease-out infinite; pointer-events: none; }
+@keyframes shibaPulse { 0% { opacity: 0.8; transform: scale(1); } 70%, 100% { opacity: 0; transform: scale(1.35); } }
+
+.shiba-assistant__panel { position: fixed; top: var(--panel-top, auto); right: var(--panel-right, max(20px, env(safe-area-inset-right))); bottom: var(--panel-bottom, 78px); left: var(--panel-left, auto); display: flex; flex-direction: column; width: min(380px, calc(100vw - 40px)); height: min(600px, calc(100vh - 120px), var(--panel-space, 100vh)); overflow: hidden; border: 1px solid var(--portfolio-line); border-radius: 18px; background: rgba(8, 13, 16, 0.97); color: var(--portfolio-text); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55); translate: var(--drag-x, 0) var(--drag-y, 0); transform-origin: var(--panel-origin, bottom right); animation: shibaPanelIn 260ms var(--portfolio-ease) both; backdrop-filter: blur(14px); }
+@keyframes shibaPanelIn { from { opacity: 0; transform: translateY(12px) scale(0.96); } }
+.shiba-assistant__panel[data-dragging] { user-select: none; }
+/* 顶栏三栏：左菜单、中标题、右关闭；按住空白处可拖动整个面板。 */
+.shiba-assistant__header { position: relative; display: grid; grid-template-columns: 32px 1fr 32px; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid var(--portfolio-line); cursor: grab; touch-action: none; }
+.shiba-assistant__panel[data-dragging] .shiba-assistant__header { cursor: grabbing; }
+.shiba-assistant__header strong { display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; }
+.shiba-assistant__menu { position: absolute; top: calc(100% + 4px); left: 10px; z-index: 2; display: grid; min-width: 140px; padding: 4px; border: 1px solid var(--portfolio-line); border-radius: 10px; background: #0d1417; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5); cursor: default; }
+.shiba-assistant__header .shiba-assistant__menu button { display: flex; align-items: center; gap: 8px; width: 100%; height: 34px; padding: 0 10px; color: var(--portfolio-text); font-size: 13px; }
+.shiba-assistant__header button { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; color: var(--portfolio-muted); cursor: pointer; transition: background-color 160ms ease, color 160ms ease; }
+.shiba-assistant__header button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); color: var(--portfolio-text); }
+.shiba-assistant__header button:disabled { opacity: 0.35; cursor: default; }
+
+.shiba-assistant__messages { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 16px 14px; scrollbar-width: thin; }
+.shiba-assistant__message { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
+.shiba-assistant__message > img { flex: none; width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
+.shiba-assistant__message[data-role="user"] { justify-content: flex-end; }
+.shiba-assistant__bubble { max-width: 82%; padding: 9px 12px; border-radius: 4px 14px 14px 14px; background: rgba(255, 255, 255, 0.05); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.shiba-assistant__message[data-role="user"] .shiba-assistant__bubble { border-radius: 14px 4px 14px 14px; background: var(--portfolio-accent); color: #04211a; }
+.shiba-assistant__message[data-error] .shiba-assistant__bubble { color: #f3b8a8; }
+.shiba-assistant__bubble p + p, .shiba-assistant__bubble p + ul, .shiba-assistant__bubble p + ol, .shiba-assistant__bubble ul + p, .shiba-assistant__bubble ol + p { margin-top: 6px; }
+.shiba-assistant__bubble ul, .shiba-assistant__bubble ol { padding-left: 1.2em; }
+.shiba-assistant__bubble ul { list-style: disc; }
+.shiba-assistant__bubble ol { list-style: decimal; }
+.shiba-assistant__bubble code { padding: 1px 4px; border-radius: 4px; background: rgba(255, 255, 255, 0.08); font-size: 12px; }
+.shiba-assistant__bubble a { color: var(--portfolio-accent); text-decoration: underline; text-underline-offset: 2px; }
+.shiba-assistant__caret { display: inline-block; width: 6px; height: 13px; margin-left: 2px; vertical-align: -2px; background: var(--portfolio-accent); animation: shibaBlink 1s steps(2) infinite; }
+@keyframes shibaBlink { 50% { opacity: 0; } }
+.shiba-assistant__typing { display: inline-flex; gap: 4px; padding: 4px 0; }
+.shiba-assistant__typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--portfolio-muted); animation: shibaDot 1.2s ease-in-out infinite; }
+.shiba-assistant__typing i:nth-child(2) { animation-delay: 0.15s; }
+.shiba-assistant__typing i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes shibaDot { 0%, 80%, 100% { opacity: 0.3; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+.shiba-assistant__suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 14px 32px; }
+.shiba-assistant__suggestions button { padding: 5px 10px; border: 1px solid rgba(98, 245, 206, 0.3); border-radius: 999px; color: var(--portfolio-accent); font-size: 12px; cursor: pointer; transition: background-color 160ms ease; }
+.shiba-assistant__suggestions button:hover { background: var(--portfolio-accent-soft); }
+
+.shiba-assistant__composer { display: flex; align-items: flex-end; gap: 8px; margin: 0 12px 12px; padding: 8px 8px 8px 12px; border: 1px solid var(--portfolio-line); border-radius: 14px; background: rgba(255, 255, 255, 0.03); transition: border-color 160ms ease; }
+.shiba-assistant__composer:focus-within { border-color: rgba(98, 245, 206, 0.45); }
+.shiba-assistant__composer textarea { flex: 1; max-height: 120px; resize: none; background: transparent; color: var(--portfolio-text); font-size: 13px; line-height: 1.6; outline: none; }
+.shiba-assistant__composer textarea::placeholder { color: var(--portfolio-muted); }
+.shiba-assistant__composer button { display: grid; flex: none; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: var(--portfolio-accent); color: #04211a; cursor: pointer; transition: opacity 160ms ease; }
+.shiba-assistant__composer button:disabled { opacity: 0.3; cursor: default; }
+
+@media (max-width: 640px) {
+  .shiba-assistant { right: 14px; bottom: max(14px, env(safe-area-inset-bottom)); }
+  .shiba-assistant__launcher { width: 42px; height: 42px; }
+  /* 手机上面板铺满全屏，头像按钮让位给面板里的关闭键。 */
+  .shiba-assistant__panel { position: fixed; inset: 0; width: auto; height: 100dvh; border: 0; border-radius: 0; translate: none; }
+  .shiba-assistant__header { cursor: default; }
+  .shiba-assistant[data-open] .shiba-assistant__launcher { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shiba-assistant__panel, .shiba-assistant__greeting, .shiba-assistant__launcher::after, .shiba-assistant__caret, .shiba-assistant__typing i { animation: none !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -31,7 +31,7 @@ function randomHex(bytes = 16) {
   return Array.from(buffer, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function getVisitorKey() {
+export function getVisitorKey() {
   try {
     const existing = window.localStorage.getItem(VISITOR_KEY_STORAGE);
     if (existing) return existing;

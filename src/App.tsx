@@ -32,6 +32,7 @@ import AdminApp from "./AdminApp";
 import { isInstrumental } from "./musicMetadata";
 import TimelineArc from "./components/TimelineArc";
 import EntranceCinematic from "./components/EntranceCinematic";
+import ShibaAssistant from "./components/ShibaAssistant";
 import { startVisitTracking } from "./tracking";
 import { FloatingSentencesConfig, GalleryItem, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, Work, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder } from "./types";
 
@@ -2688,6 +2689,7 @@ export default function App() {
       {selectedAiWork && <WorkModal work={selectedAiWork} onClose={() => setSelectedAiWork(null)} />}
       {selectedGallery && <GalleryModal item={selectedGallery} onClose={() => setSelectedGallery(null)} />}
       {selectedTreasure && <TreasureModal item={selectedTreasure} onClose={() => setSelectedTreasure(null)} />}
+      <ShibaAssistant ready={entered} />
     </div>}
     </>
   );

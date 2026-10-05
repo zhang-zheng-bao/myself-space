@@ -1645,6 +1645,138 @@ async function startServer() {
   });
 
   /* ======================================================================
+   * 柴犬小助手（Dify 聊天助手 / Chatflow）
+   * ----------------------------------------------------------------------
+   * 前台只跟这里说话，DIFY_API_KEY 永远不出服务端。对话上下文由 Dify 按
+   * conversation_id 保存，这里不存聊天内容，只做转发、限流和参数清洗。
+   * 公开接口、每次调用都花钱：按 IP 限频 + 每日上限 + 单条长度上限。
+   * ==================================================================== */
+
+  const difyBase = () => (process.env.DIFY_API_BASE || "https://api.dify.ai/v1").replace(/\/$/, "");
+  const difyKey = () => process.env.DIFY_API_KEY || "";
+  const ASSISTANT_MAX_QUERY = 800;
+  const assistantMinuteHits = new Map<string, number[]>();
+  const assistantDayHits = new Map<string, { day: string; count: number }>();
+  let assistantConfigCache: { at: number; value: JsonRecord } | null = null;
+
+  function assistantAllowed(ip: string) {
+    const now = Date.now();
+    const perMinute = Number(process.env.DIFY_RATE_PER_MINUTE || 8);
+    const perDay = Number(process.env.DIFY_RATE_PER_DAY || 80);
+    const recent = (assistantMinuteHits.get(ip) || []).filter((t) => now - t < 60_000);
+    const day = new Date().toISOString().slice(0, 10);
+    const daily = assistantDayHits.get(ip);
+    const dayCount = daily?.day === day ? daily.count : 0;
+    if (recent.length >= perMinute) return "说得太快啦，歇一分钟再问吧。";
+    if (dayCount >= perDay) return "今天聊得够多啦，明天再来找我吧。";
+    recent.push(now);
+    assistantMinuteHits.set(ip, recent);
+    assistantDayHits.set(ip, { day, count: dayCount + 1 });
+    if (assistantMinuteHits.size > 5000) {
+      for (const [k, v] of assistantMinuteHits) if (!v.some((t) => now - t < 60_000)) assistantMinuteHits.delete(k);
+      for (const [k, v] of assistantDayHits) if (v.day !== day) assistantDayHits.delete(k);
+    }
+    return "";
+  }
+
+  /** Dify 用 user 区分访客；沿用统计的匿名访客 key，没有就按 IP 哈希一个。 */
+  function assistantUser(req: Request, visitorKey: unknown) {
+    const key = typeof visitorKey === "string" && /^[a-f0-9-]{8,64}$/i.test(visitorKey) ? visitorKey : "";
+    if (key) return `visitor-${key}`;
+    return `ip-${crypto.createHash("sha256").update(clientIp(req)).digest("hex").slice(0, 24)}`;
+  }
+
+  const cleanConversationId = (value: unknown) =>
+    typeof value === "string" && /^[a-f0-9-]{36}$/i.test(value) ? value : "";
+
+  app.get("/api/assistant/config", async (_req, res) => {
+    if (!difyKey()) return res.json({ enabled: false });
+    if (assistantConfigCache && Date.now() - assistantConfigCache.at < 5 * 60_000) return res.json(assistantConfigCache.value);
+    try {
+      const response = await fetch(`${difyBase()}/parameters`, { headers: { Authorization: `Bearer ${difyKey()}` } });
+      const data: JsonRecord = response.ok ? await response.json() : {};
+      const value = {
+        enabled: true,
+        opening: typeof data.opening_statement === "string" ? data.opening_statement : "",
+        suggestions: Array.isArray(data.suggested_questions) ? data.suggested_questions.filter((q: unknown) => typeof q === "string").slice(0, 4) : [],
+      };
+      if (response.ok) assistantConfigCache = { at: Date.now(), value };
+      res.json(value);
+    } catch {
+      res.json({ enabled: true, opening: "", suggestions: [] });
+    }
+  });
+
+  app.get("/api/assistant/messages", async (req, res) => {
+    const conversationId = cleanConversationId(req.query.conversationId);
+    if (!difyKey() || !conversationId) return res.json({ messages: [] });
+    try {
+      const params = new URLSearchParams({ conversation_id: conversationId, user: assistantUser(req, req.query.visitorKey), limit: "40" });
+      const response = await fetch(`${difyBase()}/messages?${params}`, { headers: { Authorization: `Bearer ${difyKey()}` } });
+      if (!response.ok) return res.json({ messages: [], expired: response.status === 404 });
+      const data: JsonRecord = await response.json();
+      const messages = (Array.isArray(data.data) ? data.data : []).flatMap((m: JsonRecord) => [
+        { role: "user", content: String(m.query || "") },
+        { role: "assistant", content: String(m.answer || "") },
+      ]);
+      res.json({ messages });
+    } catch {
+      res.json({ messages: [] });
+    }
+  });
+
+  app.post("/api/assistant/chat", async (req, res) => {
+    if (!difyKey()) return res.status(503).json({ error: "小助手还没上线。" });
+    const query = typeof req.body?.query === "string" ? req.body.query.trim() : "";
+    if (!query) return res.status(400).json({ error: "请输入问题。" });
+    if (query.length > ASSISTANT_MAX_QUERY) return res.status(400).json({ error: `问题太长啦，控制在 ${ASSISTANT_MAX_QUERY} 字以内。` });
+    const limited = assistantAllowed(clientIp(req));
+    if (limited) return res.status(429).json({ error: limited });
+
+    const upstream = new AbortController();
+    // 访客关掉悬窗或刷新页面时，同时掐掉上游，别让 Dify 白跑完。
+    res.on("close", () => upstream.abort());
+    try {
+      const response = await fetch(`${difyBase()}/chat-messages`, {
+        method: "POST",
+        signal: upstream.signal,
+        headers: { Authorization: `Bearer ${difyKey()}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          inputs: {},
+          user: assistantUser(req, req.body?.visitorKey),
+          conversation_id: cleanConversationId(req.body?.conversationId),
+          response_mode: "streaming",
+        }),
+      });
+      if (!response.ok || !response.body) {
+        const detail: JsonRecord = await response.json().catch(() => ({}));
+        console.warn("[assistant] dify error", response.status, detail.code || "", detail.message || "");
+        // 会话过期/被删时让前台丢掉旧 ID 重开。
+        const expired = response.status === 404 || detail.code === "conversation_not_exists";
+        return res.status(expired ? 409 : 502).json({ error: expired ? "对话已过期，已为你开启新对话。" : "小助手暂时开小差了，稍后再试。", expired });
+      }
+      res.status(200);
+      res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders();
+      const reader = response.body.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
+      }
+      res.end();
+    } catch (err: any) {
+      if (upstream.signal.aborted) return;
+      console.warn("[assistant] proxy failed", err?.message);
+      if (!res.headersSent) res.status(502).json({ error: "小助手暂时开小差了，稍后再试。" });
+      else res.end();
+    }
+  });
+
+  /* ======================================================================
    * 站点检测（访问记录）
    * ----------------------------------------------------------------------
    * 写入端 /api/track 是公开接口：前台每次加载页面时上报一次，服务端补上
