@@ -1,10 +1,10 @@
 import { Fragment, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { ArrowUp, Menu, Move, RotateCcw, Square, X } from "lucide-react";
+import { ArrowUp, Menu, Move, RotateCcw, Square, Trash2, X } from "lucide-react";
 import { getVisitorKey } from "../tracking";
 
 /**
- * 右下角的柴犬小助手。上下文由 Dify 按 conversation_id 保存，前台只记这个 ID；
- * 所有请求走 /api/assistant/*，Dify 的 Key 不进浏览器。
+ * 右下角的柴犬小助手。当前上下文由 Dify 按 conversation_id 保存，跨会话记忆
+ * 由服务端按匿名访客保存；所有请求走 /api/assistant/*，Dify 的 Key 不进浏览器。
  */
 
 type Message = { role: "user" | "assistant"; content: string; error?: boolean };
@@ -104,6 +104,7 @@ export default function ShibaAssistant({ ready = true }: { ready?: boolean }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [clearingMemory, setClearingMemory] = useState(false);
   const conversationRef = useRef(readConversation());
   const abortRef = useRef<AbortController | null>(null);
   const historyLoaded = useRef(false);
@@ -395,6 +396,27 @@ export default function ShibaAssistant({ ready = true }: { ready?: boolean }) {
     inputRef.current?.focus();
   };
 
+  const clearLongTermMemory = async () => {
+    if (clearingMemory || !window.confirm("清除小柴记住的全部访客对话？此操作无法撤销。")) return;
+    setClearingMemory(true);
+    try {
+      const response = await fetch("/api/assistant/memory", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visitorKey: getVisitorKey() }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "清除失败");
+      resetConversation();
+      setMenuOpen(false);
+    } catch (error: any) {
+      setMenuOpen(false);
+      setMessages(current => [...current, { role: "assistant", content: error?.message || "长期记忆清除失败，请稍后重试。", error: true }]);
+    } finally {
+      setClearingMemory(false);
+    }
+  };
+
   // 生产环境没配 Key 就整个不出现；开发时照常显示，方便调样式。
   const isDev = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV);
   if (!config || (!config.enabled && !isDev)) return null;
@@ -414,6 +436,7 @@ export default function ShibaAssistant({ ready = true }: { ready?: boolean }) {
           <button type="button" data-track="assistant:close" onClick={close} aria-label="关闭小助手" title="关闭"><X size={18} /></button>
           {menuOpen && <div className="shiba-assistant__menu" role="menu">
             <button type="button" role="menuitem" data-track="assistant:reset" onClick={() => { setMenuOpen(false); resetConversation(); }} disabled={!messages.length}><RotateCcw size={14} />新对话</button>
+            <button type="button" role="menuitem" data-track="assistant:forget" onClick={clearLongTermMemory} disabled={clearingMemory}><Trash2 size={14} />清除长期记忆</button>
             <button type="button" role="menuitem" data-track="assistant:recenter" onClick={() => { setMenuOpen(false); setOffset({ x: 0, y: 0 }); setDock({ x: 0, y: 0 }); writeDock({ x: 0, y: 0 }); }} disabled={!offset.x && !offset.y && !dock.x && !dock.y}><Move size={14} />回到右下角</button>
           </div>}
         </header>

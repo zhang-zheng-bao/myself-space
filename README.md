@@ -63,7 +63,25 @@ ADMIN_SESSION_SECRET="a-long-random-string"
 - `GET /api/admin/analytics/summary?range=today|7d|30d|all&humanOnly=1`：汇总指标、趋势、地区/来源/设备分布和按钮点击排行。
 - `GET /api/admin/analytics/visitors?range&humanOnly&page&pageSize&q`：分页搜索访客。
 - `GET /api/admin/analytics/visitors/:visitorKey/visits`：某访客最近 100 次访问明细。
+- `GET /api/admin/analytics/visitors/:visitorKey/conversations`：某访客的聊天会话目录。
+- `GET /api/admin/analytics/visitors/:visitorKey/conversations/:conversationId/messages`：按需读取一段会话的消息。
 - `PATCH /api/admin/visits` / `POST /api/admin/visits/clear`：备注、拉黑、删除访客或清空统计。
+
+## 小柴与访客长期记忆
+
+网站通过 Express 代理调用 Dify，`DIFY_API_KEY` 只保存在服务端。Dify 的 `conversation_id` 负责当前会话，Supabase 的 `portfolio_assistant_memories` 保存跨会话记忆；两者不要混为一谈。
+
+首次启用时：
+
+1. 在 Supabase SQL Editor 重新执行 `supabase/schema.sql`。
+2. 在 Dify 导入 `dify/小柴-访客长期记忆.yml`，检查模型和知识库后发布该版本。
+3. 将该应用的 API Key 写入服务端 `DIFY_API_KEY`，并按需设置 `DIFY_MEMORY_RETENTION_DAYS`。默认保留 180 天，设为 `0` 可关闭长期记忆。
+
+每轮回答完成后，服务端按浏览器中的匿名 `visitor_key` 保存一轮问答。新问题到来时只选取最近四轮和最多四轮相关旧对话，限制为约 5500 字后传入 Dify 的 `visitor_memory` 输入，避免把全部历史反复放进上下文。记忆检索不额外调用 Embedding；Dify 内最近十轮的短期记忆仍照常工作。
+
+小柴菜单中的“新对话”只清除当前 `conversation_id`；“清除长期记忆”会删除该匿名访客的全部长期记录并同时开始新对话。长期记忆表启用 RLS，浏览器无权直接读取或写入。
+
+管理员可在“站点检测 → 访客”打开任意访客，查看该访客的会话目录并展开消息。后台优先读取 Dify 的完整会话，Dify 暂不可用时会回退到 Supabase 中已经保存的长期记忆；会话正文只有管理员登录后才能访问。
 
 服务端会把每次访问标记为 `traffic_type`：`human`（真人）、`bot`（爬虫/扫描器/脚本 UA）、`local`（本机或内网 IP）。爬虫 UA 不写入；本机和内网访问会保留，但后台默认只显示真人。
 
@@ -101,7 +119,7 @@ ADMIN_SESSION_SECRET="a-long-random-string"
 
 ### 数据与隐私
 
-`portfolio_events` 保存控件键、控件标签、页面路径、假名访客、会话和发生时间，不保存输入框值、查询参数或 URL hash。`portfolio_visits` 的 referrer 只保留 origin 与 pathname。三张统计表启用 RLS，浏览器 anon/authenticated 角色无权直读，只能由 Express 的 service role 访问。上线前应在网站隐私说明中披露统计目的、字段和保留周期；如面向要求同意后才能分析的地区，需在 `startVisitTracking()` 前接入同意状态。
+`portfolio_events` 保存控件键、控件标签、页面路径、假名访客、会话和发生时间，不保存输入框值、查询参数或 URL hash。`portfolio_visits` 的 referrer 只保留 origin 与 pathname。三张统计表启用 RLS，浏览器 anon/authenticated 角色无权直读，只能由 Express 的 service role 访问。小柴的长期记忆会保存访客主动发送的聊天内容和回答，必须在隐私说明中单独披露用途、保留期和清除入口；该表同样启用 RLS。上线前还应披露统计目的、字段和保留周期；如面向要求同意后才能分析的地区，需在 `startVisitTracking()` 前接入同意状态。
 
 首次启用或升级统计功能后，需要在 Supabase SQL Editor 重新执行完整的 `supabase/schema.sql`。脚本幂等，不会清空已有访问记录。
 

@@ -228,6 +228,20 @@ create index if not exists portfolio_events_lookup_idx
 create index if not exists portfolio_events_visitor_idx
   on public.portfolio_events (visitor_key, created_at desc);
 
+-- 小柴的访客长期记忆。每行是一轮已经完成的问答；服务端按匿名 visitor_key
+-- 选择最近及相关片段传给 Dify。聊天内容不与公开统计接口混用。
+create table if not exists public.portfolio_assistant_memories (
+  id bigserial primary key,
+  visitor_key text not null,
+  conversation_id text default '',
+  user_message text not null,
+  assistant_message text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists portfolio_assistant_memories_visitor_idx
+  on public.portfolio_assistant_memories (visitor_key, created_at desc);
+
 -- 心跳可能并发抵达；在数据库事务里累加，避免读后写覆盖导致时长丢失。
 create or replace function public.increment_portfolio_dwell(
   p_visit_id bigint,
@@ -475,4 +489,5 @@ grant execute on function public.portfolio_click_stats(integer, timestamptz, boo
 alter table public.portfolio_visitors enable row level security;
 alter table public.portfolio_visits enable row level security;
 alter table public.portfolio_events enable row level security;
-revoke all on table public.portfolio_visitors, public.portfolio_visits, public.portfolio_events from anon, authenticated;
+alter table public.portfolio_assistant_memories enable row level security;
+revoke all on table public.portfolio_visitors, public.portfolio_visits, public.portfolio_events, public.portfolio_assistant_memories from anon, authenticated;

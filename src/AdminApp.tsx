@@ -11,6 +11,8 @@ import {
   Briefcase,
   Check,
   CircleAlert,
+  ChevronDown,
+  ChevronRight,
   Download,
   ExternalLink,
   Eye,
@@ -44,7 +46,7 @@ import {
   X,
   ZoomIn,
 } from "lucide-react";
-import { Experience, GalleryItem, HomeStatCopy, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, AnalyticsCount, AnalyticsRange, AnalyticsSummaryPayload, AnalyticsVisitorsPayload, TrafficType, VisitRecord, VisitorRecord, Work, WorkLink, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder, sectionMeta } from "./types";
+import { Experience, GalleryItem, HomeStatCopy, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, AnalyticsCount, AnalyticsRange, AnalyticsSummaryPayload, AnalyticsVisitorsPayload, AssistantConversationMessage, AssistantConversationSummary, TrafficType, VisitRecord, VisitorRecord, Work, WorkLink, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder, sectionMeta } from "./types";
 
 const emptyWork: Work = {
   id: "",
@@ -3162,6 +3164,10 @@ export default function AdminApp() {
   const [visitorQueryDraft, setVisitorQueryDraft] = useState("");
   const [visitorPageNo, setVisitorPageNo] = useState(1);
   const [visitorVisits, setVisitorVisits] = useState<{ key: string; visits: VisitRecord[]; loading: boolean } | null>(null);
+  const [visitorConversations, setVisitorConversations] = useState<{ key: string; conversations: AssistantConversationSummary[]; loading: boolean } | null>(null);
+  const [expandedConversationId, setExpandedConversationId] = useState("");
+  const [conversationMessages, setConversationMessages] = useState<Record<string, AssistantConversationMessage[]>>({});
+  const [conversationLoadingId, setConversationLoadingId] = useState("");
   const [visitsLoading, setVisitsLoading] = useState(false);
   const [visitsError, setVisitsError] = useState("");
   const [visitsBusyKey, setVisitsBusyKey] = useState("");
@@ -3203,12 +3209,45 @@ export default function AdminApp() {
     setVisitsLabelDraft(visitor.label || "");
     setVisitsConfirm(null);
     setVisitorVisits({ key: visitor.visitor_key, visits: [], loading: true });
-    try {
-      const json = await fetchAdminJson<{ visits: VisitRecord[] }>(`/api/admin/analytics/visitors/${encodeURIComponent(visitor.visitor_key)}/visits`);
-      setVisitorVisits((prev) => (prev?.key === visitor.visitor_key ? { key: visitor.visitor_key, visits: json.visits, loading: false } : prev));
-    } catch (err: any) {
-      setVisitsError(err?.message || "读取访问明细失败");
+    setVisitorConversations({ key: visitor.visitor_key, conversations: [], loading: true });
+    setExpandedConversationId("");
+    setConversationMessages({});
+    const key = encodeURIComponent(visitor.visitor_key);
+    const [visitsResult, conversationsResult] = await Promise.allSettled([
+      fetchAdminJson<{ visits: VisitRecord[] }>(`/api/admin/analytics/visitors/${key}/visits`),
+      fetchAdminJson<{ conversations: AssistantConversationSummary[] }>(`/api/admin/analytics/visitors/${key}/conversations`),
+    ]);
+    if (visitsResult.status === "fulfilled") {
+      setVisitorVisits((prev) => (prev?.key === visitor.visitor_key ? { key: visitor.visitor_key, visits: visitsResult.value.visits, loading: false } : prev));
+    } else {
+      setVisitsError(visitsResult.reason?.message || "读取访问明细失败");
       setVisitorVisits((prev) => (prev?.key === visitor.visitor_key ? { ...prev, loading: false } : prev));
+    }
+    if (conversationsResult.status === "fulfilled") {
+      setVisitorConversations((prev) => (prev?.key === visitor.visitor_key ? { key: visitor.visitor_key, conversations: conversationsResult.value.conversations, loading: false } : prev));
+    } else {
+      setVisitsError(conversationsResult.reason?.message || "读取聊天会话失败");
+      setVisitorConversations((prev) => (prev?.key === visitor.visitor_key ? { ...prev, loading: false } : prev));
+    }
+  }
+
+  async function toggleConversation(visitorKey: string, conversationId: string) {
+    if (expandedConversationId === conversationId) {
+      setExpandedConversationId("");
+      return;
+    }
+    setExpandedConversationId(conversationId);
+    if (conversationMessages[conversationId]) return;
+    setConversationLoadingId(conversationId);
+    try {
+      const json = await fetchAdminJson<{ messages: AssistantConversationMessage[] }>(
+        `/api/admin/analytics/visitors/${encodeURIComponent(visitorKey)}/conversations/${encodeURIComponent(conversationId)}/messages`,
+      );
+      setConversationMessages((current) => ({ ...current, [conversationId]: json.messages }));
+    } catch (err: any) {
+      setVisitsError(err?.message || "读取聊天消息失败");
+    } finally {
+      setConversationLoadingId("");
     }
   }
 
@@ -6190,6 +6229,7 @@ export default function AdminApp() {
                         const expanded = visitsExpandedKey === visitor.visitor_key;
                         const busy = visitsBusyKey === visitor.visitor_key;
                         const records = visitorVisits?.key === visitor.visitor_key ? visitorVisits : null;
+                        const chats = visitorConversations?.key === visitor.visitor_key ? visitorConversations : null;
                         return (
                           // 被标记为屏蔽的访客用琥珀色条目，跟正常访客的绿色区分开。
                           <EditorRow key={visitor.visitor_key} expanded={expanded} tone={visitor.blocked ? "amber" : "emerald"}>
@@ -6230,7 +6270,7 @@ export default function AdminApp() {
                             {expanded && (
                               <EditorModal
                                 title={visitor.label || "访客 " + shortVisitorKey(visitor.visitor_key)}
-                                onClose={() => { setVisitsExpandedKey(null); setVisitsConfirm(null); setVisitorVisits(null); }}
+                                onClose={() => { setVisitsExpandedKey(null); setVisitsConfirm(null); setVisitorVisits(null); setVisitorConversations(null); setExpandedConversationId(""); setConversationMessages({}); }}
                                 footer={
                                   <p className="mr-auto text-[11px] leading-5 text-zinc-500">
                                     备注与屏蔽标记即时保存；删除不可恢复，所以要点两次。
@@ -6294,6 +6334,66 @@ export default function AdminApp() {
                                 <p className="font-mono text-[10px] leading-5 text-zinc-600">
                                   {visitor.visitor_key} · 首次 {formatVisitTime(visitor.first_seen)} · 最近 {formatVisitTime(visitor.last_seen)}
                                 </p>
+
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <p className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-300">
+                                      <MessagesSquare size={13} className="text-emerald-300" />
+                                      聊天会话 · {chats?.loading ? "读取中…" : `${chats?.conversations.length ?? 0} 个`}
+                                    </p>
+                                    <span className="text-[10px] text-zinc-600">点击会话查看消息</span>
+                                  </div>
+                                  {chats?.loading ? (
+                                    <p className="flex items-center gap-2 text-xs text-zinc-500"><Loader2 className="animate-spin" size={12} /> 正在读取聊天会话…</p>
+                                  ) : !chats?.conversations.length ? (
+                                    <p className="text-xs leading-5 text-zinc-500">这位访客还没有留下聊天会话。</p>
+                                  ) : (
+                                    <div className="divide-y divide-zinc-800/80 border-y border-zinc-800/80">
+                                      {chats.conversations.map((conversation) => {
+                                        const opened = expandedConversationId === conversation.id;
+                                        const messages = conversationMessages[conversation.id];
+                                        const loadingMessages = conversationLoadingId === conversation.id;
+                                        return (
+                                          <div key={conversation.id}>
+                                            <button
+                                              type="button"
+                                              onClick={() => { void toggleConversation(visitor.visitor_key, conversation.id); }}
+                                              className="grid w-full grid-cols-[auto_1fr_auto] items-center gap-2 px-1 py-2.5 text-left outline-none transition-colors hover:bg-zinc-900/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-400/40"
+                                            >
+                                              {opened ? <ChevronDown size={14} className="text-emerald-300" /> : <ChevronRight size={14} className="text-zinc-500" />}
+                                              <span className="min-w-0">
+                                                <strong className="block truncate text-xs font-medium text-zinc-200">{conversation.name || "未命名会话"}</strong>
+                                                <span className="mt-0.5 block font-mono text-[10px] text-zinc-600">
+                                                  {conversation.exchangeCount == null ? "Dify 会话" : `${conversation.exchangeCount} 轮问答`} · {conversation.id.slice(0, 8)}
+                                                </span>
+                                              </span>
+                                              <time className="text-[10px] text-zinc-500" title={formatVisitTime(conversation.updatedAt)}>
+                                                {formatVisitAgo(conversation.updatedAt)}
+                                              </time>
+                                            </button>
+                                            {opened && (
+                                              <div className="space-y-2 border-t border-zinc-800/60 bg-black/15 px-2 py-3">
+                                                {loadingMessages ? (
+                                                  <p className="flex items-center gap-2 text-xs text-zinc-500"><Loader2 className="animate-spin" size={12} /> 正在读取消息…</p>
+                                                ) : !messages?.length ? (
+                                                  <p className="text-xs text-zinc-500">没有读到这段会话的消息。</p>
+                                                ) : messages.map((message) => (
+                                                  <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                                                    <div className={`max-w-[88%] px-3 py-2 text-xs leading-5 ${message.role === "user" ? "rounded-lg bg-emerald-300/12 text-emerald-50" : "border-l-2 border-emerald-400/45 bg-zinc-900/55 text-zinc-300"}`}>
+                                                      <p className="mb-1 text-[10px] font-medium text-zinc-500">{message.role === "user" ? "访客" : "小柴"}</p>
+                                                      <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                                                      {message.createdAt && <time className="mt-1 block text-[9px] text-zinc-600">{formatVisitTime(message.createdAt)}</time>}
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
 
                                 <div className="space-y-2">
                                   <p className="text-xs font-semibold text-zinc-300">
