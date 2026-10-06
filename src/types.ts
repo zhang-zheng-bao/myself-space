@@ -465,3 +465,19 @@ export interface AnalyticsVisitorsPayload {
   page: number;
   pageSize: number;
 }
+
+export interface AssistantConversationSummary {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  exchangeCount: number | null;
+  source: "dify" | "local" | "dify+local";
+}
+
+export interface AssistantConversationMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: string;
+}

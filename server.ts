@@ -1647,8 +1647,8 @@ async function startServer() {
   /* ======================================================================
    * 柴犬小助手（Dify 聊天助手 / Chatflow）
    * ----------------------------------------------------------------------
-   * 前台只跟这里说话，DIFY_API_KEY 永远不出服务端。对话上下文由 Dify 按
-   * conversation_id 保存，这里不存聊天内容，只做转发、限流和参数清洗。
+   * 前台只跟这里说话，DIFY_API_KEY 永远不出服务端。当前对话由 Dify 按
+   * conversation_id 保存；跨会话记忆按匿名 visitor_key 存入 Supabase。
    * 公开接口、每次调用都花钱：按 IP 限频 + 每日上限 + 单条长度上限。
    * ==================================================================== */
 
@@ -1679,11 +1679,114 @@ async function startServer() {
     return "";
   }
 
+  const assistantVisitorKey = (value: unknown) =>
+    typeof value === "string" && /^[a-f0-9-]{8,64}$/i.test(value) ? value : "";
+
   /** Dify 用 user 区分访客；沿用统计的匿名访客 key，没有就按 IP 哈希一个。 */
   function assistantUser(req: Request, visitorKey: unknown) {
-    const key = typeof visitorKey === "string" && /^[a-f0-9-]{8,64}$/i.test(visitorKey) ? visitorKey : "";
+    const key = assistantVisitorKey(visitorKey);
     if (key) return `visitor-${key}`;
     return `ip-${crypto.createHash("sha256").update(clientIp(req)).digest("hex").slice(0, 24)}`;
+  }
+
+  type AssistantMemoryRow = {
+    id: number;
+    visitor_key: string;
+    conversation_id: string;
+    user_message: string;
+    assistant_message: string;
+    created_at: string;
+  };
+
+  /**
+   * 长期记忆不把全部聊天重新塞给模型：固定保留最近几次，再用轻量词项重合
+   * 找回与本次问题最相关的旧对话。这样不额外调用 Embedding，也能控制 token。
+   */
+  function assistantMemoryTerms(value: string) {
+    const normalized = value.toLowerCase().replace(/\s+/g, " ");
+    const terms = new Set(normalized.match(/[a-z0-9][a-z0-9_-]{1,}/g) || []);
+    const chinese = normalized.replace(/[^\u3400-\u9fff]/g, "");
+    for (let i = 0; i < chinese.length - 1; i += 1) terms.add(chinese.slice(i, i + 2));
+    return terms;
+  }
+
+  function assistantMemoryScore(row: AssistantMemoryRow, queryTerms: Set<string>) {
+    if (!queryTerms.size) return 0;
+    const rowTerms = assistantMemoryTerms(`${row.user_message} ${row.assistant_message}`);
+    let overlap = 0;
+    for (const term of queryTerms) if (rowTerms.has(term)) overlap += term.length > 1 ? 2 : 1;
+    return overlap;
+  }
+
+  const assistantMemoryRetentionDays = () => {
+    const configured = Number(process.env.DIFY_MEMORY_RETENTION_DAYS ?? 180);
+    return Number.isFinite(configured) ? Math.max(0, Math.min(3650, Math.floor(configured))) : 180;
+  };
+
+  const visibleAssistantText = (value: unknown) =>
+    String(value || "").replace(/<think>[\s\S]*?(<\/think>|$)/gi, "").trim();
+
+  async function readAssistantMemory(visitorKey: string, query: string) {
+    const retentionDays = assistantMemoryRetentionDays();
+    if (!supabase || !visitorKey || retentionDays === 0) return "";
+    try {
+      const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
+      const { data, error } = await supabase
+        .from("portfolio_assistant_memories")
+        .select("id,visitor_key,conversation_id,user_message,assistant_message,created_at")
+        .eq("visitor_key", visitorKey)
+        .gte("created_at", cutoff)
+        .order("created_at", { ascending: false })
+        .limit(120);
+      if (error) throw error;
+      const rows = (data || []) as AssistantMemoryRow[];
+      if (!rows.length) return "";
+
+      const selected = new Map<number, AssistantMemoryRow>();
+      rows.slice(0, 4).forEach((row) => selected.set(row.id, row));
+      const queryTerms = assistantMemoryTerms(query);
+      rows
+        .slice(4)
+        .map((row) => ({ row, score: assistantMemoryScore(row, queryTerms) }))
+        .filter((item) => item.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 4)
+        .forEach(({ row }) => selected.set(row.id, row));
+
+      const blocks = [...selected.values()]
+        .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
+        .map((row) => `访客：${row.user_message}\n小柴：${row.assistant_message}`);
+      let result = "";
+      for (const block of blocks) {
+        const next = result ? `${result}\n\n${block}` : block;
+        if (next.length > 5500) break;
+        result = next;
+      }
+      return result;
+    } catch (error: any) {
+      // 首次部署但尚未执行 schema 时降级为 Dify 原有短期记忆，不影响聊天。
+      console.warn("[assistant] memory read failed", error?.message || error);
+      return "";
+    }
+  }
+
+  async function saveAssistantMemory(visitorKey: string, conversationId: string, query: string, answer: string) {
+    const retentionDays = assistantMemoryRetentionDays();
+    const visibleAnswer = visibleAssistantText(answer);
+    if (!supabase || !visitorKey || !visibleAnswer || retentionDays === 0) return;
+    try {
+      const { error } = await supabase.from("portfolio_assistant_memories").insert({
+        visitor_key: visitorKey,
+        conversation_id: conversationId,
+        user_message: query.slice(0, ASSISTANT_MAX_QUERY),
+        assistant_message: visibleAnswer.slice(0, 4000),
+      });
+      if (error) throw error;
+      const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
+      void supabase.from("portfolio_assistant_memories").delete().eq("visitor_key", visitorKey).lt("created_at", cutoff);
+    } catch (error: any) {
+      console.warn("[assistant] memory save failed", error?.message || error);
+    }
   }
 
   const cleanConversationId = (value: unknown) =>
@@ -1725,6 +1828,20 @@ async function startServer() {
     }
   });
 
+  app.delete("/api/assistant/memory", async (req, res) => {
+    const visitorKey = assistantVisitorKey(req.body?.visitorKey);
+    if (!visitorKey) return res.status(400).json({ error: "访客标识无效。" });
+    if (!supabase) return res.status(503).json({ error: "长期记忆暂不可用。" });
+    try {
+      const { error } = await supabase.from("portfolio_assistant_memories").delete().eq("visitor_key", visitorKey);
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (error: any) {
+      console.warn("[assistant] memory clear failed", error?.message || error);
+      res.status(500).json({ error: "长期记忆清除失败，请稍后重试。" });
+    }
+  });
+
   app.post("/api/assistant/chat", async (req, res) => {
     if (!difyKey()) return res.status(503).json({ error: "小助手还没上线。" });
     const query = typeof req.body?.query === "string" ? req.body.query.trim() : "";
@@ -1732,6 +1849,9 @@ async function startServer() {
     if (query.length > ASSISTANT_MAX_QUERY) return res.status(400).json({ error: `问题太长啦，控制在 ${ASSISTANT_MAX_QUERY} 字以内。` });
     const limited = assistantAllowed(clientIp(req));
     if (limited) return res.status(429).json({ error: limited });
+
+    const visitorKey = assistantVisitorKey(req.body?.visitorKey);
+    const visitorMemory = await readAssistantMemory(visitorKey, query);
 
     const upstream = new AbortController();
     // 访客关掉悬窗或刷新页面时，同时掐掉上游，别让 Dify 白跑完。
@@ -1743,7 +1863,7 @@ async function startServer() {
         headers: { Authorization: `Bearer ${difyKey()}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           query,
-          inputs: {},
+          inputs: { visitor_memory: visitorMemory },
           user: assistantUser(req, req.body?.visitorKey),
           conversation_id: cleanConversationId(req.body?.conversationId),
           response_mode: "streaming",
@@ -1762,12 +1882,37 @@ async function startServer() {
       res.setHeader("X-Accel-Buffering", "no");
       res.flushHeaders();
       const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let captureBuffer = "";
+      let capturedAnswer = "";
+      let capturedConversationId = cleanConversationId(req.body?.conversationId);
+      const captureEvent = (block: string) => {
+        const line = block.split(/\r?\n/).find((item) => item.startsWith("data:"));
+        if (!line) return;
+        try {
+          const event: JsonRecord = JSON.parse(line.slice(5).trim());
+          const eventConversationId = cleanConversationId(event.conversation_id);
+          if (eventConversationId) capturedConversationId = eventConversationId;
+          if ((event.event === "message" || event.event === "agent_message") && typeof event.answer === "string") {
+            capturedAnswer += event.answer;
+          } else if (event.event === "message_replace" && typeof event.answer === "string") {
+            capturedAnswer = event.answer;
+          }
+        } catch { /* 上游的非 JSON 心跳无需记录 */ }
+      };
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         res.write(Buffer.from(value));
+        captureBuffer += decoder.decode(value, { stream: true });
+        const blocks = captureBuffer.split(/\r?\n\r?\n/);
+        captureBuffer = blocks.pop() || "";
+        blocks.forEach(captureEvent);
       }
+      captureBuffer += decoder.decode();
+      if (captureBuffer.trim()) captureEvent(captureBuffer);
       res.end();
+      void saveAssistantMemory(visitorKey, capturedConversationId, query, capturedAnswer);
     } catch (err: any) {
       if (upstream.signal.aborted) return;
       console.warn("[assistant] proxy failed", err?.message);
@@ -2333,6 +2478,127 @@ async function startServer() {
     }
   });
 
+  // 单个访客的聊天会话。优先读取 Dify 的完整会话目录，本地长期记忆作为降级备份。
+  app.get("/api/admin/analytics/visitors/:visitorKey/conversations", requireAdmin, async (req, res) => {
+    try {
+      const visitorKey = assistantVisitorKey(req.params.visitorKey);
+      if (!visitorKey) return res.status(400).json({ error: "访客标识无效" });
+
+      const localGroups = new Map<string, { id: string; createdAt: string; updatedAt: string; exchangeCount: number }>();
+      if (supabase) {
+        const { data, error } = await supabase
+          .from("portfolio_assistant_memories")
+          .select("id,conversation_id,created_at")
+          .eq("visitor_key", visitorKey)
+          .order("created_at", { ascending: false })
+          .limit(1000);
+        if (error && !missingSchema(error.message)) return res.status(500).json({ error: error.message });
+        for (const row of data || []) {
+          const id = cleanConversationId(row.conversation_id);
+          if (!id) continue;
+          const current = localGroups.get(id);
+          if (!current) {
+            localGroups.set(id, { id, createdAt: row.created_at, updatedAt: row.created_at, exchangeCount: 1 });
+          } else {
+            current.createdAt = row.created_at < current.createdAt ? row.created_at : current.createdAt;
+            current.updatedAt = row.created_at > current.updatedAt ? row.created_at : current.updatedAt;
+            current.exchangeCount += 1;
+          }
+        }
+      }
+
+      const merged = new Map<string, JsonRecord>();
+      for (const group of localGroups.values()) {
+        merged.set(group.id, {
+          id: group.id,
+          name: "历史会话",
+          createdAt: group.createdAt,
+          updatedAt: group.updatedAt,
+          exchangeCount: group.exchangeCount,
+          source: "local",
+        });
+      }
+
+      if (difyKey()) {
+        const params = new URLSearchParams({ user: `visitor-${visitorKey}`, limit: "100", sort_by: "-updated_at" });
+        const response = await fetch(`${difyBase()}/conversations?${params}`, {
+          headers: { Authorization: `Bearer ${difyKey()}` },
+        });
+        if (response.ok) {
+          const payload: JsonRecord = await response.json();
+          for (const item of Array.isArray(payload.data) ? payload.data : []) {
+            const id = cleanConversationId(item.id);
+            if (!id) continue;
+            const local = localGroups.get(id);
+            const createdAt = Number(item.created_at) ? new Date(Number(item.created_at) * 1000).toISOString() : local?.createdAt || "";
+            const updatedAt = Number(item.updated_at) ? new Date(Number(item.updated_at) * 1000).toISOString() : local?.updatedAt || createdAt;
+            merged.set(id, {
+              id,
+              name: String(item.name || "未命名会话").slice(0, 120),
+              createdAt,
+              updatedAt,
+              exchangeCount: local?.exchangeCount ?? null,
+              source: local ? "dify+local" : "dify",
+            });
+          }
+        }
+      }
+
+      const conversations = [...merged.values()].sort((a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || ""));
+      res.json({ conversations });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "conversations-failed" });
+    }
+  });
+
+  // 会话消息按需加载，避免打开访客详情时一次性拉取全部聊天正文。
+  app.get("/api/admin/analytics/visitors/:visitorKey/conversations/:conversationId/messages", requireAdmin, async (req, res) => {
+    try {
+      const visitorKey = assistantVisitorKey(req.params.visitorKey);
+      const conversationId = cleanConversationId(req.params.conversationId);
+      if (!visitorKey || !conversationId) return res.status(400).json({ error: "会话标识无效" });
+
+      if (difyKey()) {
+        const params = new URLSearchParams({ conversation_id: conversationId, user: `visitor-${visitorKey}`, limit: "100" });
+        const response = await fetch(`${difyBase()}/messages?${params}`, {
+          headers: { Authorization: `Bearer ${difyKey()}` },
+        });
+        if (response.ok) {
+          const payload: JsonRecord = await response.json();
+          const messages = (Array.isArray(payload.data) ? payload.data : []).flatMap((item: JsonRecord) => {
+            const createdAt = Number(item.created_at) ? new Date(Number(item.created_at) * 1000).toISOString() : "";
+            return [
+              { id: `${item.id || crypto.randomUUID()}-user`, role: "user", content: String(item.query || ""), createdAt },
+              { id: `${item.id || crypto.randomUUID()}-assistant`, role: "assistant", content: visibleAssistantText(item.answer), createdAt },
+            ];
+          }).filter((item: JsonRecord) => item.content);
+          messages.sort((a: JsonRecord, b: JsonRecord) => Date.parse(a.createdAt || "") - Date.parse(b.createdAt || ""));
+          return res.json({ messages, source: "dify" });
+        }
+      }
+
+      if (!supabase) return res.json({ messages: [], source: "none" });
+      const { data, error } = await supabase
+        .from("portfolio_assistant_memories")
+        .select("id,user_message,assistant_message,created_at")
+        .eq("visitor_key", visitorKey)
+        .eq("conversation_id", conversationId)
+        .order("created_at", { ascending: true })
+        .limit(500);
+      if (error) {
+        if (missingSchema(error.message)) return res.json({ messages: [], source: "none" });
+        return res.status(500).json({ error: error.message });
+      }
+      const messages = (data || []).flatMap((row: JsonRecord) => [
+        { id: `${row.id}-user`, role: "user", content: String(row.user_message || ""), createdAt: row.created_at },
+        { id: `${row.id}-assistant`, role: "assistant", content: String(row.assistant_message || ""), createdAt: row.created_at },
+      ]).filter((item: JsonRecord) => item.content);
+      res.json({ messages, source: "local" });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "conversation-messages-failed" });
+    }
+  });
+
   app.patch("/api/admin/visits", requireAdmin, async (req, res) => {
     try {
       if (!supabase) return res.status(400).json({ error: "Supabase 未配置" });
@@ -2372,22 +2638,27 @@ async function startServer() {
       let visitsQ = supabase.from("portfolio_visits").delete();
       let visitorsQ = supabase.from("portfolio_visitors").delete();
       let eventsQ = supabase.from("portfolio_events").delete();
+      let memoriesQ = supabase.from("portfolio_assistant_memories").delete();
       if (all) {
         // PostgREST 的 delete 必须带过滤条件，否则会被拒；这里用一个恒真条件。
         visitsQ = visitsQ.not("visitor_key", "is", null);
         visitorsQ = visitorsQ.not("visitor_key", "is", null);
         eventsQ = eventsQ.not("visitor_key", "is", null);
+        memoriesQ = memoriesQ.not("visitor_key", "is", null);
       } else {
         visitsQ = visitsQ.in("visitor_key", keys);
         visitorsQ = visitorsQ.in("visitor_key", keys);
         eventsQ = eventsQ.in("visitor_key", keys);
+        memoriesQ = memoriesQ.in("visitor_key", keys);
       }
 
-      // 先删事件，避免访问外键被置空后再也无法按访客清理。旧 schema 没有事件表时忽略。
+      // 先删事件和聊天记忆，避免删掉访客后留下无法从后台定位的孤立内容。
       const { error: eErr } = await eventsQ;
       if (eErr && !/could not find the table|does not exist|schema cache/i.test(eErr.message)) {
         return res.status(500).json({ error: eErr.message });
       }
+      const { error: mErr } = await memoriesQ;
+      if (mErr && !missingSchema(mErr.message)) return res.status(500).json({ error: mErr.message });
       const { error: vErr } = await visitsQ;
       if (vErr) return res.status(500).json({ error: vErr.message });
       const { error: pErr } = await visitorsQ;
