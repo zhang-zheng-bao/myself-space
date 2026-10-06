@@ -481,3 +481,10 @@ export interface AssistantConversationMessage {
   content: string;
   createdAt: string;
 }
+
+export interface AssistantKeywordPayload {
+  configured: boolean;
+  keywords: AnalyticsCount[];
+  messageCount: number;
+  visitorCount: number;
+}

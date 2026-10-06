@@ -46,7 +46,7 @@ import {
   X,
   ZoomIn,
 } from "lucide-react";
-import { Experience, GalleryItem, HomeStatCopy, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, AnalyticsCount, AnalyticsRange, AnalyticsSummaryPayload, AnalyticsVisitorsPayload, AssistantConversationMessage, AssistantConversationSummary, TrafficType, VisitRecord, VisitorRecord, Work, WorkLink, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder, sectionMeta } from "./types";
+import { Experience, GalleryItem, HomeStatCopy, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, AnalyticsCount, AnalyticsRange, AnalyticsSummaryPayload, AnalyticsVisitorsPayload, AssistantConversationMessage, AssistantConversationSummary, AssistantKeywordPayload, TrafficType, VisitRecord, VisitorRecord, Work, WorkLink, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder, sectionMeta } from "./types";
 
 const emptyWork: Work = {
   id: "",
@@ -3159,15 +3159,18 @@ export default function AdminApp() {
   const [analyticsRange, setAnalyticsRange] = useState<AnalyticsRange>("7d");
   // 默认只看真人：爬虫和本机预览浏览器是大头，混在一起数字没有意义。
   const [analyticsHumanOnly, setAnalyticsHumanOnly] = useState(true);
-  const [analyticsView, setAnalyticsView] = useState<"overview" | "visitors" | "clicks">("overview");
+  const [analyticsView, setAnalyticsView] = useState<"overview" | "visitors" | "chats" | "clicks">("overview");
   const [visitorQuery, setVisitorQuery] = useState("");
   const [visitorQueryDraft, setVisitorQueryDraft] = useState("");
   const [visitorPageNo, setVisitorPageNo] = useState(1);
   const [visitorVisits, setVisitorVisits] = useState<{ key: string; visits: VisitRecord[]; loading: boolean } | null>(null);
+  const [chatVisitorKey, setChatVisitorKey] = useState("");
   const [visitorConversations, setVisitorConversations] = useState<{ key: string; conversations: AssistantConversationSummary[]; loading: boolean } | null>(null);
   const [expandedConversationId, setExpandedConversationId] = useState("");
   const [conversationMessages, setConversationMessages] = useState<Record<string, AssistantConversationMessage[]>>({});
   const [conversationLoadingId, setConversationLoadingId] = useState("");
+  const [assistantKeywords, setAssistantKeywords] = useState<AssistantKeywordPayload | null>(null);
+  const [assistantKeywordsLoading, setAssistantKeywordsLoading] = useState(false);
   const [visitsLoading, setVisitsLoading] = useState(false);
   const [visitsError, setVisitsError] = useState("");
   const [visitsBusyKey, setVisitsBusyKey] = useState("");
@@ -3209,25 +3212,40 @@ export default function AdminApp() {
     setVisitsLabelDraft(visitor.label || "");
     setVisitsConfirm(null);
     setVisitorVisits({ key: visitor.visitor_key, visits: [], loading: true });
+    const key = encodeURIComponent(visitor.visitor_key);
+    try {
+      const result = await fetchAdminJson<{ visits: VisitRecord[] }>(`/api/admin/analytics/visitors/${key}/visits`);
+      setVisitorVisits((prev) => (prev?.key === visitor.visitor_key ? { key: visitor.visitor_key, visits: result.visits, loading: false } : prev));
+    } catch (error: any) {
+      setVisitsError(error?.message || "读取访问明细失败");
+      setVisitorVisits((prev) => (prev?.key === visitor.visitor_key ? { ...prev, loading: false } : prev));
+    }
+  }
+
+  async function openVisitorChats(visitor: VisitorRecord) {
+    setChatVisitorKey(visitor.visitor_key);
     setVisitorConversations({ key: visitor.visitor_key, conversations: [], loading: true });
     setExpandedConversationId("");
     setConversationMessages({});
-    const key = encodeURIComponent(visitor.visitor_key);
-    const [visitsResult, conversationsResult] = await Promise.allSettled([
-      fetchAdminJson<{ visits: VisitRecord[] }>(`/api/admin/analytics/visitors/${key}/visits`),
-      fetchAdminJson<{ conversations: AssistantConversationSummary[] }>(`/api/admin/analytics/visitors/${key}/conversations`),
-    ]);
-    if (visitsResult.status === "fulfilled") {
-      setVisitorVisits((prev) => (prev?.key === visitor.visitor_key ? { key: visitor.visitor_key, visits: visitsResult.value.visits, loading: false } : prev));
-    } else {
-      setVisitsError(visitsResult.reason?.message || "读取访问明细失败");
-      setVisitorVisits((prev) => (prev?.key === visitor.visitor_key ? { ...prev, loading: false } : prev));
-    }
-    if (conversationsResult.status === "fulfilled") {
-      setVisitorConversations((prev) => (prev?.key === visitor.visitor_key ? { key: visitor.visitor_key, conversations: conversationsResult.value.conversations, loading: false } : prev));
-    } else {
-      setVisitsError(conversationsResult.reason?.message || "读取聊天会话失败");
+    try {
+      const result = await fetchAdminJson<{ conversations: AssistantConversationSummary[] }>(
+        `/api/admin/analytics/visitors/${encodeURIComponent(visitor.visitor_key)}/conversations`,
+      );
+      setVisitorConversations((prev) => (prev?.key === visitor.visitor_key ? { key: visitor.visitor_key, conversations: result.conversations, loading: false } : prev));
+    } catch (error: any) {
+      setVisitsError(error?.message || "读取聊天会话失败");
       setVisitorConversations((prev) => (prev?.key === visitor.visitor_key ? { ...prev, loading: false } : prev));
+    }
+  }
+
+  async function loadAssistantKeywords() {
+    setAssistantKeywordsLoading(true);
+    try {
+      setAssistantKeywords(await fetchAdminJson<AssistantKeywordPayload>(`/api/admin/analytics/assistant-keywords?${analyticsParams()}`));
+    } catch (error: any) {
+      setVisitsError(error?.message || "读取聊天关键词失败");
+    } finally {
+      setAssistantKeywordsLoading(false);
     }
   }
 
@@ -3288,8 +3306,21 @@ export default function AdminApp() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "清理失败");
       setVisitsConfirm(null);
-      if (scoped) setVisitsExpandedKey(null);
-      await loadVisits();
+      if (scoped) {
+        setVisitsExpandedKey(null);
+        if (visitorKeys?.includes(chatVisitorKey)) {
+          setChatVisitorKey("");
+          setVisitorConversations(null);
+          setExpandedConversationId("");
+          setConversationMessages({});
+        }
+      } else {
+        setChatVisitorKey("");
+        setVisitorConversations(null);
+        setExpandedConversationId("");
+        setConversationMessages({});
+      }
+      await Promise.all([loadVisits(), loadAssistantKeywords()]);
     } catch (err: any) {
       setVisitsError(err?.message || "清理失败");
     }
@@ -3329,6 +3360,11 @@ export default function AdminApp() {
     if (active !== "tracking" || !analytics?.configured) return;
     loadVisitorPage().catch((err: any) => setVisitsError(err?.message || "读取访客失败"));
   }, [visitorPageNo, visitorQuery]);
+
+  useEffect(() => {
+    if (active !== "tracking" || analyticsView !== "chats") return;
+    void loadAssistantKeywords();
+  }, [active, analyticsView, analyticsRange, analyticsHumanOnly]);
 
   // 侧栏导航。图标和文字都给（只用图标会牺牲可发现性），顺序按「先看结构、再看内容、
   // 最后是设置」排：站点资料 + 模块管理是站点的结构层；中间是各栏目的内容；
@@ -6037,7 +6073,7 @@ export default function AdminApp() {
 
                   <button
                     type="button"
-                    onClick={() => { void loadVisits(); }}
+                    onClick={() => { void loadVisits(); if (analyticsView === "chats") void loadAssistantKeywords(); }}
                     disabled={visitsLoading}
                     className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-zinc-800 px-3 text-sm text-zinc-300 transition-colors duration-200 hover:border-zinc-600 hover:text-white disabled:opacity-60"
                   >
@@ -6114,7 +6150,7 @@ export default function AdminApp() {
                       )}
 
                       <div className="flex gap-1 border-b border-zinc-800" role="tablist" aria-label="站点检测视图">
-                        {([["overview", "概览"], ["visitors", `访客${visitorPage ? ` · ${visitorPage.total}` : ""}`], ["clicks", "行为"]] as const).map(([key, label]) => (
+                        {([["overview", "概览"], ["visitors", `访客${visitorPage ? ` · ${visitorPage.total}` : ""}`], ["chats", "聊天会话"], ["clicks", "行为"]] as const).map(([key, label]) => (
                           <button
                             key={key}
                             type="button"
@@ -6229,7 +6265,6 @@ export default function AdminApp() {
                         const expanded = visitsExpandedKey === visitor.visitor_key;
                         const busy = visitsBusyKey === visitor.visitor_key;
                         const records = visitorVisits?.key === visitor.visitor_key ? visitorVisits : null;
-                        const chats = visitorConversations?.key === visitor.visitor_key ? visitorConversations : null;
                         return (
                           // 被标记为屏蔽的访客用琥珀色条目，跟正常访客的绿色区分开。
                           <EditorRow key={visitor.visitor_key} expanded={expanded} tone={visitor.blocked ? "amber" : "emerald"}>
@@ -6270,7 +6305,7 @@ export default function AdminApp() {
                             {expanded && (
                               <EditorModal
                                 title={visitor.label || "访客 " + shortVisitorKey(visitor.visitor_key)}
-                                onClose={() => { setVisitsExpandedKey(null); setVisitsConfirm(null); setVisitorVisits(null); setVisitorConversations(null); setExpandedConversationId(""); setConversationMessages({}); }}
+                                onClose={() => { setVisitsExpandedKey(null); setVisitsConfirm(null); setVisitorVisits(null); }}
                                 footer={
                                   <p className="mr-auto text-[11px] leading-5 text-zinc-500">
                                     备注与屏蔽标记即时保存；删除不可恢复，所以要点两次。
@@ -6336,66 +6371,6 @@ export default function AdminApp() {
                                 </p>
 
                                 <div className="space-y-2">
-                                  <div className="flex items-center justify-between gap-3">
-                                    <p className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-300">
-                                      <MessagesSquare size={13} className="text-emerald-300" />
-                                      聊天会话 · {chats?.loading ? "读取中…" : `${chats?.conversations.length ?? 0} 个`}
-                                    </p>
-                                    <span className="text-[10px] text-zinc-600">点击会话查看消息</span>
-                                  </div>
-                                  {chats?.loading ? (
-                                    <p className="flex items-center gap-2 text-xs text-zinc-500"><Loader2 className="animate-spin" size={12} /> 正在读取聊天会话…</p>
-                                  ) : !chats?.conversations.length ? (
-                                    <p className="text-xs leading-5 text-zinc-500">这位访客还没有留下聊天会话。</p>
-                                  ) : (
-                                    <div className="divide-y divide-zinc-800/80 border-y border-zinc-800/80">
-                                      {chats.conversations.map((conversation) => {
-                                        const opened = expandedConversationId === conversation.id;
-                                        const messages = conversationMessages[conversation.id];
-                                        const loadingMessages = conversationLoadingId === conversation.id;
-                                        return (
-                                          <div key={conversation.id}>
-                                            <button
-                                              type="button"
-                                              onClick={() => { void toggleConversation(visitor.visitor_key, conversation.id); }}
-                                              className="grid w-full grid-cols-[auto_1fr_auto] items-center gap-2 px-1 py-2.5 text-left outline-none transition-colors hover:bg-zinc-900/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-400/40"
-                                            >
-                                              {opened ? <ChevronDown size={14} className="text-emerald-300" /> : <ChevronRight size={14} className="text-zinc-500" />}
-                                              <span className="min-w-0">
-                                                <strong className="block truncate text-xs font-medium text-zinc-200">{conversation.name || "未命名会话"}</strong>
-                                                <span className="mt-0.5 block font-mono text-[10px] text-zinc-600">
-                                                  {conversation.exchangeCount == null ? "Dify 会话" : `${conversation.exchangeCount} 轮问答`} · {conversation.id.slice(0, 8)}
-                                                </span>
-                                              </span>
-                                              <time className="text-[10px] text-zinc-500" title={formatVisitTime(conversation.updatedAt)}>
-                                                {formatVisitAgo(conversation.updatedAt)}
-                                              </time>
-                                            </button>
-                                            {opened && (
-                                              <div className="space-y-2 border-t border-zinc-800/60 bg-black/15 px-2 py-3">
-                                                {loadingMessages ? (
-                                                  <p className="flex items-center gap-2 text-xs text-zinc-500"><Loader2 className="animate-spin" size={12} /> 正在读取消息…</p>
-                                                ) : !messages?.length ? (
-                                                  <p className="text-xs text-zinc-500">没有读到这段会话的消息。</p>
-                                                ) : messages.map((message) => (
-                                                  <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                                                    <div className={`max-w-[88%] px-3 py-2 text-xs leading-5 ${message.role === "user" ? "rounded-lg bg-emerald-300/12 text-emerald-50" : "border-l-2 border-emerald-400/45 bg-zinc-900/55 text-zinc-300"}`}>
-                                                      <p className="mb-1 text-[10px] font-medium text-zinc-500">{message.role === "user" ? "访客" : "小柴"}</p>
-                                                      <p className="whitespace-pre-wrap break-words">{message.content}</p>
-                                                      {message.createdAt && <time className="mt-1 block text-[9px] text-zinc-600">{formatVisitTime(message.createdAt)}</time>}
-                                                    </div>
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            )}
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
-
-                                <div className="space-y-2">
                                   <p className="text-xs font-semibold text-zinc-300">
                                     访问记录 · {records?.loading ? "读取中…" : `最近 ${records?.visits.length ?? 0} 条`}
                                   </p>
@@ -6434,6 +6409,168 @@ export default function AdminApp() {
                           </button>
                         </nav>
                       )}
+                    </div>
+                  );
+                })()}
+
+                {analytics?.configured && analyticsView === "chats" && visitorPage && (() => {
+                  const pages = Math.max(1, Math.ceil(visitorPage.total / visitorPage.pageSize));
+                  const chats = visitorConversations?.key === chatVisitorKey ? visitorConversations : null;
+                  const selectedVisitor = visitorPage.visitors.find((visitor) => visitor.visitor_key === chatVisitorKey);
+                  const maxKeywordCount = Math.max(1, ...(assistantKeywords?.keywords.map((keyword) => keyword.n) || [1]));
+                  const keywordColors = ["text-emerald-200", "text-cyan-200", "text-zinc-100", "text-emerald-400", "text-sky-300"];
+                  return (
+                    <div className="space-y-4">
+                      <section className="adm-panel px-4 py-4" aria-labelledby="assistant-keywords-title">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <h3 id="assistant-keywords-title" className="flex items-center gap-2 text-sm font-semibold text-white">
+                              <MessagesSquare size={15} className="text-emerald-300" /> 聊天关键词
+                            </h3>
+                            <p className="mt-1 text-[11px] leading-4 text-zinc-500">只统计访客提问，已过滤常见语气词和无意义词。</p>
+                          </div>
+                          <span className="text-[11px] tabular-nums text-zinc-500">
+                            {assistantKeywordsLoading ? "统计中…" : `${assistantKeywords?.visitorCount ?? 0} 位访客 · ${assistantKeywords?.messageCount ?? 0} 条提问`}
+                          </span>
+                        </div>
+                        {assistantKeywordsLoading ? (
+                          <p className="mt-5 flex items-center gap-2 text-xs text-zinc-500"><Loader2 className="animate-spin" size={12} /> 正在生成词云…</p>
+                        ) : !assistantKeywords?.configured ? (
+                          <p className="mt-4 text-xs leading-5 text-zinc-500">聊天记忆表尚未启用，执行新版数据库脚本后会开始统计。</p>
+                        ) : !assistantKeywords.keywords.length ? (
+                          <p className="mt-4 text-xs leading-5 text-zinc-500">当前时间范围内还没有足够的聊天关键词。</p>
+                        ) : (
+                          <div className="mt-4 flex min-h-28 flex-wrap content-center items-baseline justify-center gap-x-5 gap-y-3 px-3 py-2 text-center">
+                            {assistantKeywords.keywords.map((keyword, index) => (
+                              <span
+                                key={keyword.label}
+                                title={`${keyword.label} · ${keyword.n} 次`}
+                                className={`cursor-default font-semibold leading-none transition-opacity hover:opacity-70 ${keywordColors[index % keywordColors.length]}`}
+                                style={{ fontSize: `${13 + Math.round((keyword.n / maxKeywordCount) * 18)}px` }}
+                              >
+                                {keyword.label}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </section>
+
+                      <form
+                        className="flex flex-wrap items-center gap-2"
+                        onSubmit={(event) => { event.preventDefault(); setVisitorPageNo(1); setVisitorQuery(visitorQueryDraft.trim()); }}
+                      >
+                        <input
+                          value={visitorQueryDraft}
+                          onChange={(event) => setVisitorQueryDraft(event.target.value)}
+                          placeholder="搜索要查看会话的访客"
+                          aria-label="搜索聊天访客"
+                          className={`${inputBaseClass} min-h-9 min-w-[220px] flex-1 px-3 py-1.5 text-sm`}
+                        />
+                        <button type="submit" className="inline-flex min-h-9 items-center rounded-lg border border-zinc-800 px-3 text-sm text-zinc-300 hover:border-zinc-600 hover:text-white">搜索</button>
+                        {visitorQuery && (
+                          <button type="button" onClick={() => { setVisitorQueryDraft(""); setVisitorQuery(""); setVisitorPageNo(1); }} className="text-xs text-zinc-400 hover:text-white">清除</button>
+                        )}
+                      </form>
+
+                      <div className="grid min-h-[420px] overflow-hidden rounded-lg border border-zinc-800/80 lg:grid-cols-[280px_minmax(0,1fr)]">
+                        <aside className="border-b border-zinc-800/80 bg-black/10 lg:border-b-0 lg:border-r" aria-label="聊天访客列表">
+                          <div className="border-b border-zinc-800/80 px-3 py-2.5 text-[11px] text-zinc-500">选择访客 · 共 {visitorPage.total} 位</div>
+                          <div className="max-h-[560px] overflow-y-auto">
+                            {visitorPage.visitors.map((visitor) => {
+                              const selected = chatVisitorKey === visitor.visitor_key;
+                              return (
+                                <button
+                                  key={visitor.visitor_key}
+                                  type="button"
+                                  onClick={() => { void openVisitorChats(visitor); }}
+                                  aria-pressed={selected}
+                                  className={`block w-full border-b border-zinc-900 px-3 py-3 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-400/40 ${selected ? "bg-emerald-400/[0.08]" : "hover:bg-white/[0.03]"}`}
+                                >
+                                  <span className="flex items-center justify-between gap-2">
+                                    <strong className={`truncate text-xs font-medium ${selected ? "text-emerald-200" : "text-zinc-200"}`}>
+                                      {visitor.label || `访客 ${shortVisitorKey(visitor.visitor_key)}`}
+                                    </strong>
+                                    <time className="shrink-0 text-[9px] text-zinc-600">{formatVisitAgo(visitor.last_seen)}</time>
+                                  </span>
+                                  <span className="mt-1 block truncate text-[10px] text-zinc-500">{visitorLocation(visitor)} · {visitorDevice(visitor)}</span>
+                                </button>
+                              );
+                            })}
+                            {!visitorPage.visitors.length && <p className="px-3 py-5 text-xs text-zinc-500">没有匹配的访客。</p>}
+                          </div>
+                          {pages > 1 && (
+                            <div className="flex items-center justify-between gap-2 border-t border-zinc-800/80 px-3 py-2">
+                              <button type="button" disabled={visitorPageNo <= 1} onClick={() => setVisitorPageNo((n) => Math.max(1, n - 1))} className="text-xs text-zinc-400 hover:text-white disabled:opacity-30">上一页</button>
+                              <span className="text-[10px] tabular-nums text-zinc-600">{visitorPageNo} / {pages}</span>
+                              <button type="button" disabled={visitorPageNo >= pages} onClick={() => setVisitorPageNo((n) => Math.min(pages, n + 1))} className="text-xs text-zinc-400 hover:text-white disabled:opacity-30">下一页</button>
+                            </div>
+                          )}
+                        </aside>
+
+                        <section className="min-w-0 px-4 py-4" aria-label="聊天会话内容">
+                          {!chatVisitorKey ? (
+                            <div className="grid min-h-[360px] place-items-center text-center">
+                              <div>
+                                <MessagesSquare className="mx-auto text-zinc-700" size={28} />
+                                <p className="mt-3 text-sm text-zinc-400">从左侧选择一位访客</p>
+                                <p className="mt-1 text-[11px] text-zinc-600">会话和消息将在这里单独显示。</p>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              <div className="flex flex-wrap items-end justify-between gap-2 border-b border-zinc-800/80 pb-3">
+                                <div>
+                                  <h3 className="text-sm font-semibold text-white">{selectedVisitor?.label || `访客 ${shortVisitorKey(chatVisitorKey)}`}</h3>
+                                  <p className="mt-1 font-mono text-[10px] text-zinc-600">{chatVisitorKey}</p>
+                                </div>
+                                <span className="text-[11px] text-zinc-500">{chats?.loading ? "读取中…" : `${chats?.conversations.length ?? 0} 个会话`}</span>
+                              </div>
+                              {chats?.loading ? (
+                                <p className="flex items-center gap-2 py-4 text-xs text-zinc-500"><Loader2 className="animate-spin" size={12} /> 正在读取聊天会话…</p>
+                              ) : !chats?.conversations.length ? (
+                                <p className="py-4 text-xs leading-5 text-zinc-500">这位访客还没有留下聊天会话。</p>
+                              ) : (
+                                <div className="divide-y divide-zinc-800/80 border-y border-zinc-800/80">
+                                  {chats.conversations.map((conversation) => {
+                                    const opened = expandedConversationId === conversation.id;
+                                    const messages = conversationMessages[conversation.id];
+                                    const loadingMessages = conversationLoadingId === conversation.id;
+                                    return (
+                                      <div key={conversation.id}>
+                                        <button type="button" onClick={() => { void toggleConversation(chatVisitorKey, conversation.id); }} className="grid w-full grid-cols-[auto_1fr_auto] items-center gap-2 px-1 py-3 text-left outline-none transition-colors hover:bg-zinc-900/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-400/40">
+                                          {opened ? <ChevronDown size={14} className="text-emerald-300" /> : <ChevronRight size={14} className="text-zinc-500" />}
+                                          <span className="min-w-0">
+                                            <strong className="block truncate text-xs font-medium text-zinc-200">{conversation.name || "未命名会话"}</strong>
+                                            <span className="mt-0.5 block font-mono text-[10px] text-zinc-600">{conversation.exchangeCount == null ? "Dify 会话" : `${conversation.exchangeCount} 轮问答`} · {conversation.id.slice(0, 8)}</span>
+                                          </span>
+                                          <time className="text-[10px] text-zinc-500" title={formatVisitTime(conversation.updatedAt)}>{formatVisitAgo(conversation.updatedAt)}</time>
+                                        </button>
+                                        {opened && (
+                                          <div className="space-y-2 border-t border-zinc-800/60 bg-black/15 px-3 py-3">
+                                            {loadingMessages ? (
+                                              <p className="flex items-center gap-2 text-xs text-zinc-500"><Loader2 className="animate-spin" size={12} /> 正在读取消息…</p>
+                                            ) : !messages?.length ? (
+                                              <p className="text-xs text-zinc-500">没有读到这段会话的消息。</p>
+                                            ) : messages.map((message) => (
+                                              <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                                                <div className={`max-w-[88%] px-3 py-2 text-xs leading-5 ${message.role === "user" ? "rounded-lg bg-emerald-300/12 text-emerald-50" : "border-l-2 border-emerald-400/45 bg-zinc-900/55 text-zinc-300"}`}>
+                                                  <p className="mb-1 text-[10px] font-medium text-zinc-500">{message.role === "user" ? "访客" : "小柴"}</p>
+                                                  <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                                                  {message.createdAt && <time className="mt-1 block text-[9px] text-zinc-600">{formatVisitTime(message.createdAt)}</time>}
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </section>
+                      </div>
                     </div>
                   );
                 })()}
