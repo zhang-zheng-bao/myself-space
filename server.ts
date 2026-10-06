@@ -2520,27 +2520,32 @@ async function startServer() {
       }
 
       if (difyKey()) {
-        const params = new URLSearchParams({ user: `visitor-${visitorKey}`, limit: "100", sort_by: "-updated_at" });
-        const response = await fetch(`${difyBase()}/conversations?${params}`, {
-          headers: { Authorization: `Bearer ${difyKey()}` },
-        });
-        if (response.ok) {
-          const payload: JsonRecord = await response.json();
-          for (const item of Array.isArray(payload.data) ? payload.data : []) {
-            const id = cleanConversationId(item.id);
-            if (!id) continue;
-            const local = localGroups.get(id);
-            const createdAt = Number(item.created_at) ? new Date(Number(item.created_at) * 1000).toISOString() : local?.createdAt || "";
-            const updatedAt = Number(item.updated_at) ? new Date(Number(item.updated_at) * 1000).toISOString() : local?.updatedAt || createdAt;
-            merged.set(id, {
-              id,
-              name: String(item.name || "未命名会话").slice(0, 120),
-              createdAt,
-              updatedAt,
-              exchangeCount: local?.exchangeCount ?? null,
-              source: local ? "dify+local" : "dify",
-            });
+        try {
+          const params = new URLSearchParams({ user: `visitor-${visitorKey}`, limit: "100", sort_by: "-updated_at" });
+          const response = await fetch(`${difyBase()}/conversations?${params}`, {
+            headers: { Authorization: `Bearer ${difyKey()}` },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (response.ok) {
+            const payload: JsonRecord = await response.json();
+            for (const item of Array.isArray(payload.data) ? payload.data : []) {
+              const id = cleanConversationId(item.id);
+              if (!id) continue;
+              const local = localGroups.get(id);
+              const createdAt = Number(item.created_at) ? new Date(Number(item.created_at) * 1000).toISOString() : local?.createdAt || "";
+              const updatedAt = Number(item.updated_at) ? new Date(Number(item.updated_at) * 1000).toISOString() : local?.updatedAt || createdAt;
+              merged.set(id, {
+                id,
+                name: String(item.name || "未命名会话").slice(0, 120),
+                createdAt,
+                updatedAt,
+                exchangeCount: local?.exchangeCount ?? null,
+                source: local ? "dify+local" : "dify",
+              });
+            }
           }
+        } catch (error: any) {
+          console.warn("[assistant] admin conversation list fallback", error?.message || error);
         }
       }
 
@@ -2559,21 +2564,26 @@ async function startServer() {
       if (!visitorKey || !conversationId) return res.status(400).json({ error: "会话标识无效" });
 
       if (difyKey()) {
-        const params = new URLSearchParams({ conversation_id: conversationId, user: `visitor-${visitorKey}`, limit: "100" });
-        const response = await fetch(`${difyBase()}/messages?${params}`, {
-          headers: { Authorization: `Bearer ${difyKey()}` },
-        });
-        if (response.ok) {
-          const payload: JsonRecord = await response.json();
-          const messages = (Array.isArray(payload.data) ? payload.data : []).flatMap((item: JsonRecord) => {
-            const createdAt = Number(item.created_at) ? new Date(Number(item.created_at) * 1000).toISOString() : "";
-            return [
-              { id: `${item.id || crypto.randomUUID()}-user`, role: "user", content: String(item.query || ""), createdAt },
-              { id: `${item.id || crypto.randomUUID()}-assistant`, role: "assistant", content: visibleAssistantText(item.answer), createdAt },
-            ];
-          }).filter((item: JsonRecord) => item.content);
-          messages.sort((a: JsonRecord, b: JsonRecord) => Date.parse(a.createdAt || "") - Date.parse(b.createdAt || ""));
-          return res.json({ messages, source: "dify" });
+        try {
+          const params = new URLSearchParams({ conversation_id: conversationId, user: `visitor-${visitorKey}`, limit: "100" });
+          const response = await fetch(`${difyBase()}/messages?${params}`, {
+            headers: { Authorization: `Bearer ${difyKey()}` },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (response.ok) {
+            const payload: JsonRecord = await response.json();
+            const messages = (Array.isArray(payload.data) ? payload.data : []).flatMap((item: JsonRecord) => {
+              const createdAt = Number(item.created_at) ? new Date(Number(item.created_at) * 1000).toISOString() : "";
+              return [
+                { id: `${item.id || crypto.randomUUID()}-user`, role: "user", content: String(item.query || ""), createdAt },
+                { id: `${item.id || crypto.randomUUID()}-assistant`, role: "assistant", content: visibleAssistantText(item.answer), createdAt },
+              ];
+            }).filter((item: JsonRecord) => item.content);
+            messages.sort((a: JsonRecord, b: JsonRecord) => Date.parse(a.createdAt || "") - Date.parse(b.createdAt || ""));
+            if (messages.length) return res.json({ messages, source: "dify" });
+          }
+        } catch (error: any) {
+          console.warn("[assistant] admin conversation messages fallback", error?.message || error);
         }
       }
 
