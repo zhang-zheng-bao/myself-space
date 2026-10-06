@@ -2325,6 +2325,26 @@ async function startServer() {
     return [...counts].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([label, n]) => ({ label, n }));
   }
 
+  const CHAT_KEYWORD_STOP_WORDS = new Set([
+    "一个", "一些", "这个", "那个", "什么", "怎么", "怎样", "为什么", "可以", "能不能", "有没有", "是否", "还是", "就是", "不是", "如果", "然后", "现在", "目前", "已经", "需要", "希望", "想要", "知道", "介绍", "关于", "比较", "一下", "一下子", "东西", "内容", "问题", "网站", "网页", "小主人", "小柴", "你们", "我们", "你是", "我是", "他的", "我的", "你的", "吗", "呢", "啊", "呀", "吧", "了", "的", "和", "与", "或", "也", "都", "很", "更", "最", "在", "有", "是", "我", "你", "他", "她", "它", "这", "那",
+  ]);
+
+  function assistantKeywordCounts(messages: string[]) {
+    const counts = new Map<string, number>();
+    const segmenter = new Intl.Segmenter("zh-CN", { granularity: "word" });
+    for (const message of messages) {
+      for (const part of segmenter.segment(message.toLowerCase())) {
+        const word = part.segment.trim().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+        if (!part.isWordLike || word.length < 2 || word.length > 20 || CHAT_KEYWORD_STOP_WORDS.has(word) || /^\d+$/.test(word)) continue;
+        counts.set(word, (counts.get(word) || 0) + 1);
+      }
+    }
+    return [...counts]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-CN"))
+      .slice(0, 30)
+      .map(([label, n]) => ({ label, n }));
+  }
+
   function legacySummary(rows: any[], humanOnly: boolean, bucket: string) {
     const v = humanOnly ? rows.filter((r) => r.traffic_type === "human") : rows;
     const dwell = v.map((r) => Number(r.dwell_ms) || 0).filter((ms) => ms > 0);
@@ -2475,6 +2495,47 @@ async function startServer() {
       });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "visits-failed" });
+    }
+  });
+
+  // 聊天页词云只返回聚合词频，不把其他访客的原始消息批量交给浏览器。
+  app.get("/api/admin/analytics/assistant-keywords", requireAdmin, async (req, res) => {
+    try {
+      if (!supabase) return res.json({ configured: false, keywords: [], messageCount: 0, visitorCount: 0 });
+      const { since, humanOnly } = analyticsQuery(req);
+      let query = supabase
+        .from("portfolio_assistant_memories")
+        .select("visitor_key,user_message,created_at")
+        .order("created_at", { ascending: false })
+        .limit(5000);
+      if (since) query = query.gte("created_at", since);
+      const { data, error } = await query;
+      if (error) {
+        if (missingSchema(error.message)) return res.json({ configured: false, keywords: [], messageCount: 0, visitorCount: 0 });
+        return res.status(500).json({ error: error.message });
+      }
+
+      let rows = data || [];
+      if (humanOnly && rows.length) {
+        const { data: humans, error: humanError } = await supabase
+          .from("portfolio_visitors")
+          .select("visitor_key")
+          .eq("traffic_type", "human")
+          .limit(10000);
+        if (!humanError) {
+          const humanKeys = new Set((humans || []).map((row: JsonRecord) => String(row.visitor_key)));
+          rows = rows.filter((row: JsonRecord) => humanKeys.has(String(row.visitor_key)));
+        }
+      }
+
+      res.json({
+        configured: true,
+        keywords: assistantKeywordCounts(rows.map((row: JsonRecord) => String(row.user_message || ""))),
+        messageCount: rows.length,
+        visitorCount: new Set(rows.map((row: JsonRecord) => String(row.visitor_key))).size,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "assistant-keywords-failed" });
     }
   });
 
