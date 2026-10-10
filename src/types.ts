@@ -7,6 +7,11 @@ export interface Profile {
   resumePdfUrl?: string;
   musicAutoplay?: boolean;
   pageCopy?: {
+    /**
+     * 是否播放前台入场动画。只有显式写入 false 才关闭，旧数据缺省时保持开启。
+     * 配置放在 pageCopy JSON 中，避免只为一个站点开关增加数据库列。
+     */
+    entranceAnimationEnabled?: boolean;
     musicLeadSeconds?: number;
     resume?: string;
     works?: string;

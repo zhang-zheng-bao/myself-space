@@ -4437,6 +4437,21 @@ export default function AdminApp() {
                     }}
                   />
                 </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <VisibilitySwitch
+                    name="入场动画"
+                    hint="关闭后访客打开或刷新网站时直接进入首页，不加载开门视频；已有视频素材和设置都会保留。"
+                    checked={data.profile.pageCopy?.entranceAnimationEnabled !== false}
+                    disabled={saving}
+                    onChange={(next) => {
+                      void mutateAndSave(
+                        (draft) => { editPageCopy(draft, { entranceAnimationEnabled: next }); },
+                        undefined,
+                        { collapse: false },
+                      );
+                    }}
+                  />
+                </div>
                 <Field label="一句话标签" value={data.profile.tagline} onChange={(value) => update((draft) => { draft.profile.tagline = value; })} textarea />
                 <Field label="自我介绍" value={data.profile.intro} onChange={(value) => update((draft) => { draft.profile.intro = value; })} textarea />
                 <div className="space-y-3 border-t border-zinc-800/80 pt-4">
