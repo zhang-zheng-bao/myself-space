@@ -2521,6 +2521,7 @@ function IntroDashboard({ data, onSelectWork, onNavigate }: {
 export default function App() {
   if (window.location.pathname.startsWith("/admin")) return <AdminApp />;
   const [data, setData] = useState<PortfolioData>(normalizeData(emptyPortfolioData));
+  const [portfolioConfigReady, setPortfolioConfigReady] = useState(false);
   const [portfolioReady, setPortfolioReady] = useState(false);
   const [entered, setEntered] = useState(false);
   const [musicEntryReady, setMusicEntryReady] = useState(false);
@@ -2543,14 +2544,22 @@ export default function App() {
       .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then(async (json) => {
         const nextData = normalizeData(json);
+        // 配置一到就决定是否挂载入场动画；首页素材继续在后台预载。
+        // 这样关闭动画不会先闪出默认动画，开启动画也不用干等全部素材。
+        if (!cancelled) {
+          setData(nextData);
+          setPortfolioConfigReady(true);
+        }
         await preloadInitialAssets(nextData, {
           treasuresVisible: isTreasuresVisible(nextData),
           aiZoneVisible: isAiZoneVisible(nextData),
         });
-        if (!cancelled) setData(nextData);
       })
       .catch(() => {
-        if (!cancelled) setData(normalizeData(emptyPortfolioData));
+        if (!cancelled) {
+          setData(normalizeData(emptyPortfolioData));
+          setPortfolioConfigReady(true);
+        }
       })
       .finally(() => {
         window.clearTimeout(timeout);
@@ -2574,7 +2583,16 @@ export default function App() {
   useEffect(() => startVisitTracking(), []);
 
   const pageCopy = { ...defaultPageCopy, ...(data.profile.pageCopy || {}) };
+  const entranceAnimationEnabled = data.profile.pageCopy?.entranceAnimationEnabled !== false;
+  const siteEntered = entered || (portfolioReady && !entranceAnimationEnabled);
   const floatingSentencesConfig = useMemo(() => resolveFloatingSentencesConfig(data.profile.pageCopy?.floatingSentences, activeTab), [data.profile.pageCopy?.floatingSentences, activeTab]);
+
+  // 关闭入场动画时不挂载视频，也不让音乐继续等待动画回调。数据加载完成后
+  // 直接放行自动播放尝试；浏览器若拦截有声播放，播放器原有的交互重试会接管。
+  useEffect(() => {
+    if (!portfolioReady || entranceAnimationEnabled) return;
+    beginMusicEntry();
+  }, [portfolioReady, entranceAnimationEnabled, beginMusicEntry]);
 
   // 后台「模块管理」决定前台导航的顺序与显隐。隐藏时连导航入口一起摘掉，
   // 而不是把空页面留在那里。
@@ -2604,8 +2622,8 @@ export default function App() {
 
   return (
     <>
-    <EntranceCinematic ready={portfolioReady} soundReady={!data.profile.musicAutoplay || !(data.musicTracks || []).some(track => track.audioUrl) || musicSettled} musicLeadSeconds={data.profile.pageCopy?.musicLeadSeconds ?? 3} onMusicEntry={beginMusicEntry} onEntered={completeEntrance} />
-    {portfolioReady && <div className="portfolio-site" inert={!entered} aria-hidden={!entered}>
+    {portfolioConfigReady && entranceAnimationEnabled && <EntranceCinematic ready={portfolioReady} soundReady={!data.profile.musicAutoplay || !(data.musicTracks || []).some(track => track.audioUrl) || musicSettled} musicLeadSeconds={data.profile.pageCopy?.musicLeadSeconds ?? 3} onMusicEntry={beginMusicEntry} onEntered={completeEntrance} />}
+    {portfolioReady && <div className="portfolio-site" inert={!siteEntered} aria-hidden={!siteEntered}>
       <FloatingSentences config={floatingSentencesConfig} />
 
       <header className="site-header">
@@ -2689,7 +2707,7 @@ export default function App() {
       {selectedAiWork && <WorkModal work={selectedAiWork} onClose={() => setSelectedAiWork(null)} />}
       {selectedGallery && <GalleryModal item={selectedGallery} onClose={() => setSelectedGallery(null)} />}
       {selectedTreasure && <TreasureModal item={selectedTreasure} onClose={() => setSelectedTreasure(null)} />}
-      <ShibaAssistant ready={entered} />
+      <ShibaAssistant ready={siteEntered} />
     </div>}
     </>
   );
