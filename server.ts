@@ -948,6 +948,7 @@ function normalizePageCopy(pageCopy: JsonRecord | undefined, transform: (url?: s
         ? {
             ...(item as JsonRecord),
             fileUrl: transform(String((item as JsonRecord).fileUrl || "")),
+            pdfUrl: transform(String((item as JsonRecord).pdfUrl || "")),
             cover: transform(String((item as JsonRecord).cover || "")),
           }
         : item
@@ -1497,18 +1498,19 @@ async function startServer() {
   });
 
   /**
-   * 演示文稿原始字节的同源代理。前端 pptx 解析库需要 ArrayBuffer，
+   * 演示文稿原始字节的同源代理。前端 pdf.js / pptx 解析库需要 ArrayBuffer，
    * 直接 fetch COS 签名地址会撞跨域；走这里就是同源请求。
-   * 只放行 portfolio/ 前缀下的 .pptx，避免变成任意对象下载口。
+   * 只放行 portfolio/ 前缀下的 .pdf / .pptx，避免变成任意对象下载口。
    */
   app.get("/api/media/slides", async (req, res) => {
     try {
       const key = getCosObjectKey(String(req.query.url || ""));
-      if (!cos || !key.startsWith("portfolio/") || !key.toLowerCase().endsWith(".pptx")) {
+      const ext = key.toLowerCase().match(/\.(pdf|pptx)$/)?.[1];
+      if (!cos || !key.startsWith("portfolio/") || !ext) {
         return res.status(404).send("Slides not found");
       }
       const buffer = await getCosObjectBuffer(cos, key);
-      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+      res.setHeader("Content-Type", ext === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.presentationml.presentation");
       res.setHeader("Cache-Control", "private, max-age=300");
       res.send(buffer);
     } catch (err: any) {

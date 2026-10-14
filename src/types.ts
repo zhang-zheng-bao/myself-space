@@ -349,8 +349,13 @@ export interface SlideDeck {
   id: string;
   title: string;
   description?: string;
-  /** .pptx 文件地址。 */
+  /** 原始 .pptx 文件地址，用于「下载原文件」；可以留空（只传了 PDF）。 */
   fileUrl: string;
+  /**
+   * 演示用的 PDF。前台播放器有它就用它（排版完全还原、翻页快），没有才退回现场解析 pptx。
+   * 由作者在 PowerPoint / WPS 里「另存为 PDF」后上传。
+   */
+  pdfUrl?: string;
   /** 原始文件名，用于下载时的文件名展示。 */
   fileName?: string;
   /** 列表卡片的封面图；留空时前台显示占位。 */

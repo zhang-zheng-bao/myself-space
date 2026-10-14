@@ -2,19 +2,31 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, Loader2, Maximize, Minimize, Pause, Play, X } from "lucide-react";
 import type { SlideDeck } from "../types";
+import { openPdf, renderPdfPage } from "../pdfDeck";
 
-/** pptx-preview 的渲染宽度。按固定宽度渲染，再用 transform 缩放到舞台大小 —— 库只在初始化时算一次尺寸，窗口一变就重新解析太慢。 */
+/** 舞台的逻辑渲染宽度。按固定宽度渲染，再用 transform 缩放到舞台大小。 */
 const RENDER_WIDTH = 1280;
 const AUTOPLAY_OPTIONS = [3, 5, 8, 12];
 
-type Previewer = {
+/**
+ * 统一两种渲染后端的最小接口：
+ * - pdf：pdf.js 画到 canvas，排版与导出时完全一致（首选）；
+ * - pptx：pptx-preview 现场解析，只给还没传 PDF 的老条目兜底。
+ */
+type Renderer = {
+  count: number;
+  aspect: number;
+  show: (index: number) => Promise<void> | void;
+  destroy: () => void;
+};
+
+type PptxPreviewer = {
   load: (file: ArrayBuffer) => Promise<{ width: number; height: number; slides: unknown[] }>;
   renderSingleSlide: (index: number) => void;
   destroy: () => void;
-  slideCount: number;
 };
 
-/** 拿 pptx 原始字节。优先走同源代理（避开 COS 跨域）；代理不认的地址（本地 / 外链）再直连。 */
+/** 拿文件原始字节。优先走同源代理（避开 COS 跨域）；代理不认的地址（本地 / 外链）再直连。 */
 async function fetchDeck(url: string) {
   const proxied = await fetch(`/api/media/slides?url=${encodeURIComponent(url)}`);
   if (proxied.ok) return proxied.arrayBuffer();
@@ -23,18 +35,62 @@ async function fetchDeck(url: string) {
   return direct.arrayBuffer();
 }
 
+async function createPdfRenderer(host: HTMLDivElement, url: string): Promise<Renderer> {
+  const { doc, destroy } = await openPdf(await fetchDeck(url));
+  const canvas = document.createElement("canvas");
+  canvas.className = "slide-player__page";
+  host.replaceChildren(canvas);
+  const first = await doc.getPage(1);
+  const base = first.getViewport({ scale: 1 });
+  // 翻页时先画到离屏 canvas 再整张换上，避免翻页瞬间出现半张白屏。
+  let token = 0;
+  return {
+    count: doc.numPages,
+    aspect: base.height / base.width,
+    async show(index) {
+      const mine = ++token;
+      const buffer = document.createElement("canvas");
+      await renderPdfPage(doc, index + 1, buffer, RENDER_WIDTH);
+      if (mine !== token) return;
+      canvas.width = buffer.width;
+      canvas.height = buffer.height;
+      canvas.getContext("2d")?.drawImage(buffer, 0, 0);
+    },
+    destroy() { token++; void destroy(); },
+  };
+}
+
+async function createPptxRenderer(host: HTMLDivElement, url: string): Promise<Renderer> {
+  const [{ init }, buffer] = await Promise.all([import("pptx-preview"), fetchDeck(url)]);
+  host.innerHTML = "";
+  const previewer = init(host, { width: RENDER_WIDTH, mode: "list" }) as unknown as PptxPreviewer;
+  const pptx = await previewer.load(buffer);
+  let current = -1;
+  return {
+    count: pptx.slides?.length || 0,
+    aspect: pptx.width > 0 && pptx.height > 0 ? pptx.height / pptx.width : 9 / 16,
+    show(index) {
+      if (index === current) return;
+      previewer.renderSingleSlide(index);
+      current = index;
+    },
+    destroy() { previewer.destroy(); },
+  };
+}
+
 /**
  * 演示文稿播放器（全屏弹层）。
  *
- * 渲染交给 pptx-preview（纯前端解析 .pptx），这里只用它的 load + renderSingleSlide，
- * 翻页 / 键盘 / 全屏 / 自动播放这些交互自己做 —— 库自带的翻页按钮样式没法和站点统一。
- * 库按需动态 import，不进首屏包。
+ * 有 PDF 就用 PDF（排版完全还原、翻页快）；只有 pptx 的老条目才退回 pptx-preview。
+ * 翻页 / 键盘 / 全屏 / 自动播放这些交互两种后端共用。渲染库都按需动态 import，不进首屏包。
  */
 export default function SlidePlayer({ deck, onClose }: { deck: SlideDeck; onClose: () => void }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const previewerRef = useRef<Previewer | null>(null);
+  const rendererRef = useRef<Renderer | null>(null);
+  const sourceUrl = deck.pdfUrl || deck.fileUrl;
+  const downloadUrl = deck.fileUrl || deck.pdfUrl || "";
 
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
@@ -49,21 +105,21 @@ export default function SlidePlayer({ deck, onClose }: { deck: SlideDeck; onClos
   // 加载 + 解析。
   useEffect(() => {
     let cancelled = false;
+    let renderer: Renderer | null = null;
     setStatus("loading");
     (async () => {
       try {
-        const [{ init }, buffer] = await Promise.all([import("pptx-preview"), fetchDeck(deck.fileUrl)]);
-        if (cancelled || !hostRef.current) return;
-        hostRef.current.innerHTML = "";
-        const previewer = init(hostRef.current, { width: RENDER_WIDTH, mode: "list" }) as unknown as Previewer;
-        const pptx = await previewer.load(buffer);
-        if (cancelled) { previewer.destroy(); return; }
-        previewerRef.current = previewer;
-        if (pptx.width > 0 && pptx.height > 0) setAspect(pptx.height / pptx.width);
-        const total = pptx.slides?.length || 0;
-        setCount(total);
-        if (total === 0) throw new Error("这份文稿里没有幻灯片。");
-        previewer.renderSingleSlide(0);
+        if (!sourceUrl) throw new Error("还没有上传文件。");
+        if (!hostRef.current) return;
+        const isPdf = Boolean(deck.pdfUrl) || /\.pdf(?:$|[?#])/i.test(sourceUrl);
+        renderer = await (isPdf ? createPdfRenderer : createPptxRenderer)(hostRef.current, sourceUrl);
+        if (cancelled) { renderer.destroy(); return; }
+        if (renderer.count === 0) throw new Error("这份文稿里没有页面。");
+        rendererRef.current = renderer;
+        setAspect(renderer.aspect);
+        setCount(renderer.count);
+        await renderer.show(0);
+        if (cancelled) return;
         indexRef.current = 0;
         setIndex(0);
         setStatus("ready");
@@ -75,21 +131,21 @@ export default function SlidePlayer({ deck, onClose }: { deck: SlideDeck; onClos
     })();
     return () => {
       cancelled = true;
-      previewerRef.current?.destroy();
-      previewerRef.current = null;
+      renderer?.destroy();
+      rendererRef.current = null;
     };
-  }, [deck.fileUrl]);
+  }, [sourceUrl, deck.pdfUrl]);
 
   // 渲染是 DOM 副作用，不能放进 setState 的 updater（StrictMode 会调两次），所以另用 ref 记当前页。
   const indexRef = useRef(0);
   const goTo = useCallback((next: number) => {
-    const previewer = previewerRef.current;
-    if (!previewer || count === 0) return;
+    const renderer = rendererRef.current;
+    if (!renderer || count === 0) return;
     const target = Math.min(count - 1, Math.max(0, next));
     if (target === indexRef.current) return;
-    previewer.renderSingleSlide(target);
     indexRef.current = target;
     setIndex(target);
+    void renderer.show(target);
   }, [count]);
 
   // 按舞台大小缩放。
@@ -191,7 +247,7 @@ export default function SlidePlayer({ deck, onClose }: { deck: SlideDeck; onClos
               </button>
             </>
           )}
-          <a className="slide-player__btn" href={deck.fileUrl} download={deck.fileName || undefined} target="_blank" rel="noopener noreferrer" aria-label="下载原文件">
+          <a className="slide-player__btn" href={downloadUrl} download={deck.fileName || undefined} target="_blank" rel="noopener noreferrer" aria-label="下载原文件">
             <Download size={15} />
           </a>
           <button type="button" className="slide-player__btn" onClick={onClose} aria-label="关闭演示">
@@ -213,7 +269,7 @@ export default function SlidePlayer({ deck, onClose }: { deck: SlideDeck; onClos
         {status === "error" && (
           <div className="slide-player__overlay">
             <p className="text-sm text-amber-200">这份文稿无法在浏览器里播放：{error}</p>
-            <a href={deck.fileUrl} download={deck.fileName || undefined} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-zinc-600 px-3 py-1.5 text-xs text-zinc-100 hover:border-zinc-400" onClick={(event) => event.stopPropagation()}>
+            <a href={downloadUrl} download={deck.fileName || undefined} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-zinc-600 px-3 py-1.5 text-xs text-zinc-100 hover:border-zinc-400" onClick={(event) => event.stopPropagation()}>
               <Download size={14} /> 下载原文件
             </a>
           </div>

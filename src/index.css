@@ -1345,6 +1345,8 @@ input[type="range"]::-moz-range-thumb:hover {
 .slide-player__stage { position: relative; flex: 1 1 auto; min-height: 0; margin: 16px; overflow: hidden; cursor: pointer; user-select: none; }
 .slide-player[data-fullscreen] .slide-player__stage { margin: 0; }
 .slide-player__canvas { position: absolute; top: 50%; left: 50%; transform-origin: center; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
+.slide-player__canvas > div, .slide-player__page { display: block; width: 100%; height: 100%; }
+.slide-player__page { background: #fff; }
 /* 库会在每页外包一层带 margin 的 wrapper，演示模式下拍平，让页面贴满画布。 */
 .slide-player__canvas .pptx-preview-wrapper { width: 100% !important; height: 100% !important; overflow: hidden !important; background: transparent !important; }
 .slide-player__canvas .pptx-preview-slide-wrapper { margin: 0 !important; }
