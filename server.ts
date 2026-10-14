@@ -829,6 +829,21 @@ function createCosObjectPath(originalName: string) {
   return `portfolio/${safeFileName}`;
 }
 
+/**
+ * 给 COS 桶刷一条 CORS 规则，让浏览器能直连签名地址取媒体（少走一次服务器转发）。
+ *
+ * 三个坑，全是实测踩出来的（`putBucketCors` 的参数名和 SDK 的 TS 类型对不上，写错了
+ * 只会返回一句 Invalid Param，而这里又是 try/catch 吞掉的，所以能一直悄悄地不生效）：
+ *   1. 字段名必须是**复数**：AllowedOrigins / AllowedMethods / AllowedHeaders /
+ *      ExposeHeaders。SDK 的 .d.ts 写的是单数，照着类型写 COS 不认。
+ *   2. AllowedMethods 里**不能有 OPTIONS**：它不是 COS 认可的方法取值（预检请求照样会被应答，
+ *      不需要列在这里）。
+ *   3. ExposeHeaders 是**必填**，不能省。
+ *
+ * ExposeHeaders 里那条 Content-Range 是关键：跨域响应只有「安全列表」里的头会交给 JS，
+ * Content-Range 不在其中，而不暴露它，pdf.js 读不到总长度就做不了分块加载，
+ * 几 MB 的演示文稿只能整份下完再解析 —— 打开要好几秒。
+ */
 async function ensureCosCors(cos: COS | null) {
   if (!cos || !process.env.TENCENT_COS_BUCKET || !process.env.TENCENT_COS_REGION) return;
   try {
@@ -838,10 +853,10 @@ async function ensureCosCors(cos: COS | null) {
       CORSRules: [
         {
           ID: "portfolio-admin-direct-upload",
-          AllowedOrigin: ["*"],
-          AllowedMethod: ["GET", "PUT", "POST", "HEAD", "OPTIONS"],
-          AllowedHeader: ["*"],
-          ExposeHeader: ["ETag", "Location"],
+          AllowedOrigins: ["*"],
+          AllowedMethods: ["GET", "PUT", "POST", "HEAD"],
+          AllowedHeaders: ["*"],
+          ExposeHeaders: ["ETag", "Location", "Content-Range", "Accept-Ranges", "Content-Length"],
           MaxAgeSeconds: "3600",
         },
       ],
@@ -1015,16 +1030,27 @@ async function deleteCosObject(cos: COS, key: string) {
 }
 
 async function getCosObjectBuffer(cos: COS, key: string) {
-  return new Promise<Buffer>((resolve, reject) => {
+  return (await getCosObjectRange(cos, key, "")).body;
+}
+
+/**
+ * 按 Range 取对象。range 为空就是整份。
+ *
+ * 演示文稿必须支持 Range：pdf.js 只按需取几十 KB 就能画出第一页，而整份取回
+ * 几 MB 再解析，用户要盯着加载页干等。回传的 statusCode / headers 原样给路由用。
+ */
+async function getCosObjectRange(cos: COS, key: string, range: string) {
+  return new Promise<{ statusCode: number; headers: Record<string, string>; body: Buffer }>((resolve, reject) => {
     cos.getObject(
       {
         Bucket: process.env.TENCENT_COS_BUCKET!,
         Region: process.env.TENCENT_COS_REGION!,
         Key: key,
-      },
-      (err, data) => {
+        ...(range ? { Range: range } : {}),
+      } as any,
+      (err: any, data: any) => {
         if (err) reject(err);
-        else resolve(data.Body);
+        else resolve({ statusCode: data.statusCode || 200, headers: data.headers || {}, body: data.Body });
       },
     );
   });
@@ -1498,8 +1524,12 @@ async function startServer() {
   });
 
   /**
-   * 演示文稿原始字节的同源代理。前端 pdf.js / pptx 解析库需要 ArrayBuffer，
-   * 直接 fetch COS 签名地址会撞跨域；走这里就是同源请求。
+   * 演示文稿原始字节的同源代理，支持 Range。
+   *
+   * 两条用途：
+   *  1. 前端优先直连 COS 的签名地址（少一跳、更快）；签名过期或 CORS 出问题时退到这里。
+   *     这条路上取对象用的是服务器自己的密钥，所以签名过期也照样能取到。
+   *  2. pdf.js 在同源这条路上做分块加载，只取需要的那几十 KB。
    * 只放行 portfolio/ 前缀下的 .pdf / .pptx，避免变成任意对象下载口。
    */
   app.get("/api/media/slides", async (req, res) => {
@@ -1509,10 +1539,17 @@ async function startServer() {
       if (!cos || !key.startsWith("portfolio/") || !ext) {
         return res.status(404).send("Slides not found");
       }
-      const buffer = await getCosObjectBuffer(cos, key);
+      const range = String(req.headers.range || "");
+      const { statusCode, headers, body } = await getCosObjectRange(cos, key, range);
+      // 只回传白名单头部：COS 的 x-cos-* 内部信息没必要透给浏览器。
+      for (const name of ["content-range", "content-length", "etag", "last-modified"]) {
+        const value = headers[name];
+        if (value) res.setHeader(name, String(value));
+      }
       res.setHeader("Content-Type", ext === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+      res.setHeader("Accept-Ranges", "bytes");
       res.setHeader("Cache-Control", "private, max-age=300");
-      res.send(buffer);
+      res.status(statusCode).send(body);
     } catch (err: any) {
       res.status(500).send(err.message || "Slides fetch failed");
     }

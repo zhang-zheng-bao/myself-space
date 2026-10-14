@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, Loader2, Maximize, Minimize, Pause, Play, X } from "lucide-react";
 import type { SlideDeck } from "../types";
-import { openPdf, renderPdfPage } from "../pdfDeck";
+import { openPdfSmart, openPdfWhole, renderPdfPage } from "../pdfDeck";
 
 /** 舞台的逻辑渲染宽度。按固定宽度渲染，再用 transform 缩放到舞台大小。 */
 const RENDER_WIDTH = 1280;
@@ -17,6 +17,8 @@ type Renderer = {
   count: number;
   aspect: number;
   show: (index: number) => Promise<void> | void;
+  /** 可选：首屏出来之后在后台把剩下的内容取回来，之后翻页就不用等。 */
+  prefetch?: () => void;
   destroy: () => void;
 };
 
@@ -35,8 +37,8 @@ async function fetchDeck(url: string) {
   return direct.arrayBuffer();
 }
 
-async function createPdfRenderer(host: HTMLDivElement, url: string): Promise<Renderer> {
-  const { doc, destroy } = await openPdf(await fetchDeck(url));
+async function buildPdfRenderer(host: HTMLDivElement, open: () => Promise<{ doc: import("pdfjs-dist").PDFDocumentProxy; destroy: () => Promise<void> }>): Promise<Renderer> {
+  const { doc, destroy } = await open();
   const canvas = document.createElement("canvas");
   canvas.className = "slide-player__page";
   host.replaceChildren(canvas);
@@ -44,10 +46,12 @@ async function createPdfRenderer(host: HTMLDivElement, url: string): Promise<Ren
   const base = first.getViewport({ scale: 1 });
   // 翻页时先画到离屏 canvas 再整张换上，避免翻页瞬间出现半张白屏。
   let token = 0;
-  return {
+  let current = -1;
+  const renderer: Renderer = {
     count: doc.numPages,
     aspect: base.height / base.width,
     async show(index) {
+      if (index === current) return;
       const mine = ++token;
       const buffer = document.createElement("canvas");
       await renderPdfPage(doc, index + 1, buffer, RENDER_WIDTH);
@@ -55,9 +59,48 @@ async function createPdfRenderer(host: HTMLDivElement, url: string): Promise<Ren
       canvas.width = buffer.width;
       canvas.height = buffer.height;
       canvas.getContext("2d")?.drawImage(buffer, 0, 0);
+      current = index;
     },
     destroy() { token++; void destroy(); },
+    /*
+     * 首屏已经出来了，剩下的在后台补齐。
+     *
+     * 分块加载只保证「第一页快」，可真正演示时要一页页翻 —— 不补的话每次翻页都得
+     * 现场再取一块。放在首屏之后触发，是因为早于它就跟第一页抢带宽，反而拖慢开屏。
+     */
+    prefetch() { void doc.getData().catch(() => undefined); },
   };
+  // 首屏在这里就画完，调用方拿到的 renderer 已经是可见状态；也让「超时换路径」覆盖到真正的出画面。
+  await renderer.show(0);
+  return renderer;
+}
+
+/** 首屏预算。过了这个点还没出画面就换整份取回那条稳的路，不让用户干等。 */
+const FIRST_PAINT_BUDGET_MS = 12000;
+
+function withBudget<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer = 0;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => { timer = window.setTimeout(() => reject(new Error("first-paint-timeout")), ms); }),
+  ]).finally(() => window.clearTimeout(timer));
+}
+
+/**
+ * 建 PDF 渲染器：先试分块加载（快），超预算就退回整份取回（慢但不挑外部条件）。
+ *
+ * 这条兜底是有意留的 —— 分块加载依赖「浏览器读得到 Content-Range」等一串外部前提，
+ * 少一环就可能既不报错、也一直不出画面。宁可退回慢路径，也不能让人对着加载页发呆。
+ */
+async function createPdfRenderer(host: HTMLDivElement, url: string, onProgress?: (ratio: number) => void): Promise<Renderer> {
+  const fast = buildPdfRenderer(host, () => openPdfSmart(url, onProgress));
+  try {
+    return await withBudget(fast, FIRST_PAINT_BUDGET_MS);
+  } catch (error) {
+    // 超时那一份可能稍后才 resolve，拿到手立刻销毁，别留下一个还在取数据的文档。
+    void fast.then((renderer) => renderer.destroy()).catch(() => undefined);
+    return buildPdfRenderer(host, () => openPdfWhole(url));
+  }
 }
 
 async function createPptxRenderer(host: HTMLDivElement, url: string): Promise<Renderer> {
@@ -101,18 +144,24 @@ export default function SlidePlayer({ deck, onClose }: { deck: SlideDeck; onClos
   const [fullscreen, setFullscreen] = useState(false);
   const [autoplay, setAutoplay] = useState(false);
   const [interval, setIntervalSec] = useState(5);
+  /** 首屏加载进度（0–1）。分块加载时数字会跳，故意做成粗刻度而不是百分比。 */
+  const [loaded, setLoaded] = useState(0);
 
   // 加载 + 解析。
   useEffect(() => {
     let cancelled = false;
     let renderer: Renderer | null = null;
     setStatus("loading");
+    setLoaded(0);
     (async () => {
       try {
         if (!sourceUrl) throw new Error("还没有上传文件。");
         if (!hostRef.current) return;
+        const onProgress = (ratio: number) => { if (!cancelled) setLoaded(ratio); };
         const isPdf = Boolean(deck.pdfUrl) || /\.pdf(?:$|[?#])/i.test(sourceUrl);
-        renderer = await (isPdf ? createPdfRenderer : createPptxRenderer)(hostRef.current, sourceUrl);
+        renderer = await (isPdf
+          ? createPdfRenderer(hostRef.current, sourceUrl, onProgress)
+          : createPptxRenderer(hostRef.current, sourceUrl));
         if (cancelled) { renderer.destroy(); return; }
         if (renderer.count === 0) throw new Error("这份文稿里没有页面。");
         rendererRef.current = renderer;
@@ -123,6 +172,7 @@ export default function SlidePlayer({ deck, onClose }: { deck: SlideDeck; onClos
         indexRef.current = 0;
         setIndex(0);
         setStatus("ready");
+        renderer.prefetch?.();
       } catch (err: any) {
         if (cancelled) return;
         setError(err?.message || "解析失败");
@@ -264,7 +314,12 @@ export default function SlidePlayer({ deck, onClose }: { deck: SlideDeck; onClos
           <div ref={hostRef} />
         </div>
         {status === "loading" && (
-          <div className="slide-player__overlay"><Loader2 size={22} className="animate-spin text-emerald-300" /><span>正在加载演示文稿…</span></div>
+          <div className="slide-player__overlay">
+            <Loader2 size={22} className="animate-spin text-emerald-300" />
+            <span>正在加载演示文稿…</span>
+            {/* 分块加载时数字会跳，所以只给粗刻度，不让一个假的百分比来回窜。 */}
+            {loaded > 0 && loaded < 1 && <span className="font-mono text-[11px] text-zinc-500">已取 {Math.round(loaded * 100)}%</span>}
+          </div>
         )}
         {status === "error" && (
           <div className="slide-player__overlay">

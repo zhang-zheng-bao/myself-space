@@ -2265,10 +2265,9 @@ function PdfFirstPage({ url }: { url: string }) {
     let destroyPdf: (() => Promise<void>) | null = null;
     (async () => {
       try {
-        const { openPdf, renderPdfPage } = await import("./pdfDeck");
-        const res = await fetch(`/api/media/slides?url=${encodeURIComponent(url)}`);
-        const bytes = res.ok ? await res.arrayBuffer() : await (await fetch(url)).arrayBuffer();
-        const { doc, destroy } = await openPdf(bytes);
+        const { openPdfSmart, renderPdfPage } = await import("./pdfDeck");
+        // 分块加载：画封面只需要文件头和第一页那几个对象，不必把整份 PDF 下回来。
+        const { doc, destroy } = await openPdfSmart(url);
         destroyPdf = destroy;
         if (cancelled) return;
         // 宽度在挂载这一刻可能还是 0（父容器尚未布局），回退到一个保证有值的宽度。
