@@ -2247,9 +2247,51 @@ function PostPane({ items, description = defaultPageCopy.posts }: { items: Image
   );
 }
 
+/**
+ * 没上传封面的演示：现场把 PDF 第一页画成封面。
+ * 后台新上传的 PDF 会自动生成封面图，这里主要兜住老条目。
+ *
+ * 不用 IntersectionObserver 做懒加载：它在页面不绘制时（后台标签页、隐藏的
+ * 预览面板）可能一次都不触发，封面就永远停在占位符上。栏目本身已经是点进来
+ * 才渲染，进入时加载一次够用，pdf.js 也是全站共用的。
+ */
+function PdfFirstPage({ url }: { url: string }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    let cancelled = false;
+    let destroyPdf: (() => Promise<void>) | null = null;
+    (async () => {
+      try {
+        const { openPdf, renderPdfPage } = await import("./pdfDeck");
+        const res = await fetch(`/api/media/slides?url=${encodeURIComponent(url)}`);
+        const bytes = res.ok ? await res.arrayBuffer() : await (await fetch(url)).arrayBuffer();
+        const { doc, destroy } = await openPdf(bytes);
+        destroyPdf = destroy;
+        if (cancelled) return;
+        // 宽度在挂载这一刻可能还是 0（父容器尚未布局），回退到一个保证有值的宽度。
+        const width = canvas.parentElement?.clientWidth || canvas.clientWidth || 480;
+        await renderPdfPage(doc, 1, canvas, width);
+        if (!cancelled) setState("ready");
+      } catch {
+        if (!cancelled) setState("error");
+      }
+    })();
+    return () => { cancelled = true; void destroyPdf?.(); };
+  }, [url]);
+  return (
+    <>
+      <canvas ref={canvasRef} aria-hidden="true" className="h-full w-full bg-white object-cover transition-transform duration-500 group-hover:scale-[1.03]" style={{ display: state === "ready" ? "block" : "none" }} />
+      {state !== "ready" && <div className="flex h-full items-center justify-center font-serif text-lg tracking-widest text-zinc-500">{state === "error" ? "PDF" : "…"}</div>}
+    </>
+  );
+}
+
 function SlidesPane({ items, description = defaultPageCopy.slides }: { items: SlideDeck[]; description?: string }) {
   const [playing, setPlaying] = useState<SlideDeck | null>(null);
-  const usable = items.filter((deck) => deck.fileUrl);
+  const usable = items.filter((deck) => deck.pdfUrl || deck.fileUrl);
   return (
     <div className="space-y-8">
       <div><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-violet-300/80">演示文稿 / SLIDES</span>{description ? <p className="mt-3 max-w-3xl text-[15px] leading-8 text-zinc-300">{zhText(description)}</p> : null}</div>
@@ -2266,6 +2308,8 @@ function SlidesPane({ items, description = defaultPageCopy.slides }: { items: Sl
               <div className="relative aspect-video overflow-hidden bg-gradient-to-br from-violet-950/60 via-zinc-950 to-zinc-900">
                 {deck.cover ? (
                   <img src={deck.cover} alt="" loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
+                ) : deck.pdfUrl ? (
+                  <PdfFirstPage url={deck.pdfUrl} />
                 ) : (
                   <div className="flex h-full items-center justify-center font-serif text-lg tracking-widest text-zinc-500">PPTX</div>
                 )}

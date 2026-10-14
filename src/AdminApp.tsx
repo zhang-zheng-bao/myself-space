@@ -3774,25 +3774,53 @@ export default function AdminApp() {
     }
   }
 
+  /**
+   * 演示文稿上传。一个入口同时接 PDF 与 PPTX，按扩展名分别落到 pdfUrl / fileUrl：
+   * - PDF 是前台演示用的（排版完全还原）。没有封面时，顺手把第一页渲染成封面一起传上去。
+   * - PPTX 是给访客「下载原文件」用的；只有它、没有 PDF 时前台才退回现场解析。
+   */
   async function uploadSlideFile(event: ChangeEvent<HTMLInputElement>, deckId: string) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    if (!/\.pptx$/i.test(file.name)) {
-      setStatus("请选择 .pptx 文件（旧版 .ppt 请先用 PowerPoint / WPS 另存为 .pptx）。");
+    const kind = /\.pdf$/i.test(file.name) ? "pdf" : /\.pptx$/i.test(file.name) ? "pptx" : null;
+    if (!kind) {
+      setStatus("请选择 .pdf 或 .pptx 文件（旧版 .ppt 请先用 PowerPoint / WPS 另存）。");
       return;
     }
+    const deck = (data.profile.pageCopy?.slideList || []).find((item) => item.id === deckId);
+    const hadCover = Boolean(deck?.cover);
+    let uploaded = false;
     await uploadMediaFile(file, (url) => {
-      const previous = (data.profile.pageCopy?.slideList || []).find((item) => item.id === deckId)?.fileUrl;
+      uploaded = true;
+      const previous = kind === "pdf" ? deck?.pdfUrl : deck?.fileUrl;
       if (previous && previous !== url) void deleteMedia([previous], false);
       update((draft) => {
         const target = (draft.profile.pageCopy?.slideList || []).find((item) => item.id === deckId);
         if (!target) return;
-        target.fileUrl = url;
-        target.fileName = file.name;
-        if (!target.title) target.title = file.name.replace(/\.pptx$/i, "");
+        if (kind === "pdf") target.pdfUrl = url;
+        else { target.fileUrl = url; target.fileName = file.name; }
+        if (!target.title) target.title = file.name.replace(/\.(pdf|pptx)$/i, "");
       });
     });
+    if (uploaded && kind === "pdf" && !hadCover) await generateSlideCover(file, deckId);
+  }
+
+  /** 用 PDF 第一页生成封面。失败不影响 PDF 本身，只提示一句、前台显示占位。 */
+  async function generateSlideCover(file: File, deckId: string) {
+    try {
+      setStatus("正在用第一页生成封面…");
+      const { pdfFirstPageCover } = await import("./pdfDeck");
+      const cover = await pdfFirstPageCover(file);
+      await uploadMediaFile(cover, (url) => {
+        update((draft) => {
+          const target = (draft.profile.pageCopy?.slideList || []).find((item) => item.id === deckId);
+          if (target && !target.cover) target.cover = url;
+        });
+      });
+    } catch (error: any) {
+      setStatus(`PDF 已上传，但自动封面生成失败：${error?.message || "未知错误"}。可以手动上传封面。`);
+    }
   }
 
   async function uploadMusicAudio(file: File, trackId: string) {
@@ -5890,7 +5918,7 @@ export default function AdminApp() {
               <>
                 <Section
                   title="演示文稿"
-                  description="上传 .pptx，前台在浏览器里直接演示（翻页 / 全屏 / 自动播放）。复杂动画、切换效果和部分字体无法还原，上传后点「预览」确认效果。"
+                  description="推荐上传 PDF（在 PowerPoint / WPS 里「另存为 PDF」）：排版完全还原、翻页快。可再附上 .pptx 供访客下载原文件。没传封面时自动用 PDF 第一页。"
                   action={
                     <button
                       type="button"
@@ -5917,7 +5945,7 @@ export default function AdminApp() {
                       <ListSummaryRow
                         thumb={item.cover}
                         title={item.title || "演示 " + (index + 1)}
-                        meta={item.fileUrl ? (item.fileName || "已上传") : "未上传文件"}
+                        meta={item.pdfUrl ? (item.fileUrl ? "PDF + PPTX" : "PDF") : item.fileUrl ? "仅 PPTX（建议补 PDF）" : "未上传文件"}
                         preview={item.description}
                         active={isActive}
                         onEdit={() => setExpandedSlideId(key)}
@@ -5927,7 +5955,7 @@ export default function AdminApp() {
                         onDelete={() => {
                           void removeAndSave(
                             (draft) => { draft.profile.pageCopy!.slideList = (draft.profile.pageCopy!.slideList || []).filter((_, i) => i !== index); },
-                            [item.fileUrl, item.cover || ""],
+                            [item.fileUrl, item.pdfUrl || "", item.cover || ""],
                             () => setExpandedSlideId(null),
                           );
                         }}
@@ -5947,22 +5975,39 @@ export default function AdminApp() {
                         <Field label="日期（可留空）" value={item.date || ""} placeholder="例如 2026-10" onChange={(value) => update((draft) => { draft.profile.pageCopy!.slideList![index].date = value; })} />
                       </section>
                       <section className="adm-panel mt-3 space-y-3 p-3">
-                        <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-500">文件 / PPTX</p>
+                        <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-500">演示文件 / PDF（推荐）</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-emerald-500/40 px-2.5 py-2 text-xs text-emerald-200 hover:border-emerald-400">
+                            <FileText size={15} /> {item.pdfUrl ? "替换 PDF" : "上传 PDF"}
+                            <input className="hidden" type="file" accept=".pdf,application/pdf" onChange={(event) => void uploadSlideFile(event, item.id)} />
+                          </label>
+                          {item.pdfUrl ? (
+                            <span className="text-xs text-emerald-300/80">已上传，前台用 PDF 演示</span>
+                          ) : (
+                            <span className="text-xs text-zinc-500">PowerPoint / WPS：文件 → 另存为 → PDF。</span>
+                          )}
+                        </div>
+                        <p className="pt-1 font-mono text-[10px] uppercase tracking-widest text-zinc-500">原文件 / PPTX（可选，供下载）</p>
                         <div className="flex flex-wrap items-center gap-2">
                           <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-2 text-xs text-zinc-300 hover:border-zinc-600">
                             <FileText size={15} /> {item.fileUrl ? "替换 .pptx" : "上传 .pptx"}
                             <input className="hidden" type="file" accept={pptxAccept} onChange={(event) => void uploadSlideFile(event, item.id)} />
                           </label>
                           {item.fileUrl ? (
-                            <>
-                              <span className="max-w-[260px] truncate text-xs text-zinc-400" title={item.fileName}>{item.fileName || item.fileUrl}</span>
-                              <button type="button" onClick={() => setPreviewDeck(item)} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 px-2.5 py-2 text-xs text-emerald-300 hover:border-emerald-400">
-                                <Play size={14} /> 预览演示
-                              </button>
-                            </>
+                            <span className="max-w-[260px] truncate text-xs text-zinc-400" title={item.fileName}>{item.fileName || item.fileUrl}</span>
                           ) : (
                             <span className="text-xs text-zinc-500">只支持 .pptx；旧版 .ppt 请先另存为 .pptx。</span>
                           )}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          {item.pdfUrl || item.fileUrl ? (
+                            <button type="button" onClick={() => setPreviewDeck(item)} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 px-2.5 py-2 text-xs text-emerald-300 hover:border-emerald-400">
+                              <Play size={14} /> 预览演示
+                            </button>
+                          ) : null}
+                          {!item.pdfUrl && item.fileUrl ? (
+                            <span className="text-xs text-amber-300/90">目前只有 PPTX，前台会现场解析（较慢、可能错位），建议补一份 PDF。</span>
+                          ) : null}
                         </div>
                       </section>
                       <section className="adm-panel mt-3 space-y-3 p-3">
@@ -5978,7 +6023,7 @@ export default function AdminApp() {
                           </label>
                           {item.cover ? (
                             <button type="button" onClick={() => { const previous = item.cover; update((draft) => { draft.profile.pageCopy!.slideList![index].cover = ""; }); if (previous) void deleteMedia([previous], false); }} className="rounded-lg border border-zinc-800 px-2.5 py-2 text-xs text-zinc-400 hover:border-red-500 hover:text-red-300">移除封面</button>
-                          ) : <span className="text-xs text-zinc-500">建议 16:9，可以直接用第一页的截图。</span>}
+                          ) : <span className="text-xs text-zinc-500">留空时自动用 PDF 第一页作封面。</span>}
                         </div>
                         {item.cover ? <img src={item.cover} alt="封面预览" className="aspect-video w-full rounded-lg bg-black object-cover" /> : null}
                       </section>
