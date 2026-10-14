@@ -36,8 +36,11 @@ import {
   MonitorSmartphone,
   MousePointerClick,
   Music,
+  Play,
   Plus,
+  Presentation,
   RefreshCw,
+  StickyNote,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -46,7 +49,8 @@ import {
   X,
   ZoomIn,
 } from "lucide-react";
-import { Experience, GalleryItem, HomeStatCopy, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, AnalyticsCount, AnalyticsRange, AnalyticsSummaryPayload, AnalyticsVisitorsPayload, AssistantConversationMessage, AssistantConversationSummary, AssistantKeywordPayload, TrafficType, VisitRecord, VisitorRecord, Work, WorkLink, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder, sectionMeta } from "./types";
+import SlidePlayer from "./components/SlidePlayer";
+import { Experience, GalleryItem, HomeStatCopy, ImagePost, MusicTrack, Poem, PortfolioData, SlideDeck, ResumeProfile, SectionKey, TreasureItem, AnalyticsCount, AnalyticsRange, AnalyticsSummaryPayload, AnalyticsVisitorsPayload, AssistantConversationMessage, AssistantConversationSummary, AssistantKeywordPayload, TrafficType, VisitRecord, VisitorRecord, Work, WorkLink, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder, sectionMeta } from "./types";
 
 const emptyWork: Work = {
   id: "",
@@ -88,6 +92,27 @@ const emptyPoem: Poem = {
   text: "",
   note: "",
 };
+
+const emptyPost: ImagePost = {
+  id: "",
+  title: "",
+  text: "",
+  images: [],
+  tags: [],
+  date: "",
+};
+
+const emptySlideDeck: SlideDeck = {
+  id: "",
+  title: "",
+  description: "",
+  fileUrl: "",
+  fileName: "",
+  cover: "",
+  date: "",
+};
+
+const pptxAccept = ".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
 const emptyMusicTrack: MusicTrack = {
   id: "",
@@ -467,6 +492,8 @@ function setSectionCopy(draft: PortfolioData, key: SectionKey, value: string) {
     case "prospects": editPageCopy(draft, { gallery: value }); return;
     case "treasures": editPageCopy(draft, { treasures: value }); return;
     case "poems": editPageCopy(draft, { poems: value }); return;
+    case "posts": editPageCopy(draft, { posts: value }); return;
+    case "slides": editPageCopy(draft, { slides: value }); return;
     case "contact": editPageCopy(draft, { contact: value }); return;
     default: return;
   }
@@ -481,6 +508,8 @@ function sectionCopyValue(pageCopy: PortfolioData["profile"]["pageCopy"], key: S
     case "prospects": return pageCopy?.gallery;
     case "treasures": return pageCopy?.treasures;
     case "poems": return pageCopy?.poems;
+    case "posts": return pageCopy?.posts;
+    case "slides": return pageCopy?.slides;
     case "contact": return pageCopy?.contact;
     default: return undefined;
   }
@@ -2666,6 +2695,60 @@ function PoemSummary({ item, index, active, onEdit, onDelete }: {
   );
 }
 
+/** 把数组第 from 项挪到 to（摘出来再插进去），越界时原样返回副本。 */
+function moveItem<T>(list: T[], from: number, to: number): T[] {
+  const next = [...list];
+  if (from < 0 || to < 0 || from >= next.length || to >= next.length || from === to) return next;
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+/** 「图文分享」「演示文稿」共用的列表摘要行：缩略图 + 标题 + 一句摘要 + 上下移 / 编辑 / 删除。 */
+function ListSummaryRow({ thumb, title, meta, preview, active, onEdit, onDelete, onMove, canMoveUp, canMoveDown }: {
+  thumb?: string;
+  title: string;
+  meta: string;
+  preview?: string;
+  active: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+  onMove: (delta: number) => void;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+}) {
+  const firstLine = (preview || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || "";
+  const stop = (fn: () => void) => (event: React.MouseEvent) => { event.stopPropagation(); fn(); };
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onEdit}
+      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onEdit(); } }}
+      className="grid w-full cursor-pointer grid-cols-[56px_1fr] gap-3 p-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-400/40 md:grid-cols-[56px_1fr_auto] md:items-center"
+    >
+      <div className="h-14 w-14 overflow-hidden rounded-lg bg-white/[0.04]">
+        {thumb ? <img src={thumb} alt="" className="h-full w-full object-cover" /> : null}
+      </div>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="truncate text-sm font-semibold text-white">{title}</span>
+          <span className="rounded bg-white/[0.07] px-1.5 py-0.5 text-[10px] text-zinc-400">{meta}</span>
+        </div>
+        <p className="mt-0.5 truncate text-xs text-zinc-400">{firstLine || "（还没有文字）"}</p>
+      </div>
+      <div className="col-span-2 flex shrink-0 items-center gap-1.5 justify-self-start md:col-span-1 md:justify-self-end">
+        <button type="button" aria-label="上移" disabled={!canMoveUp} onClick={stop(() => onMove(-1))} className="rounded-lg border border-zinc-800 p-1.5 text-zinc-300 hover:border-zinc-600 disabled:opacity-40"><ArrowUp size={13} /></button>
+        <button type="button" aria-label="下移" disabled={!canMoveDown} onClick={stop(() => onMove(1))} className="rounded-lg border border-zinc-800 p-1.5 text-zinc-300 hover:border-zinc-600 disabled:opacity-40"><ArrowDown size={13} /></button>
+        <span className="rounded-lg bg-white/[0.07] px-2.5 py-1 text-xs text-zinc-300">{active ? "编辑中…" : "编辑"}</span>
+        <button type="button" aria-label={"删除「" + title + "」"} onClick={stop(onDelete)} className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-400 transition-colors duration-200 hover:border-red-500 hover:text-red-300">
+          <Trash2 size={13} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /**
  * 经历的前台效果。照着首页时间线（App.tsx 的 career-copy）的排版画一份：
  * 绿色时间 + 「@ 身份」一行，下面是大字标题和简介 —— 改字段时立刻能看出它落在前台哪个位置。
@@ -3087,6 +3170,9 @@ export default function AdminApp() {
   const [expandedGalleryId, setExpandedGalleryId] = useState<string | null>(null);
   const [expandedTreasureId, setExpandedTreasureId] = useState<string | null>(null);
   const [expandedPoemId, setExpandedPoemId] = useState<string | null>(null);
+  const [expandedPostId, setExpandedPostId] = useState<string | null>(null);
+  const [expandedSlideId, setExpandedSlideId] = useState<string | null>(null);
+  const [previewDeck, setPreviewDeck] = useState<SlideDeck | null>(null);
   const [expandedMusicId, setExpandedMusicId] = useState<string | null>(null);
   /**
    * 音乐模块的批量操作状态。
@@ -3141,6 +3227,8 @@ export default function AdminApp() {
   const galleryModalIndex = indexByRowKey(data.gallery || [], expandedGalleryId);
   const treasureModalIndex = indexByRowKey(data.treasures || [], expandedTreasureId);
   const poemModalIndex = indexByRowKey(data.profile.pageCopy?.poemList || [], expandedPoemId);
+  const postModalIndex = indexByRowKey(data.profile.pageCopy?.postList || [], expandedPostId);
+  const slideModalIndex = indexByRowKey(data.profile.pageCopy?.slideList || [], expandedSlideId);
   const musicModalIndex = indexByRowKey(data.musicTracks || [], expandedMusicId);
 
   const [expandedFloatingId, setExpandedFloatingId] = useState("");
@@ -3380,6 +3468,8 @@ export default function AdminApp() {
       { key: "gallery", label: "应用技能", icon: Images },
       { key: "treasures", label: "我的珍藏", icon: Gem },
       { key: "poems", label: "诗与惆怅", icon: Feather },
+      { key: "posts", label: "图文分享", icon: StickyNote },
+      { key: "slides", label: "演示文稿", icon: Presentation },
       { key: "music", label: "音乐播放", icon: Music },
       { key: "contact", label: "联系方式", icon: AtSign },
       { key: "floating", label: "弹幕设置", icon: MessagesSquare },
@@ -3416,6 +3506,8 @@ export default function AdminApp() {
       case "prospects": return (data.gallery || []).length;
       case "treasures": return (data.treasures || []).length;
       case "poems": return (data.profile.pageCopy?.poemList || []).length;
+      case "posts": return (data.profile.pageCopy?.postList || []).length;
+      case "slides": return (data.profile.pageCopy?.slideList || []).length;
       default: return null;
     }
   }
@@ -3663,6 +3755,44 @@ export default function AdminApp() {
       },
       { collapse: false },
     );
+  }
+
+  /**
+   * 图文多图上传。逐张串行走 uploadMediaFile（复用压缩 / 大小上限 / 进度提示），
+   * 每传完一张就按 id 追加 —— 用 id 而不是下标定位，上传途中列表被拖动排序也不会写错条目。
+   */
+  async function uploadPostImages(event: ChangeEvent<HTMLInputElement>, postId: string) {
+    const files = Array.from(event.target.files ?? []) as File[];
+    event.target.value = "";
+    for (const file of files) {
+      await uploadMediaFile(file, (url) => {
+        update((draft) => {
+          const target = (draft.profile.pageCopy?.postList || []).find((item) => item.id === postId);
+          if (target) target.images = [...(target.images || []), url];
+        });
+      });
+    }
+  }
+
+  async function uploadSlideFile(event: ChangeEvent<HTMLInputElement>, deckId: string) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!/\.pptx$/i.test(file.name)) {
+      setStatus("请选择 .pptx 文件（旧版 .ppt 请先用 PowerPoint / WPS 另存为 .pptx）。");
+      return;
+    }
+    await uploadMediaFile(file, (url) => {
+      const previous = (data.profile.pageCopy?.slideList || []).find((item) => item.id === deckId)?.fileUrl;
+      if (previous && previous !== url) void deleteMedia([previous], false);
+      update((draft) => {
+        const target = (draft.profile.pageCopy?.slideList || []).find((item) => item.id === deckId);
+        if (!target) return;
+        target.fileUrl = url;
+        target.fileName = file.name;
+        if (!target.title) target.title = file.name.replace(/\.pptx$/i, "");
+      });
+    });
   }
 
   async function uploadMusicAudio(file: File, trackId: string) {
@@ -5656,6 +5786,206 @@ export default function AdminApp() {
                     </EditorModal>
                   );
                 })()}
+              </>
+            )}
+
+            {active === "posts" && (
+              <>
+                <Section
+                  title="图文分享"
+                  description="前台按这里的顺序上下滑切换，每条的图片按顺序左右翻页（第一张是封面）。页首文案在「模块管理」里。"
+                  action={
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = uid("post");
+                        addDraft(
+                          (draft) => { draft.profile.pageCopy!.postList = [...(draft.profile.pageCopy!.postList || []), { ...emptyPost, id }]; },
+                          () => setExpandedPostId(id),
+                        );
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-zinc-300 hover:border-zinc-600"
+                    >
+                      <Plus size={15} /> 新增图文
+                    </button>
+                  }
+                >
+                  <p className="text-sm leading-5 text-zinc-400">共 {(data.profile.pageCopy?.postList || []).length} 条。</p>
+                </Section>
+                {(data.profile.pageCopy?.postList || []).map((item: ImagePost, index: number) => {
+                  const key = rowKey(item.id, index);
+                  const isActive = expandedPostId === key;
+                  return (
+                    <EditorRow key={key} expanded={isActive}>
+                      <ListSummaryRow
+                        thumb={item.images?.[0]}
+                        title={item.title || "图文 " + (index + 1)}
+                        meta={`${(item.images || []).length} 张图`}
+                        preview={item.text}
+                        active={isActive}
+                        onEdit={() => setExpandedPostId(key)}
+                        canMoveUp={index > 0}
+                        canMoveDown={index < (data.profile.pageCopy?.postList || []).length - 1}
+                        onMove={(delta) => void mutateAndSave((draft) => { draft.profile.pageCopy!.postList = moveItem(draft.profile.pageCopy!.postList || [], index, index + delta); }, undefined, { collapse: false })}
+                        onDelete={() => {
+                          void removeAndSave(
+                            (draft) => { draft.profile.pageCopy!.postList = (draft.profile.pageCopy!.postList || []).filter((_, i) => i !== index); },
+                            item.images || [],
+                            () => setExpandedPostId(null),
+                          );
+                        }}
+                      />
+                    </EditorRow>
+                  );
+                })}
+
+                {postModalIndex >= 0 && (() => {
+                  const item = (data.profile.pageCopy?.postList || [])[postModalIndex];
+                  const index = postModalIndex;
+                  const images = item.images || [];
+                  const setImages = (next: string[]) => update((draft) => { draft.profile.pageCopy!.postList![index].images = next; });
+                  return (
+                    <EditorModal title={"图文 " + (index + 1)} size="lg" onClose={() => setExpandedPostId(null)} footer={<SaveCurrentButton label="保存全部" />}>
+                      <section className="adm-panel space-y-3 p-3">
+                        <Field label="标题" value={item.title} onChange={(value) => update((draft) => { draft.profile.pageCopy!.postList![index].title = value; })} />
+                        <Field label="正文（换行分段）" value={item.text} textarea rows={6} onChange={(value) => update((draft) => { draft.profile.pageCopy!.postList![index].text = value; })} />
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <Field label="标签（逗号分隔）" value={(item.tags || []).join("，")} hint="前台显示为 #标签" onChange={(value) => update((draft) => { draft.profile.pageCopy!.postList![index].tags = value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean); })} />
+                          <Field label="日期（可留空）" value={item.date || ""} placeholder="例如 2026-10" onChange={(value) => update((draft) => { draft.profile.pageCopy!.postList![index].date = value; })} />
+                        </div>
+                      </section>
+                      <section className="adm-panel mt-3 p-3">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                          <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-500">图片 / IMAGES · {images.length} 张 · 第一张为封面</p>
+                          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-zinc-600">
+                            <ImagePlus size={15} /> 上传图片（可多选）
+                            <input className="hidden" type="file" accept="image/*" multiple onChange={(event) => void uploadPostImages(event, item.id)} />
+                          </label>
+                        </div>
+                        {images.length > 0 ? (
+                          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                            {images.map((url, i) => (
+                              <div key={`${url}-${i}`} className="group relative aspect-[3/4] overflow-hidden rounded-lg border border-zinc-800 bg-black">
+                                <img src={url} alt={`第 ${i + 1} 张`} className="h-full w-full object-cover" />
+                                {i === 0 && <span className="absolute left-1.5 top-1.5 rounded bg-emerald-500/90 px-1.5 py-0.5 text-[10px] text-black">封面</span>}
+                                <div className="absolute inset-x-0 bottom-0 flex justify-between gap-1 bg-black/70 p-1">
+                                  <button type="button" aria-label="前移" disabled={i === 0} onClick={() => setImages(moveItem(images, i, i - 1))} className="rounded p-1 text-zinc-200 hover:bg-white/10 disabled:opacity-30"><ArrowUp size={13} className="-rotate-90" /></button>
+                                  <button type="button" aria-label="删除这张" onClick={() => { setImages(images.filter((_, j) => j !== i)); void deleteMedia([url], false); }} className="rounded p-1 text-zinc-200 hover:bg-red-500/30 hover:text-red-200"><Trash2 size={13} /></button>
+                                  <button type="button" aria-label="后移" disabled={i === images.length - 1} onClick={() => setImages(moveItem(images, i, i + 1))} className="rounded p-1 text-zinc-200 hover:bg-white/10 disabled:opacity-30"><ArrowUp size={13} className="rotate-90" /></button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="rounded-lg border border-dashed border-zinc-800 px-3 py-6 text-center text-xs text-zinc-500">还没有图片。建议 3:4 竖图，前台卡片按这个比例裁切。</p>
+                        )}
+                      </section>
+                    </EditorModal>
+                  );
+                })()}
+              </>
+            )}
+
+            {active === "slides" && (
+              <>
+                <Section
+                  title="演示文稿"
+                  description="上传 .pptx，前台在浏览器里直接演示（翻页 / 全屏 / 自动播放）。复杂动画、切换效果和部分字体无法还原，上传后点「预览」确认效果。"
+                  action={
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = uid("slides");
+                        addDraft(
+                          (draft) => { draft.profile.pageCopy!.slideList = [...(draft.profile.pageCopy!.slideList || []), { ...emptySlideDeck, id }]; },
+                          () => setExpandedSlideId(id),
+                        );
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-zinc-300 hover:border-zinc-600"
+                    >
+                      <Plus size={15} /> 新增演示
+                    </button>
+                  }
+                >
+                  <p className="text-sm leading-5 text-zinc-400">共 {(data.profile.pageCopy?.slideList || []).length} 份。没有上传文件的条目前台不显示。</p>
+                </Section>
+                {(data.profile.pageCopy?.slideList || []).map((item: SlideDeck, index: number) => {
+                  const key = rowKey(item.id, index);
+                  const isActive = expandedSlideId === key;
+                  return (
+                    <EditorRow key={key} expanded={isActive}>
+                      <ListSummaryRow
+                        thumb={item.cover}
+                        title={item.title || "演示 " + (index + 1)}
+                        meta={item.fileUrl ? (item.fileName || "已上传") : "未上传文件"}
+                        preview={item.description}
+                        active={isActive}
+                        onEdit={() => setExpandedSlideId(key)}
+                        canMoveUp={index > 0}
+                        canMoveDown={index < (data.profile.pageCopy?.slideList || []).length - 1}
+                        onMove={(delta) => void mutateAndSave((draft) => { draft.profile.pageCopy!.slideList = moveItem(draft.profile.pageCopy!.slideList || [], index, index + delta); }, undefined, { collapse: false })}
+                        onDelete={() => {
+                          void removeAndSave(
+                            (draft) => { draft.profile.pageCopy!.slideList = (draft.profile.pageCopy!.slideList || []).filter((_, i) => i !== index); },
+                            [item.fileUrl, item.cover || ""],
+                            () => setExpandedSlideId(null),
+                          );
+                        }}
+                      />
+                    </EditorRow>
+                  );
+                })}
+
+                {slideModalIndex >= 0 && (() => {
+                  const item = (data.profile.pageCopy?.slideList || [])[slideModalIndex];
+                  const index = slideModalIndex;
+                  return (
+                    <EditorModal title={"演示 " + (index + 1)} onClose={() => setExpandedSlideId(null)} footer={<SaveCurrentButton label="保存全部" />}>
+                      <section className="adm-panel space-y-3 p-3">
+                        <Field label="标题" value={item.title} onChange={(value) => update((draft) => { draft.profile.pageCopy!.slideList![index].title = value; })} />
+                        <Field label="简介（可留空）" value={item.description || ""} textarea onChange={(value) => update((draft) => { draft.profile.pageCopy!.slideList![index].description = value; })} />
+                        <Field label="日期（可留空）" value={item.date || ""} placeholder="例如 2026-10" onChange={(value) => update((draft) => { draft.profile.pageCopy!.slideList![index].date = value; })} />
+                      </section>
+                      <section className="adm-panel mt-3 space-y-3 p-3">
+                        <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-500">文件 / PPTX</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-2 text-xs text-zinc-300 hover:border-zinc-600">
+                            <FileText size={15} /> {item.fileUrl ? "替换 .pptx" : "上传 .pptx"}
+                            <input className="hidden" type="file" accept={pptxAccept} onChange={(event) => void uploadSlideFile(event, item.id)} />
+                          </label>
+                          {item.fileUrl ? (
+                            <>
+                              <span className="max-w-[260px] truncate text-xs text-zinc-400" title={item.fileName}>{item.fileName || item.fileUrl}</span>
+                              <button type="button" onClick={() => setPreviewDeck(item)} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 px-2.5 py-2 text-xs text-emerald-300 hover:border-emerald-400">
+                                <Play size={14} /> 预览演示
+                              </button>
+                            </>
+                          ) : (
+                            <span className="text-xs text-zinc-500">只支持 .pptx；旧版 .ppt 请先另存为 .pptx。</span>
+                          )}
+                        </div>
+                      </section>
+                      <section className="adm-panel mt-3 space-y-3 p-3">
+                        <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-500">封面 / COVER（可留空）</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-2 text-xs text-zinc-300 hover:border-zinc-600">
+                            <ImagePlus size={15} /> 上传封面
+                            <input className="hidden" type="file" accept="image/*" onChange={(event) => upload(event, (url) => {
+                              const previous = item.cover;
+                              if (previous) void deleteMedia([previous], false);
+                              update((draft) => { draft.profile.pageCopy!.slideList![index].cover = url; });
+                            })} />
+                          </label>
+                          {item.cover ? (
+                            <button type="button" onClick={() => { const previous = item.cover; update((draft) => { draft.profile.pageCopy!.slideList![index].cover = ""; }); if (previous) void deleteMedia([previous], false); }} className="rounded-lg border border-zinc-800 px-2.5 py-2 text-xs text-zinc-400 hover:border-red-500 hover:text-red-300">移除封面</button>
+                          ) : <span className="text-xs text-zinc-500">建议 16:9，可以直接用第一页的截图。</span>}
+                        </div>
+                        {item.cover ? <img src={item.cover} alt="封面预览" className="aspect-video w-full rounded-lg bg-black object-cover" /> : null}
+                      </section>
+                    </EditorModal>
+                  );
+                })()}
+                {previewDeck ? <SlidePlayer deck={previewDeck} onClose={() => setPreviewDeck(null)} /> : null}
               </>
             )}
 

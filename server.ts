@@ -931,6 +931,29 @@ function normalizePageCopy(pageCopy: JsonRecord | undefined, transform: (url?: s
     ));
   }
 
+  // 图文与演示文稿：同属 pageCopy 内的媒体载体，规则与 poemList / aiWorks 相同。
+  if (Array.isArray(copy.postList)) {
+    copy.postList = copy.postList.map((item) => {
+      if (!item || typeof item !== "object") return item;
+      const post = item as JsonRecord;
+      return {
+        ...post,
+        images: Array.isArray(post.images) ? post.images.map((url) => transform(String(url || ""))).filter(Boolean) : [],
+      };
+    });
+  }
+  if (Array.isArray(copy.slideList)) {
+    copy.slideList = copy.slideList.map((item) => (
+      item && typeof item === "object"
+        ? {
+            ...(item as JsonRecord),
+            fileUrl: transform(String((item as JsonRecord).fileUrl || "")),
+            cover: transform(String((item as JsonRecord).cover || "")),
+          }
+        : item
+    ));
+  }
+
   // AI 专区作品，字段结构与作品一致，媒体地址的转换方式也照抄作品那条路径。
   if (Array.isArray(copy.aiWorks)) {
     copy.aiWorks = copy.aiWorks.map((item) => {
@@ -1470,6 +1493,26 @@ async function startServer() {
       res.send(pdf);
     } catch (err: any) {
       res.status(500).send(err.message || "PDF preview failed");
+    }
+  });
+
+  /**
+   * 演示文稿原始字节的同源代理。前端 pptx 解析库需要 ArrayBuffer，
+   * 直接 fetch COS 签名地址会撞跨域；走这里就是同源请求。
+   * 只放行 portfolio/ 前缀下的 .pptx，避免变成任意对象下载口。
+   */
+  app.get("/api/media/slides", async (req, res) => {
+    try {
+      const key = getCosObjectKey(String(req.query.url || ""));
+      if (!cos || !key.startsWith("portfolio/") || !key.toLowerCase().endsWith(".pptx")) {
+        return res.status(404).send("Slides not found");
+      }
+      const buffer = await getCosObjectBuffer(cos, key);
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.send(buffer);
+    } catch (err: any) {
+      res.status(500).send(err.message || "Slides fetch failed");
     }
   });
 
