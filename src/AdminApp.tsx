@@ -455,6 +455,33 @@ function cloneData(data: PortfolioData): PortfolioData {
 }
 
 /**
+ * 比较用的字符串归一：把 COS 签名地址收敛成「路径」，丢掉 ?authorization=… 那段。
+ *
+ * 读一次签名一次，同一张图每次拿到的签名都不一样（Expires + 签名都在 query 里）。
+ * 不收敛的话，「刚保存完」的草稿和刚返回的服务端数据会被判成不同 —— 状态条会一直
+ * 挂着「有改动还没保存」，恰好是我们要修掉的那种假提示。路径相同就是同一张图。
+ */
+function comparableString(value: string) {
+  return /^https?:\/\//i.test(value) ? value.split("?")[0] : value;
+}
+
+/** 稳定序列化：键名排序，忽略 undefined，字符串过一层 comparableString。 */
+function stableStringify(value: unknown): string {
+  if (value === undefined) return "u";
+  if (value === null || typeof value !== "object") {
+    return typeof value === "string" ? JSON.stringify(comparableString(value)) : JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().filter((key) => record[key] !== undefined).map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(",")}}`;
+}
+
+/** 两份站点数据是不是「同一份」。只用于判断草稿里还剩多少没保存，不参与落库。 */
+function sameData(a: unknown, b: unknown) {
+  return stableStringify(a) === stableStringify(b);
+}
+
+/**
  * 就地修改 pageCopy 的一个小工具。默认值先铺底，再叠上磁盘上的真实数据，最后应用本次改动，
  * 这样页面上任何一处改 pageCopy 都不会把其它键（包括新增的 aiWorks / resumeProfiles）冲掉。
  */
@@ -1735,9 +1762,9 @@ function EditorModal({
 
         <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-800/70 px-4 py-3">
           {/*
-           * 顺序：调用方给的动作（保存全部 / 迁移…）在前，「取消」在最后 ——
+           * 顺序：调用方给的动作（保存 / 保存全部 / 迁移…）在前，「取消」在最后 ——
            * 宝要求「取消应该在保存右边」。整条仍是 justify-end 右对齐，
-           * 所以视觉上最右那颗永远是「取消」，最显眼的「保存全部」紧挨它左边。
+           * 所以视觉上最右那颗永远是「取消」，最显眼的那颗保存按钮紧挨它左边。
            */}
           {footer}
           <button
@@ -3154,6 +3181,14 @@ export default function AdminApp() {
   const [showPassword, setShowPassword] = useState(false);
   const [loggingIn, setLoggingIn] = useState(false);
   const [data, setData] = useState<PortfolioData>(normalize(emptyPortfolioData));
+  /**
+   * 「上一次保存成功」的那一份数据，按条目保存的基准。
+   *
+   * 为什么需要它：服务端只有一个整份覆盖的接口，所以「只保存这一条」的做法是
+   * —— 从这份快照出发，只把当前这一处叠上去再整份提交。快照之外、草稿里多出来的
+   * 改动（别的栏目还没保存的东西）就不会被顺带写进数据库。
+   */
+  const savedRef = useRef<PortfolioData>(normalize(emptyPortfolioData));
   const [status, setStatus] = useState("");
   const [uploadProgress, setUploadProgress] = useState<{ fileName: string; percent: number } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -3569,7 +3604,9 @@ export default function AdminApp() {
         setSupabaseConfigured(Boolean(session.supabaseConfigured));
         setMaxUploadSizeMb(Number(session.maxUploadSizeMb || 50));
         setStorageProvider(session.storageProvider || "supabase");
-        setData(normalize(portfolio));
+        const loaded = normalize(portfolio);
+        savedRef.current = loaded;
+        setData(loaded);
       })
       .catch(() => setStatus("初始化失败，请检查服务"))
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -3630,22 +3667,32 @@ export default function AdminApp() {
     setAuthenticated(false);
   }
 
+  /**
+   * 把一份数据 PUT 上去。成功返回服务端归一化后的结果，失败返回 null 并写好提示。
+   * 保存的两种粒度（整份 / 按条目）都走这里，免得请求细节写两遍走样。
+   */
+  async function putPortfolio(nextData: PortfolioData): Promise<PortfolioData | null> {
+    const res = await fetch("/api/admin/portfolio", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(nextData),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setStatus(json.error || "保存失败");
+      return null;
+    }
+    return normalize(json.data);
+  }
+
   async function save(nextData = data, options: { collapse?: boolean } = {}) {
     const { collapse = true } = options;
     setSaving(true);
     setStatus("");
     try {
-      const res = await fetch("/api/admin/portfolio", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(nextData),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setStatus(json.error || "保存失败");
-        return false;
-      }
-      const savedData = normalize(json.data);
+      const savedData = await putPortfolio(nextData);
+      if (!savedData) return false;
+      savedRef.current = savedData;
       setData(savedData);
       setDirty(false);
       setStatus("已保存到数据库。");
@@ -3677,6 +3724,51 @@ export default function AdminApp() {
       setSaving(false);
     }
   }
+
+  /**
+   * 按条目保存：只提交「这一处」。
+   *
+   * 服务端接口是整份覆盖，所以要提交的文档是这样拼出来的 ——
+   * 以上一次保存成功的快照为基准，由 scoped 回调把当前这一处从草稿里叠上去。
+   * 草稿里其它栏目还没保存的改动**不在基准里**，因此不会被顺带写进数据库；
+   * 它们继续留在草稿里，状态条照旧提示「有改动还没保存」。
+   *
+   * 保存后编辑器不关：按条目改东西经常要来回调，关掉再开纯属添乱。
+   */
+  async function saveScoped(
+    scoped: (base: PortfolioData, draft: PortfolioData) => void,
+    options: { draft?: PortfolioData; onSuccess?: () => void } = {},
+  ) {
+    setSaving(true);
+    setStatus("");
+    try {
+      // draft 默认取当前草稿；调用方刚在同一个 tick 里改过草稿（比如补完歌词）时可以显式传进来 ——
+      // setData 要到下一轮渲染才生效，闭包里的 data 还是旧的。
+      const draft = options.draft ?? data;
+      const base = cloneData(savedRef.current);
+      scoped(base, draft);
+      const savedData = await putPortfolio(normalize(base));
+      if (!savedData) return false;
+      savedRef.current = savedData;
+      // 这一处已经提交，但草稿里别的栏目可能还有没保存的改动 —— 重新比一遍才准。
+      setDirty(!sameData(draft, savedData));
+      setStatus("已保存。");
+      options.onSuccess?.();
+      return true;
+    } catch (error: any) {
+      setStatus(error.message || "保存失败，请检查服务");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /**
+   * 按条目保存时最常用的一种：把「某一整个列表」从草稿搬进基准。
+   * 传进去的 read / write 就是各栏目读自己那份列表的方式。
+   */
+  const scopedList = <T,>(read: (d: PortfolioData) => T[] | undefined, write: (d: PortfolioData, value: T[]) => void) =>
+    (base: PortfolioData, draft: PortfolioData) => write(base, read(draft) || []);
 
   async function updateAndSave(mutator: (draft: PortfolioData) => void) {
     const draft = cloneData(data);
@@ -4043,18 +4135,20 @@ export default function AdminApp() {
       await save();
       return;
     }
+    const scoped = scopedList((d) => d.musicTracks, (d, v) => { d.musicTracks = v; });
 
     const plainLyrics = stripLyricTimeline(track.lyrics);
     if (!isInstrumental(track.lyrics) && track.audioUrl && plainLyrics && !hasEnhancedLyricTimeline(track.lyrics)) {
       const lyrics = await requestLyricsWithAsr(track, index, plainLyrics);
       if (!lyrics) return;
       track.lyrics = lyrics;
-      setData(normalize(draft));
-      await save(normalize(draft));
+      const next = normalize(draft);
+      setData(next);
+      await saveScoped(scoped, { draft: next });
       return;
     }
 
-    await save(draft);
+    await saveScoped(scoped, { draft: normalize(draft) });
   }
 
   /* ------------------------------------------------------ 音乐：排序与批量操作 */
@@ -4210,10 +4304,21 @@ export default function AdminApp() {
     setTreasureBulkBusy(false);
   }
 
-  const SaveCurrentButton = ({ label = "保存全部" }: { label?: string }) => (
+  /**
+   * 保存按钮。
+   *
+   * - 不传 scoped：整份保存，按钮写「保存全部」。页面级表单（站点资料 / 联系方式 /
+   *   弹幕设置…）用它 —— 那些页面本来就是一份设置，整份提交才说得通。
+   * - 传 scoped：按条目保存，按钮写「保存」。列表里的单条编辑器用它，只提交这一条
+   *   （所在的列表），别的栏目没保存的改动继续留在草稿里。
+   */
+  const SaveCurrentButton = ({ label = "保存全部", scoped }: {
+    label?: string;
+    scoped?: (base: PortfolioData, draft: PortfolioData) => void;
+  }) => (
     <button
       type="button"
-      onClick={() => { void save(); }}
+      onClick={() => { void (scoped ? saveScoped(scoped) : save()); }}
       disabled={saving}
       className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-300 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-200 disabled:opacity-60"
     >
@@ -4382,7 +4487,7 @@ export default function AdminApp() {
                 </p>
               ) : dirty ? (
                 <p className="flex items-center gap-1.5 text-xs text-amber-300/90">
-                  <Info size={14} className="shrink-0" /> 有改动还没保存，打开对应条目点「保存全部」。
+                  <Info size={14} className="shrink-0" /> 有改动还没保存，打开对应条目点「保存」。
                 </p>
               ) : null}
             </div>
@@ -4455,7 +4560,7 @@ export default function AdminApp() {
                   description="前台导航里的每一个栏目都在这里。开关决定访客能不能看到它，箭头调整它们在前台的先后，「页首文案」改该栏目标题下面那句诗。新增内容请到各栏目自己的抬头。"
                 >
                   <p className="adm-note adm-note-info text-xs leading-5 text-emerald-200">
-                    顺序和开关都是改完即保存；「页首文案」在弹窗里点「保存全部」。
+                    顺序和开关都是改完即保存；「页首文案」在弹窗里点「保存全部」（它改的是整页的说明文字）。
                   </p>
 
                   <div className="space-y-3">
@@ -4738,7 +4843,7 @@ export default function AdminApp() {
                     <EditorModal
                       title={profile.position?.trim() || "未命名岗位"}
                       onClose={() => setExpandedResumeId(null)}
-                      footer={<SaveCurrentButton label="保存全部" />}
+                      footer={<SaveCurrentButton label="保存" scoped={scopedList((d) => d.profile.pageCopy?.resumeProfiles, (d, v) => { d.profile.pageCopy!.resumeProfiles = v; })} />}
                     >
                       <section className="adm-panel space-y-3 p-3">
                         <div className="grid gap-3 md:grid-cols-2">
@@ -4841,7 +4946,7 @@ export default function AdminApp() {
                             <span className="px-1 font-mono">{index + 1} / {total}</span>
                             <button type="button" disabled={index === total - 1} onClick={() => goTo(index + 1)} className="rounded-md border border-zinc-800 px-2 py-1 text-zinc-300 hover:border-zinc-600 disabled:opacity-40">下一条</button>
                           </div>
-                          <SaveCurrentButton label="保存全部" />
+                          <SaveCurrentButton label="保存" scoped={scopedList((d) => d.experiences, (d, v) => { d.experiences = v; })} />
                         </>
                       }
                     >
@@ -4921,7 +5026,7 @@ export default function AdminApp() {
                     run: (work, index) => migrateWork(work, index, "to-ai"),
                   }}
                   onStatus={setStatus}
-                  renderSaveButton={() => <SaveCurrentButton label="保存全部" />}
+                  renderSaveButton={() => <SaveCurrentButton label="保存" scoped={scopedList((d) => d.works, (d, v) => { d.works = v; })} />}
                 />
               </>
             )}
@@ -4959,7 +5064,7 @@ export default function AdminApp() {
                     run: (work, index) => migrateWork(work, index, "to-works"),
                   }}
                   onStatus={setStatus}
-                  renderSaveButton={() => <SaveCurrentButton label="保存全部" />}
+                  renderSaveButton={() => <SaveCurrentButton label="保存" scoped={scopedList((d) => d.profile.pageCopy?.aiWorks, (d, v) => { d.profile.pageCopy!.aiWorks = v; })} />}
                 />
               </>
             )}
@@ -5165,7 +5270,7 @@ export default function AdminApp() {
                       title={item.title?.trim() || "未命名截图"}
                       onClose={() => setExpandedGalleryId(null)}
                       footer={
-                        <SaveCurrentButton label="保存全部" />
+                        <SaveCurrentButton label="保存" scoped={scopedList((d) => d.gallery, (d, v) => { d.gallery = v; })} />
                       }
                     >
                       <section className="adm-panel space-y-3 p-3">
@@ -5683,7 +5788,7 @@ export default function AdminApp() {
                       title={"珍藏 " + (index + 1)}
                       onClose={() => setExpandedTreasureId(null)}
                       footer={
-                        <SaveCurrentButton label="保存全部" />
+                        <SaveCurrentButton label="保存" scoped={scopedList((d) => d.treasures, (d, v) => { d.treasures = v; })} />
                       }
                     >
                       <section className="adm-panel space-y-3 p-3">
@@ -5763,7 +5868,7 @@ export default function AdminApp() {
                     <EditorModal
                       title={"诗 " + (index + 1)}
                       onClose={() => setExpandedPoemId(null)}
-                      footer={<SaveCurrentButton label="保存全部" />}
+                      footer={<SaveCurrentButton label="保存" scoped={scopedList((d) => d.profile.pageCopy?.poemList, (d, v) => { d.profile.pageCopy!.poemList = v; })} />}
                     >
                       <section className="adm-panel space-y-3 p-3">
                         <Field label="题目（可留空）" value={item.title} onChange={(value) => update((draft) => { draft.profile.pageCopy!.poemList![index].title = value; })} />
@@ -5873,7 +5978,7 @@ export default function AdminApp() {
                   const images = item.images || [];
                   const setImages = (next: string[]) => update((draft) => { draft.profile.pageCopy!.postList![index].images = next; });
                   return (
-                    <EditorModal title={"图文 " + (index + 1)} size="lg" onClose={() => setExpandedPostId(null)} footer={<SaveCurrentButton label="保存全部" />}>
+                    <EditorModal title={"图文 " + (index + 1)} size="lg" onClose={() => setExpandedPostId(null)} footer={<SaveCurrentButton label="保存" scoped={scopedList((d) => d.profile.pageCopy?.postList, (d, v) => { d.profile.pageCopy!.postList = v; })} />}>
                       <section className="adm-panel space-y-3 p-3">
                         <Field label="标题" value={item.title} onChange={(value) => update((draft) => { draft.profile.pageCopy!.postList![index].title = value; })} />
                         <Field label="正文（换行分段）" value={item.text} textarea rows={6} onChange={(value) => update((draft) => { draft.profile.pageCopy!.postList![index].text = value; })} />
@@ -5968,7 +6073,7 @@ export default function AdminApp() {
                   const item = (data.profile.pageCopy?.slideList || [])[slideModalIndex];
                   const index = slideModalIndex;
                   return (
-                    <EditorModal title={"演示 " + (index + 1)} onClose={() => setExpandedSlideId(null)} footer={<SaveCurrentButton label="保存全部" />}>
+                    <EditorModal title={"演示 " + (index + 1)} onClose={() => setExpandedSlideId(null)} footer={<SaveCurrentButton label="保存" scoped={scopedList((d) => d.profile.pageCopy?.slideList, (d, v) => { d.profile.pageCopy!.slideList = v; })} />}>
                       <section className="adm-panel space-y-3 p-3">
                         <Field label="标题" value={item.title} onChange={(value) => update((draft) => { draft.profile.pageCopy!.slideList![index].title = value; })} />
                         <Field label="简介（可留空）" value={item.description || ""} textarea onChange={(value) => update((draft) => { draft.profile.pageCopy!.slideList![index].description = value; })} />
@@ -6284,7 +6389,7 @@ export default function AdminApp() {
                             className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-300 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-200 disabled:opacity-60"
                           >
                             {(saving || asrLoadingTrackId === (track.id || String(index))) ? <Loader2 className="animate-spin" size={14} /> : null}
-                            保存全部
+                            保存
                           </button>
                         </>
                       }
