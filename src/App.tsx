@@ -33,10 +33,12 @@ import { isInstrumental } from "./musicMetadata";
 import TimelineArc from "./components/TimelineArc";
 import EntranceCinematic from "./components/EntranceCinematic";
 import ShibaAssistant from "./components/ShibaAssistant";
+import PostFeed from "./components/PostFeed";
+import SlidePlayer from "./components/SlidePlayer";
 import { startVisitTracking } from "./tracking";
-import { FloatingSentencesConfig, GalleryItem, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, Work, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder } from "./types";
+import { FloatingSentencesConfig, GalleryItem, ImagePost, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, SlideDeck, TreasureItem, Work, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder } from "./types";
 
-type TabKey = "intro" | "resume" | "works" | "ai" | "prospects" | "treasures" | "poems" | "contact";
+type TabKey = SectionKey;
 
 const navItems: { key: TabKey; label: string; sub: string }[] = [
   { key: "intro", label: "自我介绍", sub: "BIOGRAPHY" },
@@ -44,6 +46,8 @@ const navItems: { key: TabKey; label: string; sub: string }[] = [
   { key: "works", label: "作品展示", sub: "PORTFOLIO" },
   { key: "ai", label: "AI专区", sub: "AI ZONE" },
   { key: "prospects", label: "应用技能", sub: "SKILLS" },
+  { key: "posts", label: "图文分享", sub: "NOTES" },
+  { key: "slides", label: "演示文稿", sub: "SLIDES" },
   { key: "treasures", label: "我的珍藏", sub: "TREASURES" },
   { key: "poems", label: "诗与惆怅", sub: "POEMS" },
   { key: "contact", label: "联系方式", sub: "CONTACT" },
@@ -2227,6 +2231,64 @@ function PoemPane({
   );
 }
 
+function PostPane({ items, description = defaultPageCopy.posts }: { items: ImagePost[]; description?: string }) {
+  const [zoom, setZoom] = useState<{ images: string[]; index: number } | null>(null);
+  const usable = items.filter((post) => (post.images || []).some(Boolean) || post.title || post.text);
+  return (
+    <div className="space-y-6">
+      <div><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-sky-300/80">图文随记 / NOTES</span>{description ? <p className="mt-3 max-w-3xl text-[15px] leading-8 text-zinc-300">{zhText(description)}</p> : null}</div>
+      {usable.length > 0 ? (
+        <PostFeed items={usable} onZoom={(images, index) => setZoom({ images, index })} />
+      ) : (
+        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂无图文</p><p className="mt-3 text-sm text-zinc-400">请在后台「图文分享」中新增一条。</p></div>
+      )}
+      {zoom ? <ImageLightbox images={zoom.images} index={zoom.index} onChange={(index) => setZoom((current) => (current ? { ...current, index } : current))} onClose={() => setZoom(null)} /> : null}
+    </div>
+  );
+}
+
+function SlidesPane({ items, description = defaultPageCopy.slides }: { items: SlideDeck[]; description?: string }) {
+  const [playing, setPlaying] = useState<SlideDeck | null>(null);
+  const usable = items.filter((deck) => deck.fileUrl);
+  return (
+    <div className="space-y-8">
+      <div><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-violet-300/80">演示文稿 / SLIDES</span>{description ? <p className="mt-3 max-w-3xl text-[15px] leading-8 text-zinc-300">{zhText(description)}</p> : null}</div>
+      {usable.length > 0 ? (
+        <div className="grid gap-5 pt-2 sm:grid-cols-2">
+          {usable.map((deck) => (
+            <button
+              key={deck.id || deck.fileUrl}
+              type="button"
+              data-track={`slides:play:${deck.id}`}
+              onClick={() => setPlaying(deck)}
+              className="group overflow-hidden rounded-xl border border-zinc-900 bg-zinc-950/60 text-left transition-colors duration-300 hover:border-zinc-700"
+            >
+              <div className="relative aspect-video overflow-hidden bg-gradient-to-br from-violet-950/60 via-zinc-950 to-zinc-900">
+                {deck.cover ? (
+                  <img src={deck.cover} alt="" loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
+                ) : (
+                  <div className="flex h-full items-center justify-center font-serif text-lg tracking-widest text-zinc-500">PPTX</div>
+                )}
+                <span className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors duration-300 group-hover:bg-black/40">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white/90 px-4 py-2 text-sm font-medium text-zinc-900 opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-visible:opacity-100"><Play size={15} /> 开始演示</span>
+                </span>
+              </div>
+              <div className="p-4">
+                <h4 className="font-serif text-base font-bold tracking-wide text-white">{deck.title || "未命名演示"}</h4>
+                {deck.description ? <p className="mt-1.5 line-clamp-2 text-sm leading-6 text-zinc-400">{deck.description}</p> : null}
+                {deck.date ? <p className="mt-2 font-mono text-[11px] text-zinc-500">{deck.date}</p> : null}
+              </div>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂无演示文稿</p><p className="mt-3 text-sm text-zinc-400">请在后台「演示文稿」中上传 .pptx。</p></div>
+      )}
+      {playing ? <SlidePlayer deck={playing} onClose={() => setPlaying(null)} /> : null}
+    </div>
+  );
+}
+
 /**
  * 联系方式里微信 / QQ 的品牌图标（自绘矢量）。
  *
@@ -2276,6 +2338,16 @@ function ContactPane({ data }: { data: PortfolioData }) {
   return <div className="space-y-8"><div><span className="mb-1 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">有缘相识，留笔通信 / INK STATION CONTACT</span><p className="mt-3 text-[15px] leading-8 text-zinc-300">{zhText(pageCopy.contact)}</p></div><div className="grid gap-6 pt-2 md:grid-cols-2">{cards.map((card) => <a key={card.label} href={card.label === "GitHub" ? card.value : undefined} target={card.label === "GitHub" ? "_blank" : undefined} rel="noopener noreferrer" className="group flex flex-col justify-between space-y-4 rounded-xl border border-zinc-900 bg-zinc-950/60 p-5 transition-all duration-300 hover:border-zinc-800 hover:bg-zinc-950"><div className="flex items-center space-x-3"><span className={`rounded-lg border border-zinc-800 bg-zinc-900 p-2.5 ${card.color} transition-transform duration-300 group-hover:scale-105`}>{card.icon}</span><div><h4 className="font-serif text-base font-bold tracking-wider text-white">{card.label}</h4><p className="mt-0.5 font-mono text-[10px] uppercase text-zinc-500">Contact Channel</p></div></div><span className="break-all font-mono text-base font-medium tracking-wide text-white">{card.value}</span></a>)}</div></div>;
 }
 
+
+/** 收起 index.html 里的缓冲加载页。animate=false 时立即移除（被入场动画盖住的情况）。 */
+function dismissBootLoader(animate: boolean) {
+  const loader = document.getElementById("boot-loader");
+  if (!loader || loader.dataset.leaving !== undefined) return;
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!animate || reduced) { loader.remove(); return; }
+  loader.dataset.leaving = "";
+  window.setTimeout(() => loader.remove(), 480);
+}
 
 function preloadImage(url: string) {
   return new Promise<void>((resolve) => {
@@ -2519,7 +2591,7 @@ function IntroDashboard({ data, onSelectWork, onNavigate }: {
 }
 
 export default function App() {
-  if (window.location.pathname.startsWith("/admin")) return <AdminApp />;
+  if (window.location.pathname.startsWith("/admin")) { dismissBootLoader(false); return <AdminApp />; }
   const [data, setData] = useState<PortfolioData>(normalizeData(emptyPortfolioData));
   const [portfolioConfigReady, setPortfolioConfigReady] = useState(false);
   const [portfolioReady, setPortfolioReady] = useState(false);
@@ -2586,6 +2658,15 @@ export default function App() {
   const entranceAnimationEnabled = data.profile.pageCopy?.entranceAnimationEnabled !== false;
   const siteEntered = entered || (portfolioReady && !entranceAnimationEnabled);
   const floatingSentencesConfig = useMemo(() => resolveFloatingSentencesConfig(data.profile.pageCopy?.floatingSentences, activeTab), [data.profile.pageCopy?.floatingSentences, activeTab]);
+
+  // 缓冲加载页（index.html 里的 #boot-loader）什么时候收起：
+  // - 入场动画开着：配置一到、动画层挂上就立刻撤掉，后面的等待交给动画自己的开门页；
+  // - 入场动画关着：等数据与首屏素材就绪再淡出，直接露出站点 —— 不再经过黑屏渐显。
+  useEffect(() => {
+    if (!portfolioConfigReady) return;
+    if (entranceAnimationEnabled) { dismissBootLoader(false); return; }
+    if (portfolioReady) dismissBootLoader(true);
+  }, [portfolioConfigReady, portfolioReady, entranceAnimationEnabled]);
 
   // 关闭入场动画时不挂载视频，也不让音乐继续等待动画回调。数据加载完成后
   // 直接放行自动播放尝试；浏览器若拦截有声播放，播放器原有的交互重试会接管。
@@ -2692,6 +2773,8 @@ export default function App() {
             {activeTab === "prospects" && sectionShown("prospects") && <GalleryPane items={data.gallery || []} onSelect={setSelectedGallery} description={pageCopy.gallery} />}
             {activeTab === "treasures" && sectionShown("treasures") && <TreasurePane items={data.treasures || []} onSelect={setSelectedTreasure} description={pageCopy.treasures} />}
             {activeTab === "poems" && sectionShown("poems") && <PoemPane items={data.profile.pageCopy?.poemList || []} description={pageCopy.poems} />}
+            {activeTab === "posts" && sectionShown("posts") && <PostPane items={data.profile.pageCopy?.postList || []} description={pageCopy.posts} />}
+            {activeTab === "slides" && sectionShown("slides") && <SlidesPane items={data.profile.pageCopy?.slideList || []} description={pageCopy.slides} />}
             {activeTab === "resume" && sectionShown("resume") && <ResumePane data={data} />}
             {activeTab === "contact" && sectionShown("contact") && <ContactPane data={data} />}
               </>

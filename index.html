@@ -11,10 +11,52 @@
       html.portfolio-document { background: #05090b; color-scheme: dark; }
       html.portfolio-document body,
       html.portfolio-document #root { min-height: 100%; margin: 0; background: #05090b; }
+
+      /* 缓冲加载页。写在 HTML 里而不是 React 里：JS 包还没下载完时它就已经在了，
+         访客从第一帧起看到的就是加载页，而不是一块黑屏。由 App.tsx 的 dismissBootLoader 收起。 */
+      #boot-loader { display: none; }
+      html.portfolio-document #boot-loader {
+        position: fixed; inset: 0; z-index: 1900;
+        display: grid; place-items: center;
+        background:
+          linear-gradient(rgba(120, 159, 162, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(120, 159, 162, 0.035) 1px, transparent 1px),
+          radial-gradient(circle at 50% 42%, rgba(37, 103, 91, 0.16), transparent 46%),
+          #05090b;
+        background-size: 32px 32px, 32px 32px, auto, auto;
+        color: #eef4f2;
+        font-family: "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+        transition: opacity 420ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 420ms;
+      }
+      #boot-loader[data-leaving] { opacity: 0; visibility: hidden; }
+      .boot-loader__inner { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+      .boot-loader__bars { display: flex; align-items: flex-end; gap: 6px; height: 34px; }
+      .boot-loader__bars i { display: block; width: 6px; border-radius: 6px; background: #62f5ce; box-shadow: 0 0 12px rgba(98, 245, 206, 0.35); transform-origin: 50% 100%; animation: bootBounce 860ms ease-in-out infinite alternate; }
+      .boot-loader__bars i:nth-child(1) { height: 18px; }
+      .boot-loader__bars i:nth-child(2) { height: 34px; animation-delay: -430ms; animation-duration: 720ms; }
+      .boot-loader__bars i:nth-child(3) { height: 26px; background: #cbd4d2; box-shadow: none; animation-delay: -180ms; animation-duration: 980ms; }
+      .boot-loader__brand { font: 11px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: 0.32em; color: #75817f; }
+      .boot-loader__track { position: relative; width: 168px; height: 2px; overflow: hidden; border-radius: 2px; background: rgba(139, 165, 170, 0.13); }
+      .boot-loader__track::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 40%; border-radius: inherit; background: linear-gradient(90deg, transparent, #62f5ce, transparent); animation: bootSweep 1.3s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+      .boot-loader__text { font-size: 12px; color: #899694; letter-spacing: 0.08em; }
+      @keyframes bootBounce { from { transform: scaleY(0.42); } to { transform: scaleY(1); } }
+      @keyframes bootSweep { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-loader__bars i, .boot-loader__track::after { animation: none; }
+        #boot-loader { transition: none; }
+      }
     </style>
     <title>My Space</title>
   </head>
   <body>
+    <div id="boot-loader" role="status" aria-live="polite">
+      <div class="boot-loader__inner">
+        <div class="boot-loader__bars" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div class="boot-loader__brand">MY SPACE</div>
+        <div class="boot-loader__track" aria-hidden="true"></div>
+        <div class="boot-loader__text">正在加载，请稍候…</div>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
