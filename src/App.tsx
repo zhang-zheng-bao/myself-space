@@ -35,12 +35,15 @@ import EntranceCinematic from "./components/EntranceCinematic";
 import ShibaAssistant from "./components/ShibaAssistant";
 import PostFeed from "./components/PostFeed";
 import SlidePlayer from "./components/SlidePlayer";
+import Toolbox from "./components/Toolbox";
 import { startVisitTracking } from "./tracking";
+import { contentIdentity, videoIdentity } from "./analytics-model";
 import { FloatingSentencesConfig, GalleryItem, ImagePost, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, SlideDeck, TreasureItem, Work, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder } from "./types";
 
 type TabKey = SectionKey;
 
 const navItems: { key: TabKey; label: string; sub: string }[] = [
+  { key: "toolbox", label: "工具箱", sub: "TOOLBOX" },
   { key: "intro", label: "自我介绍", sub: "BIOGRAPHY" },
   { key: "resume", label: "个人简历", sub: "CURRICULUM" },
   { key: "works", label: "作品展示", sub: "PORTFOLIO" },
@@ -1206,7 +1209,7 @@ function AttachmentPreviewModal({
   );
 }
 
-function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
+function WorkModal({ work, onClose, namespace = "works" }: { work: Work; onClose: () => void; namespace?: string }) {
   const [imageIndex, setImageIndex] = useState(0);
   const [zoomed, setZoomed] = useState(false);
   // 原地预览的那份附件（存 meta 而不是 id —— 老数据不一定有 id）。
@@ -1214,7 +1217,7 @@ function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
   const images = work.images || [];
   const currentImage = images[imageIndex];
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6">
+    <div data-analytics-kind="work" data-analytics-key={contentIdentity(namespace, work)} data-analytics-title={work.title} className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6">
       <button className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={onClose} aria-label="关闭详情" />
       <div className="relative flex max-h-[90vh] w-full max-w-4xl flex-col overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl md:flex-row">
         <button onClick={onClose} className="absolute right-4 top-4 z-10 rounded-full border border-zinc-800 bg-zinc-900/80 p-2 text-zinc-300 hover:text-white" aria-label="关闭"><X size={16} /></button>
@@ -1222,7 +1225,7 @@ function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
           {work.videoUrl ? (
             <div className="space-y-4 p-4 md:p-6">
               <span className="block font-mono text-[10px] uppercase tracking-widest text-emerald-300/80">在线放映 / VIDEO PLAYER</span>
-              <video src={work.videoUrl} poster={currentImage} controls playsInline className="max-h-[70vh] w-full rounded-lg border border-zinc-850 bg-black object-contain" />
+              <video data-analytics-key={videoIdentity(namespace, work)} data-analytics-title={work.title} src={work.videoUrl} poster={currentImage} controls playsInline className="max-h-[70vh] w-full rounded-lg border border-zinc-850 bg-black object-contain" />
               {images.length > 0 && (
                 <div className="grid grid-cols-4 gap-2">
                   {images.map((image, idx) => (
@@ -1327,7 +1330,7 @@ function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
 
 function GalleryModal({ item, onClose }: { item: GalleryItem; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6">
+    <div data-analytics-kind="work" data-analytics-key={contentIdentity("gallery", item)} data-analytics-title={item.title} className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6">
       <button className="absolute inset-0 bg-black/92 backdrop-blur-md" onClick={onClose} aria-label="关闭图片" />
       <div className="relative max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl">
         <button onClick={onClose} className="absolute right-4 top-4 z-10 rounded-full border border-zinc-800 bg-zinc-950/80 p-2 text-zinc-300 hover:text-white" aria-label="关闭"><X size={16} /></button>
@@ -1894,7 +1897,7 @@ function TreasurePane({
 
 function TreasureModal({ item, onClose }: { item: TreasureItem; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6">
+    <div data-analytics-kind="work" data-analytics-key={contentIdentity("treasures", item)} data-analytics-title="珍藏图片" className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6">
       <button className="absolute inset-0 bg-black/92 backdrop-blur-md" onClick={onClose} aria-label="关闭图片" />
       <div className="relative max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl">
         <button onClick={onClose} className="absolute right-4 top-4 z-10 rounded-full border border-zinc-800 bg-zinc-950/80 p-2 text-zinc-300 hover:text-white" aria-label="关闭"><X size={16} /></button>
@@ -1916,7 +1919,7 @@ function TreasureModal({ item, onClose }: { item: TreasureItem; onClose: () => v
  */
 function poemToWork(poem: Poem, index: number): Work {
   return {
-    id: poem.id || `poem-${index}`,
+    id: poem.id || contentIdentity("poems", poem).replace("poems:", ""),
     category: "poetry",
     title: poem.title || "",
     description: poem.text || "",
@@ -2113,7 +2116,7 @@ function PoemPreviewModal({ poem, skin, onClose }: { poem: Poem; skin: PoemSlipS
   }, [onClose]);
 
   return createPortal(
-    <div className="fixed inset-0 z-[70] m-0 flex items-center justify-center p-4 md:p-8" role="dialog" aria-modal="true" aria-label={`诗签预览：${poem.title || "无题"}`}>
+    <div data-analytics-kind="work" data-analytics-key={contentIdentity("poems", poem)} data-analytics-title={poem.title || "无题"} className="fixed inset-0 z-[70] m-0 flex items-center justify-center p-4 md:p-8" role="dialog" aria-modal="true" aria-label={`诗签预览：${poem.title || "无题"}`}>
       <button type="button" className="absolute inset-0 cursor-zoom-out bg-black/92 backdrop-blur-md" onClick={onClose} aria-label="关闭诗签预览" tabIndex={-1} />
       <div className="relative z-10 flex max-h-full min-h-0 w-full max-w-3xl flex-col overflow-hidden">
         <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
@@ -2644,7 +2647,7 @@ export default function App() {
   const beginMusicEntry = React.useCallback(() => setMusicEntryReady(true), []);
   const completeEntrance = React.useCallback(() => setEntered(true), []);
   const completeMusicAttempt = React.useCallback(() => setMusicSettled(true), []);
-  const [activeTab, setActiveTab] = useState<TabKey>("intro");
+  const [activeTab, setActiveTab] = useState<TabKey>(() => new URLSearchParams(window.location.search).get("tab") === "toolbox" ? "toolbox" : "intro");
   const [selectedWork, setSelectedWork] = useState<Work | null>(null);
   const [selectedAiWork, setSelectedAiWork] = useState<Work | null>(null);
   const [selectedGallery, setSelectedGallery] = useState<GalleryItem | null>(null);
@@ -2747,7 +2750,7 @@ export default function App() {
   return (
     <>
     {portfolioConfigReady && entranceAnimationEnabled && <EntranceCinematic ready={portfolioReady} soundReady={!data.profile.musicAutoplay || !(data.musicTracks || []).some(track => track.audioUrl) || musicSettled} musicLeadSeconds={data.profile.pageCopy?.musicLeadSeconds ?? 3} onMusicEntry={beginMusicEntry} onEntered={completeEntrance} />}
-    {portfolioReady && <div className="portfolio-site" inert={!siteEntered} aria-hidden={!siteEntered}>
+    {portfolioReady && <div data-analytics-page={siteEntered ? activeTab : undefined} data-analytics-title={navItems.find(item => item.key === activeTab)?.label} className="portfolio-site" inert={!siteEntered} aria-hidden={!siteEntered}>
       <FloatingSentences config={floatingSentencesConfig} />
 
       <header className="site-header">
@@ -2811,6 +2814,7 @@ export default function App() {
             ) : (
               <>
             {activeTab === "intro" && sectionShown("intro") && <IntroDashboard data={data} onSelectWork={setSelectedWork} onNavigate={setActiveTab} />}
+            {activeTab === "toolbox" && sectionShown("toolbox") && <Toolbox description={pageCopy.toolbox} />}
             {activeTab === "works" && sectionShown("works") && <WorksPane items={[...data.works, ...((data.profile.pageCopy?.poemList || []).map(poemToWork))]} description={pageCopy.works} onSelect={setSelectedWork} categoryOrder={workCategories} />}
             {activeTab === "ai" && sectionShown("ai") && <WorksPane items={data.profile.pageCopy?.aiWorks || []} description={pageCopy.aiZone} onSelect={setSelectedAiWork} eyebrow="与 AI 共作 / AI ZONE EXHIBITS" emptyTitle="暂无 AI 作品" emptyDescription="请进入后台 /admin，在「AI 专区」中新增作品并保存。" />}
             {activeTab === "prospects" && sectionShown("prospects") && <GalleryPane items={data.gallery || []} onSelect={setSelectedGallery} description={pageCopy.gallery} />}
@@ -2829,8 +2833,8 @@ export default function App() {
           </footer>
         </section>
       </main>
-      {selectedWork && <WorkModal work={selectedWork} onClose={() => setSelectedWork(null)} />}
-      {selectedAiWork && <WorkModal work={selectedAiWork} onClose={() => setSelectedAiWork(null)} />}
+      {selectedWork && <WorkModal namespace={(data.profile.pageCopy?.poemList || []).some((poem, index) => poemToWork(poem, index).id === selectedWork.id) ? "poems" : "works"} work={selectedWork} onClose={() => setSelectedWork(null)} />}
+      {selectedAiWork && <WorkModal namespace="ai" work={selectedAiWork} onClose={() => setSelectedAiWork(null)} />}
       {selectedGallery && <GalleryModal item={selectedGallery} onClose={() => setSelectedGallery(null)} />}
       {selectedTreasure && <TreasureModal item={selectedTreasure} onClose={() => setSelectedTreasure(null)} />}
       <ShibaAssistant ready={siteEntered} />

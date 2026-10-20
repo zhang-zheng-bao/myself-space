@@ -153,6 +153,8 @@ alter table public.portfolio_visitors add column if not exists last_browser text
 alter table public.portfolio_visitors add column if not exists last_os text default '';
 
 -- 一次访问 = 一行
+-- Content-duration analytics are installed separately by engagement-analytics.sql.
+-- Run that additive migration after this file for page/work/video reports.
 create table if not exists public.portfolio_visits (
   id bigserial primary key,
   visitor_key text not null,

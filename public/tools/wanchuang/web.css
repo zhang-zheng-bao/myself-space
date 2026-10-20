@@ -1,0 +1,6 @@
+.web-status { position: fixed; top: 0; left: 0; right: 0; z-index: 1000; min-height: 36px; display: flex; align-items: center; gap: 20px; padding: 8px 18px; background: #172422; color: #d2e7df; font: 12px/1.6 system-ui, sans-serif; }
+.web-status a { color: #8de7cb; flex-shrink: 0; text-decoration: none; }
+body { padding-top: 42px; }
+.app-shell { min-height: calc(100vh - 42px); }
+#settingsView { display: none !important; }
+@media (max-width: 600px) { .web-status { gap: 10px; font-size: 10px; } body { padding-top: 52px; } }

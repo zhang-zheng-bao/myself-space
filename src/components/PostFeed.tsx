@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ZoomIn } from "lucide-react";
 import type { ImagePost } from "../types";
+import { contentIdentity } from "../analytics-model";
 
 /**
  * 「图文」栏目：小红书式竖滑卡片流。
@@ -44,7 +45,10 @@ export default function PostFeed({ items, onZoom }: {
   };
 
   return (
-    <div className="post-feed">
+    <div className="post-feed"
+      data-analytics-kind={items[current] ? "work" : undefined}
+      data-analytics-key={items[current] ? contentIdentity("posts", items[current]) : undefined}
+      data-analytics-title={items[current]?.title || "图文"}>
       <div
         ref={feedRef}
         className="post-feed__track"
