@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, Loader2, Maximize, Minimize, Pause, Play, X } from "lucide-react";
 import type { SlideDeck } from "../types";
+import { contentIdentity } from "../analytics-model";
 import { openPdfSmart, openPdfWhole, renderPdfPage } from "../pdfDeck";
 
 /** 舞台的逻辑渲染宽度。按固定宽度渲染，再用 transform 缩放到舞台大小。 */
@@ -269,7 +270,8 @@ export default function SlidePlayer({ deck, onClose }: { deck: SlideDeck; onClos
   const progress = count > 0 ? ((index + 1) / count) * 100 : 0;
 
   return createPortal(
-    <div ref={rootRef} className="slide-player" data-fullscreen={fullscreen || undefined} role="dialog" aria-modal="true" aria-label={`演示：${deck.title || "演示文稿"}`}>
+    <div ref={rootRef} className="slide-player" data-fullscreen={fullscreen || undefined} role="dialog" aria-modal="true" aria-label={`演示：${deck.title || "演示文稿"}`}
+      data-analytics-kind="work" data-analytics-key={contentIdentity("slides", deck)} data-analytics-title={deck.title || "演示文稿"}>
       <header className="slide-player__bar">
         <div className="min-w-0">
           <p className="truncate font-serif text-base font-bold text-white">{deck.title || "演示文稿"}</p>

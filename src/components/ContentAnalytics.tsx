@@ -15,6 +15,8 @@ export function analyticsCatalog(data: PortfolioData) {
   add("gallery", data.gallery || []);
   add("treasures", data.treasures || []);
   add("poems", data.profile.pageCopy?.poemList || []);
+  add("posts", data.profile.pageCopy?.postList || []);
+  add("slides", data.profile.pageCopy?.slideList || []);
   for (const work of [...data.works || [], ...data.profile.pageCopy?.aiWorks || []]) {
     if (work.videoUrl) catalog.set(videoIdentity("works", work), work.title);
   }
