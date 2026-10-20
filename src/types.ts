@@ -16,6 +16,7 @@ export interface Profile {
     resume?: string;
     works?: string;
     aiZone?: string;
+    toolbox?: string;
     gallery?: string;
     treasures?: string;
     poems?: string;
@@ -143,6 +144,7 @@ export const defaultHomeStats = {
  * 而 `App.tsx` 里它是默认参数值（`description = defaultPageCopy.gallery`），需要窄类型。
  */
 export const defaultPageCopy = {
+  toolbox: "把灵感做成工具，让创作少一点繁琐，多一点可能。",
   resume: "“纸上得来终觉浅，绝知此事要躬行。”一页履历，照见实践。",
   works: "“文章合为时而著，歌诗合为事而作。”作品因想法而生。",
   aiZone: "“苟日新，日日新，又日新。”与 AI 共作，另辟一片试验田。",
@@ -162,13 +164,13 @@ export const defaultPageCopy = {
  * 这里读，就不会出现「后台加了一个模块、前台不认识」的情况。
  * ------------------------------------------------------------------------ */
 
-export type SectionKey = "intro" | "resume" | "works" | "ai" | "prospects" | "posts" | "slides" | "treasures" | "poems" | "contact";
+export type SectionKey = "intro" | "resume" | "works" | "ai" | "toolbox" | "prospects" | "posts" | "slides" | "treasures" | "poems" | "contact";
 
 /**
  * 栏目 key 的固有顺序（sectionOrder 缺省时就用它）。
  * 新栏目必须加在这里，否则 normalizeSectionOrder 会把它当未知 key 过滤掉。
  */
-export const sectionKeys: SectionKey[] = ["intro", "resume", "works", "ai", "prospects", "posts", "slides", "treasures", "poems", "contact"];
+export const sectionKeys: SectionKey[] = ["intro", "resume", "works", "ai", "toolbox", "prospects", "posts", "slides", "treasures", "poems", "contact"];
 
 export interface SectionMeta {
   key: SectionKey;
@@ -190,6 +192,7 @@ export interface SectionMeta {
 }
 
 export const sectionCatalog: SectionMeta[] = [
+  { key: "toolbox", label: "工具箱", sub: "TOOLBOX", copyKey: "toolbox", hint: "自研应用的统一入口，点击卡片探索工具。" },
   { key: "intro", label: "自我介绍", sub: "BIOGRAPHY", hint: "首屏：头像、一句话签名、闲言碎语，以及个人经历时间线。" },
   { key: "resume", label: "个人简历", sub: "CURRICULUM", copyKey: "resume", content: "resume", hint: "按岗位分标签展示简历 PDF；前台按后台顺序生成选项卡。" },
   { key: "works", label: "作品展示", sub: "PORTFOLIO", copyKey: "works", content: "work", hint: "主要作品列表，按分类筛选，点击弹出详情。" },

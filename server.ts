@@ -1,4 +1,7 @@
 import "dotenv/config";
+import { registerToolSettings } from "./server/tool-settings";
+import { registerEngagementAnalytics } from "./server/engagement-analytics";
+import { contentIdentity } from "./src/analytics-model";
 import crypto from "crypto";
 import express, { NextFunction, Request, Response } from "express";
 import fs from "fs";
@@ -941,7 +944,7 @@ function normalizePageCopy(pageCopy: JsonRecord | undefined, transform: (url?: s
   if (Array.isArray(copy.poemList)) {
     copy.poemList = copy.poemList.map((item) => (
       item && typeof item === "object"
-        ? { ...(item as JsonRecord), imageUrl: transform(String((item as JsonRecord).imageUrl || "")) }
+        ? { ...(item as JsonRecord), id: item.id || contentIdentity("poems", item).replace(/^poems:/, ""), imageUrl: transform(String((item as JsonRecord).imageUrl || "")) }
         : item
     ));
   }
@@ -977,6 +980,7 @@ function normalizePageCopy(pageCopy: JsonRecord | undefined, transform: (url?: s
       const work = item as JsonRecord;
       return {
         ...work,
+        id: work.id || contentIdentity("ai", work).replace(/^work:/, ""),
         images: Array.isArray(work.images) ? work.images.map((url) => transform(String(url || ""))) : [],
         videoUrl: transform(String(work.videoUrl || "")),
         links: Array.isArray(work.links)
@@ -1393,6 +1397,7 @@ async function savePortfolioData(supabase: SupabaseClient | null, data: JsonReco
 
 async function startServer() {
   const app = express();
+  app.get(["/tools/wanchuang", "/tools/wanchuang/"], (_req, res) => res.redirect("/tools/wanchuang/index.html"));
   const supabase = getSupabase();
   const cos = getCosClient();
   await ensureCosCors(cos);
@@ -1402,6 +1407,7 @@ async function startServer() {
   app.set("trust proxy", 1);
 
   app.use(express.json({ limit: "60mb" }));
+  registerToolSettings(app, requireAdmin);
   app.use(express.urlencoded({ limit: "60mb", extended: true }));
   app.use((_req, res, next) => {
     res.charset = "utf-8";
@@ -2314,6 +2320,14 @@ async function startServer() {
         return res.status(403).json({ error: "invalid tracking context" });
       }
 
+      if (Number.isFinite(body.totalDwellMs) && body.totalDwellMs >= 0) {
+        const { error } = await supabase.rpc("sync_portfolio_dwell", {
+          p_visit_id: visitIdNum, p_visitor_key: visitorKey, p_total_ms: Math.round(body.totalDwellMs),
+        });
+        if (!error) return res.json({ ok: true });
+        if (!missingSchema(error.message)) return res.status(500).json({ ok: false, reason: "dwell-failed" });
+      }
+
       // 新版 schema 用数据库函数在一个事务里原子累加，避免心跳与离开上报并发覆盖。
       const { error: rpcError } = await supabase.rpc("increment_portfolio_dwell", {
         p_visit_id: visitIdNum,
@@ -2364,7 +2378,7 @@ async function startServer() {
   const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
 
   function analyticsQuery(req: Request) {
-    const range = ANALYTICS_RANGES.has(String(req.query.range)) ? String(req.query.range) : "7d";
+    const range = ANALYTICS_RANGES.has(String(req.query.range)) ? String(req.query.range) : "today";
     const humanOnly = req.query.humanOnly !== "0";
     let since: string | null = null;
     if (range === "today") {
@@ -2377,6 +2391,12 @@ async function startServer() {
     }
     return { range, humanOnly, since, bucket: range === "today" ? "hour" : "day" };
   }
+
+  registerEngagementAnalytics(app, {
+    supabase, requireAdmin, validToken: validTrackingToken, range: analyticsQuery,
+    allowed: (req) => !isAutomatedUserAgent(String(req.headers["user-agent"] || "")) && trackAllowed(clientIp(req)),
+    classify: classifyTraffic,
+  });
 
   /** 旧 schema 兜底：按访问行推出每位访客的类型（human > local > bot，与 SQL 回填规则一致）。 */
   async function legacyVisitRows(since: string | null) {
@@ -2831,6 +2851,7 @@ async function startServer() {
   });
 
   if (process.env.NODE_ENV !== "production") {
+    app.get("/analytics.js", (_req, res) => res.redirect(307, "/src/analytics-entry.ts"));
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

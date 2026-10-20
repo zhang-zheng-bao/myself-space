@@ -1,0 +1,61 @@
+/* Shared admin appearance. Scoped away from the public portfolio and application UI. */
+.admin-theme {
+  --admin-surface: #18181b;
+  --admin-field: #09090b;
+  --admin-border: #27272a;
+  --admin-control-border: #3f3f46;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+.admin-theme .adm-card {
+  background: var(--admin-surface);
+  border: 1px solid var(--admin-border);
+  border-radius: 12px;
+  box-shadow: none;
+}
+.admin-theme .adm-panel { background: #121214; border-radius: 12px; }
+.admin-theme .adm-row {
+  border: 1px solid var(--admin-control-border);
+  border-radius: 12px;
+  background: #101012;
+  transition: border-color 150ms, background-color 150ms;
+}
+.admin-theme .adm-row:hover { background: #18181b; border-color: #52525b; }
+.admin-theme .adm-row[data-expanded="true"] { border-color: #3f7462; background: #111916; }
+.admin-theme .adm-row[data-tone="amber"][data-expanded="true"] { border-color: #805d27; background: #1c1811; }
+.admin-theme .adm-drawer { border-top: 1px solid #27272a; background: #09090b; }
+.admin-theme .adm-section-heading + div { padding-top: 20px; }
+.admin-theme .admin-scroll > div { gap: 16px; }
+.admin-theme .adm-note { border-radius: 8px; padding: 12px; font-size: 12px; line-height: 1.7; }
+.admin-theme .adm-note-info { background: #11251e; }
+.admin-theme .adm-note-warn { background: #292012; }
+.admin-theme :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]), textarea, select),
+.adm-modal :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]), textarea, select) {
+  background-color: #09090b;
+  border: 1px solid #3f3f46;
+  border-radius: 8px;
+  color: #f4f4f5;
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 42px;
+  box-shadow: none;
+}
+.admin-theme :is(input, textarea, select):focus-visible,
+.adm-modal :is(input, textarea, select):focus-visible {
+  outline: 2px solid #34d399;
+  outline-offset: 2px;
+}
+.admin-theme :is(input, textarea)::placeholder { color: #71717a; }
+.admin-theme :is(button, a, summary):focus-visible { outline: 2px solid #34d399; outline-offset: 3px; }
+.admin-theme button:disabled { cursor: not-allowed; }
+.admin-theme button[class*="bg-emerald-"], .adm-modal button[class*="bg-emerald-"] {
+  border-radius: 8px;
+}
+.admin-theme button[class~="bg-emerald-400"], .admin-theme button[class~="bg-emerald-500"],
+.adm-modal button[class~="bg-emerald-400"], .adm-modal button[class~="bg-emerald-500"] {
+  background: #34d399; color: #09090b; font-size: 14px; font-weight: 600;
+}
+.admin-theme > header { background: #09090b; border-color: #27272a; backdrop-filter: none; }
+.admin-theme aside { border-color: #27272a; }
+.admin-theme nav button[aria-current="page"] { background: #153229; color: #a7f3d0; box-shadow: inset 0 0 0 1px #285747; }
+.adm-modal { background: #18181b; border-color: #3f3f46; border-radius: 12px; }
+@media (prefers-reduced-motion: reduce) { .admin-theme .adm-row { transition: none; } }

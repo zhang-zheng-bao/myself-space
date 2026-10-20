@@ -1,5 +1,9 @@
 import React, { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import "./admin-theme.css";
+import AppSettingsAdmin from "./components/AppSettingsAdmin";
+import ContentAnalytics, { analyticsCatalog, VisitorEngagement } from "./components/ContentAnalytics";
+import VisitNotifications from "./components/VisitNotifications";
 import { isInstrumental, setInstrumental } from "./musicMetadata";
 import {
   Activity,
@@ -975,7 +979,7 @@ function Section({
 }) {
   return (
     <section className={nested ? "adm-panel" : "adm-card"}>
-      <div className={nested ? "px-4 pb-0 pt-3.5 md:px-5" : "border-b border-zinc-800/60 px-4 py-3 md:px-5"}>
+      <div className={nested ? "adm-section-heading px-4 pb-0 pt-3.5 md:px-5" : "adm-section-heading px-4 pb-0 pt-5 md:px-5"}>
         {/*
          * 有 action 时用两栏：左栏标题+说明竖排，右栏按钮。
          * `items-start` 让按钮跟标题的第一行对齐，而不是跟整块（含说明）垂直居中 ——
@@ -986,13 +990,13 @@ function Section({
             <h2
               className={
                 nested
-                  ? "text-xs font-semibold tracking-[0.12em] text-zinc-300"
-                  : "text-sm font-semibold tracking-wide text-white"
+                  ? "text-sm font-semibold text-zinc-100"
+                  : "text-lg font-semibold text-zinc-100"
               }
             >
               {title}
             </h2>
-            {description && <p className="mt-1 text-xs leading-5 text-zinc-400">{description}</p>}
+            {description && <p className="mt-2 text-sm leading-6 text-zinc-400">{description}</p>}
           </div>
           {action && <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{action}</div>}
         </div>
@@ -1012,6 +1016,16 @@ function Section({
  * 播报「switch on/off」都是原生行为；焦点圈画在视觉轨道上（peer-focus-visible）；
  * 状态不只靠颜色，右边始终有「已开启 / 已关闭」文字。
  */
+function ProfileGroup({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+  return <details className="group rounded-xl border border-zinc-700 bg-zinc-950/40">
+    <summary className="flex min-h-16 cursor-pointer list-none items-center gap-3 rounded-xl px-4 py-3 focus-visible:outline-emerald-400 [&::-webkit-details-marker]:hidden">
+      <span aria-hidden="true" className="text-zinc-400 transition-transform group-open:rotate-90">›</span>
+      <span><strong className="block text-sm font-medium text-zinc-100">{title}</strong><span className="mt-1 block text-xs text-zinc-400">{description}</span></span>
+    </summary>
+    <div className="space-y-4 border-t border-zinc-800 p-4">{children}</div>
+  </details>;
+}
+
 function VisibilitySwitch({
   name,
   hint,
@@ -1084,14 +1098,10 @@ function VisibilitySwitch({
         <div className="min-w-[220px] flex-1">
           <p className="text-sm text-zinc-200">{label}</p>
           <p className="mt-1 text-xs leading-5 text-zinc-500">{hint}</p>
+          {!checked && <p className="mt-1 text-[11px] leading-4 text-amber-300/90">访客看不到此内容；数据与素材都保留，随时可以重新打开。</p>}
         </div>
         {toggle}
       </div>
-      {!checked && (
-        <p className="adm-note adm-note-warn text-xs leading-5 text-amber-200">
-          当前{name}在前台处于隐藏状态，访客看不到它。后台数据与素材都会保留，随时可以重新打开。
-        </p>
-      )}
     </>
   );
 }
@@ -3279,10 +3289,12 @@ export default function AdminApp() {
   // 概览（卡片 / 趋势 / 分布 / 点击排行）和访客列表是两个接口：翻页、搜索只重拉列表。
   const [analytics, setAnalytics] = useState<AnalyticsSummaryPayload | null>(null);
   const [visitorPage, setVisitorPage] = useState<AnalyticsVisitorsPayload | null>(null);
-  const [analyticsRange, setAnalyticsRange] = useState<AnalyticsRange>("7d");
+  const [analyticsRange, setAnalyticsRange] = useState<AnalyticsRange>("today");
+  const [analyticsRefresh, setAnalyticsRefresh] = useState(0);
+  const contentCatalog = useMemo(() => analyticsCatalog(data), [data]);
   // 默认只看真人：爬虫和本机预览浏览器是大头，混在一起数字没有意义。
   const [analyticsHumanOnly, setAnalyticsHumanOnly] = useState(true);
-  const [analyticsView, setAnalyticsView] = useState<"overview" | "visitors" | "chats" | "clicks">("overview");
+  const [analyticsView, setAnalyticsView] = useState<"overview" | "visitors" | "chats" | "clicks" | "page" | "work" | "video">("overview");
   const [visitorQuery, setVisitorQuery] = useState("");
   const [visitorQueryDraft, setVisitorQueryDraft] = useState("");
   const [visitorPageNo, setVisitorPageNo] = useState(1);
@@ -3317,6 +3329,7 @@ export default function AdminApp() {
   }
 
   async function loadVisits() {
+    setAnalyticsRefresh(value => value + 1);
     setVisitsLoading(true);
     setVisitsError("");
     try {
@@ -3489,13 +3502,13 @@ export default function AdminApp() {
     void loadAssistantKeywords();
   }, [active, analyticsView, analyticsRange, analyticsHumanOnly]);
 
-  // 侧栏导航。图标和文字都给（只用图标会牺牲可发现性），顺序按「先看结构、再看内容、
-  // 最后是设置」排：站点资料 + 模块管理是站点的结构层；中间是各栏目的内容；
-  // 弹幕设置是装饰性的；「站点检测」是纯运维的访问记录，与站点内容无关，单独放最后。
+  // 站点检测紧挨站点资料，放在模块管理前。
   const nav = useMemo(
     () => [
       { key: "profile", label: "站点资料", icon: UserRound },
+      { key: "tracking", label: "站点检测", icon: Activity },
       { key: "modules", label: "模块管理", icon: LayoutList },
+      { key: "toolSettings", label: "应用配置", icon: LayoutGrid },
       { key: "resume", label: "个人简历", icon: FileText },
       { key: "experiences", label: "我的经历", icon: Briefcase },
       { key: "works", label: "作品媒体", icon: LayoutGrid },
@@ -3508,7 +3521,6 @@ export default function AdminApp() {
       { key: "music", label: "音乐播放", icon: Music },
       { key: "contact", label: "联系方式", icon: AtSign },
       { key: "floating", label: "弹幕设置", icon: MessagesSquare },
-      { key: "tracking", label: "站点检测", icon: Activity },
     ],
     [],
   );
@@ -3817,13 +3829,18 @@ export default function AdminApp() {
    * 三条刻意的设计：
    *  1. **绝不删素材**。图片 / 视频 / 附件的 COS 地址是同一批，只是换了个栏目归属，
    *     所以这里不走 removeAndSave（那个会在删行之后顺手删掉媒体文件）。
-   *  2. **换 id**。新 id 保证不会和「对面栏目里已有的条目」撞 key。
+   *  2. 保留作品 id，让跨栏目迁移后的历史统计仍归属于同一件作品。
    *  3. **分类原样带过去**。两个栏目的分类词表不一样（例如「账号运营」在 AI 专区里没有对应项），
    *     硬改会偷偷篡改用户填的内容。SelectField 遇到不认识的分类会显示成「xxx（当前）」，
    *     用户迁移后在目标栏目里自己改一下即可。
    */
   async function migrateWork(work: Work, index: number, direction: "to-ai" | "to-works") {
-    const moved: Work = { ...work, id: uid(direction === "to-ai" ? "aiwork" : "work") };
+    const moved: Work = { ...work, id: work.id || uid("work") };
+    const target = direction === "to-ai" ? data.profile.pageCopy?.aiWorks || [] : data.works || [];
+    if (target.some(item => item.id === moved.id)) {
+      setStatus("目标栏目已有相同编号的作品，请先检查重复内容。");
+      return false;
+    }
     const targetLabel = direction === "to-ai" ? "AI 专区" : "作品媒体";
     const drop = (list: Work[]) => list.filter((_, i) => i !== index);
 
@@ -4434,7 +4451,7 @@ export default function AdminApp() {
      * → 宽度恒定。再加 scrollbar-gutter: stable 把右栏滚动槽也常驻，
      * 切栏目时连右栏内部都不会横跳。两层保险。
      */
-    <main className="flex h-dvh flex-col overflow-hidden bg-[#09090b] text-zinc-100">
+    <main className="admin-theme flex h-dvh flex-col overflow-hidden bg-[#09090b] text-zinc-100">
       <header className="z-30 shrink-0 border-b border-zinc-900 bg-zinc-950/90 px-3 py-2.5 backdrop-blur md:px-5">
         <div className="mx-auto flex max-w-[1600px] flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
@@ -4553,6 +4570,7 @@ export default function AdminApp() {
          */}
         <div className="admin-scroll min-h-0 flex-1 overflow-y-auto px-3 py-3 md:px-5 md:py-4">
           <div className="mx-auto w-full max-w-4xl space-y-3.5">
+            {active === "toolSettings" && <AppSettingsAdmin />}
             {active === "modules" && (
               <>
                 <Section
@@ -4669,6 +4687,7 @@ export default function AdminApp() {
 
             {active === "profile" && (
               <Section title="站点资料" description="站点的基本信息：名称、头像、简介、签名。">
+                <ProfileGroup title="基本信息与头像" description="名称、头像地址与图片上传">
                 <div className="grid gap-3 md:grid-cols-2">
                   <Field label="名称" value={data.profile.name} onChange={(value) => update((draft) => { draft.profile.name = value; })} />
                   <Field label="头像 URL" value={data.profile.avatar} onChange={(value) => update((draft) => { draft.profile.avatar = value; })} />
@@ -4685,6 +4704,8 @@ export default function AdminApp() {
                     字段是 `hideAvatar` 而不是 `avatarVisible`，勾选状态与字段同向，
                     省掉一次 `!value` 反转 —— 那种地方最容易写反，前台会跟开关相反。
                     改完即保存（与「模块管理」的开关一致），不用等「保存全部」。 */}
+                </ProfileGroup>
+                <ProfileGroup title="首页展示" description="头像与入场动画的显示开关，修改后立即保存">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                   <VisibilitySwitch
                     name="首页头像"
@@ -4715,13 +4736,13 @@ export default function AdminApp() {
                     }}
                   />
                 </div>
+                </ProfileGroup>
+                <ProfileGroup title="介绍与签名" description="一句话标签、自我介绍和诗句签名">
                 <Field label="一句话标签" value={data.profile.tagline} onChange={(value) => update((draft) => { draft.profile.tagline = value; })} textarea />
                 <Field label="自我介绍" value={data.profile.intro} onChange={(value) => update((draft) => { draft.profile.intro = value; })} textarea />
-                <div className="space-y-3 border-t border-zinc-800/80 pt-4">
-                  <div>
-                    <h3 className="text-sm font-medium text-zinc-100">首页数据标签</h3>
-                    <p className="mt-1 text-xs leading-5 text-zinc-500">编辑前台“关于我”下方的作品、播放和 AI 技能数据。</p>
-                  </div>
+                <Field label="诗句/签名" value={data.profile.quote} onChange={(value) => update((draft) => { draft.profile.quote = value; })} textarea />
+                </ProfileGroup>
+                <ProfileGroup title="首页数据标签" description="“关于我”下方的作品、播放和 AI 技能数据">
                   <div className="grid gap-4 md:grid-cols-3">
                     {(["works", "plays", "ai"] as const).map((key) => {
                       const stat = { ...defaultHomeStats[key], ...data.profile.pageCopy?.homeStats?.[key] };
@@ -4736,8 +4757,7 @@ export default function AdminApp() {
                       );
                     })}
                   </div>
-                </div>
-                <Field label="诗句/签名" value={data.profile.quote} onChange={(value) => update((draft) => { draft.profile.quote = value; })} textarea />
+                </ProfileGroup>
                 <SaveCurrentButton label="保存全部" />
               </Section>
             )}
@@ -6510,7 +6530,7 @@ export default function AdminApp() {
             {active === "tracking" && (
               <Section
                 title="站点检测"
-                description="访客每次打开网站都会记一条：IP 与归属地、设备、浏览器、停留时长和按钮点击。爬虫、扫描器直接不记录；本机和内网访问会记下来但默认隐藏。"
+                description="看清访客逛过哪些页面、读过哪些作品、实际看了多久视频。内容自动接入统计；删除作品后，历史浏览和观看数据仍然保留。"
               >
                 {visitsError && (
                   <p className="adm-note adm-note-warn text-xs leading-5 text-amber-200" role="alert">{visitsError}</p>
@@ -6579,7 +6599,7 @@ export default function AdminApp() {
                   {visitsConfirm === "all" ? (
                     <>
                       <span className="text-xs leading-5 text-amber-200">
-                        确定清空全部访问记录（包括隐藏的爬虫和本机记录）？备注与屏蔽标记也会一起删掉，且无法恢复。
+                        确定清空访问概览、点击与聊天记录？备注与屏蔽标记也会删除。独立保存的页面、作品和视频浏览历史会保留。
                       </span>
                       <button
                         type="button"
@@ -6644,8 +6664,8 @@ export default function AdminApp() {
                         </p>
                       )}
 
-                      <div className="flex gap-1 border-b border-zinc-800" role="tablist" aria-label="站点检测视图">
-                        {([["overview", "概览"], ["visitors", `访客${visitorPage ? ` · ${visitorPage.total}` : ""}`], ["chats", "聊天会话"], ["clicks", "行为"]] as const).map(([key, label]) => (
+                      <div className="flex flex-wrap gap-1 border-b border-zinc-800" role="tablist" aria-label="站点检测视图">
+                        {([["overview", "概览"], ["page", "页面分析"], ["work", "作品分析"], ["video", "视频分析"], ["visitors", `访客${visitorPage ? ` · ${visitorPage.total}` : ""}`], ["chats", "聊天会话"], ["clicks", "点击行为"]] as const).map(([key, label]) => (
                           <button
                             key={key}
                             type="button"
@@ -6658,6 +6678,10 @@ export default function AdminApp() {
                           </button>
                         ))}
                       </div>
+
+                      {(analyticsView === "page" || analyticsView === "work" || analyticsView === "video") && (
+                        <ContentAnalytics key={`${analyticsView}:${analyticsRange}:${analyticsHumanOnly}`} kind={analyticsView} range={analyticsRange} humanOnly={analyticsHumanOnly} refresh={analyticsRefresh} catalog={contentCatalog} />
+                      )}
 
                       {analyticsView === "overview" && (
                         <div className="space-y-3">
@@ -6864,6 +6888,8 @@ export default function AdminApp() {
                                 <p className="font-mono text-[10px] leading-5 text-zinc-600">
                                   {visitor.visitor_key} · 首次 {formatVisitTime(visitor.first_seen)} · 最近 {formatVisitTime(visitor.last_seen)}
                                 </p>
+
+                                <VisitorEngagement visitorKey={visitor.visitor_key} range={analyticsRange} humanOnly={analyticsHumanOnly} refresh={analyticsRefresh} data={data} />
 
                                 <div className="space-y-2">
                                   <p className="text-xs font-semibold text-zinc-300">
@@ -7076,6 +7102,10 @@ export default function AdminApp() {
         </div>
       </div>
 
+      <VisitNotifications onView={(key) => {
+        setActive("tracking"); setAnalyticsView("visitors"); setAnalyticsRange("all");
+        setVisitorQuery(key); setVisitorQueryDraft(key); setVisitorPageNo(1);
+      }} />
     </main>
   );
 }
