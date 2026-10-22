@@ -34,6 +34,8 @@ import TimelineArc from "./components/TimelineArc";
 import EntranceCinematic from "./components/EntranceCinematic";
 import ShibaAssistant from "./components/ShibaAssistant";
 import PostFeed from "./components/PostFeed";
+import CaseStudies from "./components/CaseStudies";
+import MobileViewingNotice from "./components/MobileViewingNotice";
 import SlidePlayer from "./components/SlidePlayer";
 import Toolbox from "./components/Toolbox";
 import { startVisitTracking } from "./tracking";
@@ -47,6 +49,7 @@ const navItems: { key: TabKey; label: string; sub: string }[] = [
   { key: "intro", label: "自我介绍", sub: "BIOGRAPHY" },
   { key: "resume", label: "个人简历", sub: "CURRICULUM" },
   { key: "works", label: "作品展示", sub: "PORTFOLIO" },
+  { key: "cases", label: "案例分析", sub: "CASE STUDIES" },
   { key: "ai", label: "AI专区", sub: "AI ZONE" },
   { key: "prospects", label: "应用技能", sub: "SKILLS" },
   { key: "posts", label: "图文分享", sub: "NOTES" },
@@ -2647,7 +2650,10 @@ export default function App() {
   const beginMusicEntry = React.useCallback(() => setMusicEntryReady(true), []);
   const completeEntrance = React.useCallback(() => setEntered(true), []);
   const completeMusicAttempt = React.useCallback(() => setMusicSettled(true), []);
-  const [activeTab, setActiveTab] = useState<TabKey>(() => new URLSearchParams(window.location.search).get("tab") === "toolbox" ? "toolbox" : "intro");
+  const [activeTab, setActiveTab] = useState<TabKey>(() => {
+    const requested = new URLSearchParams(window.location.search).get("tab");
+    return navItems.find(item => item.key === requested)?.key || "intro";
+  });
   const [selectedWork, setSelectedWork] = useState<Work | null>(null);
   const [selectedAiWork, setSelectedAiWork] = useState<Work | null>(null);
   const [selectedGallery, setSelectedGallery] = useState<GalleryItem | null>(null);
@@ -2752,6 +2758,7 @@ export default function App() {
     {portfolioConfigReady && entranceAnimationEnabled && <EntranceCinematic ready={portfolioReady} soundReady={!data.profile.musicAutoplay || !(data.musicTracks || []).some(track => track.audioUrl) || musicSettled} musicLeadSeconds={data.profile.pageCopy?.musicLeadSeconds ?? 3} onMusicEntry={beginMusicEntry} onEntered={completeEntrance} />}
     {portfolioReady && <div data-analytics-page={siteEntered ? activeTab : undefined} data-analytics-title={navItems.find(item => item.key === activeTab)?.label} className="portfolio-site" inert={!siteEntered} aria-hidden={!siteEntered}>
       <FloatingSentences config={floatingSentencesConfig} />
+      <MobileViewingNotice />
 
       <header className="site-header">
         <button type="button" data-track="navigation:brand" className="site-brand" onClick={() => setActiveTab("intro")}>
@@ -2815,6 +2822,7 @@ export default function App() {
               <>
             {activeTab === "intro" && sectionShown("intro") && <IntroDashboard data={data} onSelectWork={setSelectedWork} onNavigate={setActiveTab} />}
             {activeTab === "toolbox" && sectionShown("toolbox") && <Toolbox description={pageCopy.toolbox} />}
+            {activeTab === "cases" && sectionShown("cases") && <CaseStudies description={pageCopy.cases} />}
             {activeTab === "works" && sectionShown("works") && <WorksPane items={[...data.works, ...((data.profile.pageCopy?.poemList || []).map(poemToWork))]} description={pageCopy.works} onSelect={setSelectedWork} categoryOrder={workCategories} />}
             {activeTab === "ai" && sectionShown("ai") && <WorksPane items={data.profile.pageCopy?.aiWorks || []} description={pageCopy.aiZone} onSelect={setSelectedAiWork} eyebrow="与 AI 共作 / AI ZONE EXHIBITS" emptyTitle="暂无 AI 作品" emptyDescription="请进入后台 /admin，在「AI 专区」中新增作品并保存。" />}
             {activeTab === "prospects" && sectionShown("prospects") && <GalleryPane items={data.gallery || []} onSelect={setSelectedGallery} description={pageCopy.gallery} />}
