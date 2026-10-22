@@ -12,7 +12,14 @@ export default function ToolSettingsAdmin() {
   const [clearSecrets, setClearSecrets] = useState<string[]>([]);
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
+  const [runtime, setRuntime] = useState<{ tools: Record<string, boolean> } | null>(null);
+  const [runtimeError, setRuntimeError] = useState('');
+  async function checkRuntime() {
+    try { const response = await fetch('/api/admin/tools/wanchuang/status'); const body = await response.json(); if (!response.ok) throw new Error(body.error); setRuntime(body); setRuntimeError(''); }
+    catch (error) { setRuntimeError(error instanceof Error ? error.message : '读取服务状态失败'); }
+  }
   useEffect(() => {
+    void checkRuntime();
     const abort = new AbortController();
     fetch('/api/admin/tools/wanchuang/settings', { signal: abort.signal }).then(async res => {
       const body = await res.json(); if (!res.ok) throw new Error(body.error); setConfig(body);
@@ -23,7 +30,12 @@ export default function ToolSettingsAdmin() {
   return <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5 text-zinc-100">
     <h2 className="text-lg font-semibold">万创核心 · 应用配置</h2>
     <p className="mt-2 text-sm leading-6 text-zinc-400">敏感字段加密保存，仅管理员可维护。留空保留原值，不向前台返回密钥。</p>
-    <p className="my-4 rounded-lg border border-amber-900 p-3 text-sm text-amber-200">当前仅保存配置。下载、转写和声音生成服务尚未接通，保存不代表功能已经启用。</p>
+    <div className="adm-note my-4 text-sm leading-6">
+      <p>{runtimeError || (runtime ? '网页版执行服务已连接。配置保存后由服务端直接读取。' : '正在检查执行服务…')}</p>
+      {runtime && <p>{Object.entries(runtime.tools).map(([key,ready]) => `${({ytDlp:'视频下载',ffmpeg:'音频处理',browser:'平台解析'} as Record<string,string>)[key]}：${ready ? '就绪' : '服务器未安装'}`).join(' · ')}</p>}
+      <p>“已配置”代表凭证已保存，平台是否接受凭证以实际执行结果为准。</p>
+      <button type="button" className="mt-2 text-emerald-300" onClick={() => void checkRuntime()}>刷新服务状态</button>
+    </div>
     {config && <form onInvalidCapture={e => {
       const panel = (e.target as HTMLElement).closest('details');
       if (panel) panel.open = true;
@@ -32,7 +44,7 @@ export default function ToolSettingsAdmin() {
       try {
         const res = await fetch('/api/admin/tools/wanchuang/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...config, secrets, clearSecrets }) });
         const body = await res.json(); if (!res.ok) throw new Error(body.error);
-        setConfig(body); setSecrets({}); setClearSecrets([]); setMessage('已加密保存。待应用服务接通后使用。');
+        setConfig(body); setSecrets({}); setClearSecrets([]); setMessage('已加密保存，后续任务将使用最新配置。'); void checkRuntime();
       } catch (error) { setMessage(error instanceof Error ? error.message : '保存失败'); } finally { setSaving(false); }
     }}><fieldset disabled={saving} className="space-y-5 disabled:opacity-60">
       <div className="space-y-3">{groups.map(group => {
