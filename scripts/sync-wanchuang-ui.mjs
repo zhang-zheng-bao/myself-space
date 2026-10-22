@@ -5,7 +5,8 @@ const target=resolve('public/tools/wanchuang');
 for(const file of ['styles.css','glass.css'])copyFileSync(resolve(source,file),resolve(target,file));
 let html=readFileSync(resolve(source,'index.html'),'utf8');
 html=html.replace('</head>','<link rel="stylesheet" href="web.css"></head>')
-  .replaceAll('本地历史','生成历史')
+  .replaceAll('本地历史','最近生成')
+  .replaceAll('下载历史','下载任务')
   .replace('<body data-view="download">','<body data-view="download"><div class="web-status"><a href="/?tab=toolbox">← 返回工具箱</a><span id="webStatus" role="status">正在连接应用服务…</span></div>')
   .replace('../node_modules/lucide/dist/umd/lucide.js','vendor/lucide.js')
   .replace('<script src="renderer.js"></script>','<script src="web-adapter.js"></script><script src="renderer.js"></script><script src="web-downloads.js"></script><script type="module" src="/analytics.js"></script>');

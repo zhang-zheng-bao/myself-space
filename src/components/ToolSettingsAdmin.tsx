@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import WanchuangManagementAdmin from './WanchuangManagementAdmin';
 const groups = [
   { id: 'runtime', title: '运行参数', description: '任务并发与文件保留时间', fields: [] },
   { id: 'iflytek', title: '讯飞语音', description: 'App ID、API Key、API Secret', fields: [['iflytekApiKey', 'API Key'], ['iflytekApiSecret', 'API Secret']] },
@@ -70,5 +71,6 @@ export default function ToolSettingsAdmin() {
       <button className="rounded-lg bg-emerald-400 px-5 py-2 text-sm font-semibold text-zinc-950" type="submit">{saving ? '正在保存…' : '保存应用配置'}</button>
     </fieldset></form>}
     <p role="status" className="mt-4 text-sm text-emerald-200">{message || (!config ? '正在读取配置…' : '')}</p>
+    {config && <WanchuangManagementAdmin />}
   </section>;
 }

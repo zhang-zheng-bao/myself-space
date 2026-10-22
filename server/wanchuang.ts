@@ -4,7 +4,7 @@ import path from 'node:path';
 import multer from 'multer';
 import type { Express, Request, RequestHandler } from 'express';
 import { limited, makeRuntime, runtimeBinaries, safeFile, validateMediaUrl } from './wanchuang-runtime';
-import { readToolSettings } from './tool-settings';
+import { readToolSettings, writeToolSettings } from './tool-settings';
 
 const root=path.resolve(process.env.WANCHUANG_DATA_DIR || '.private/wanchuang-jobs');
 const cookieName='wanchuang_session';
@@ -12,7 +12,7 @@ type Session={id:string;directory:string;engine:ReturnType<typeof makeRuntime>;t
 const sessions=new Map<string,Session>();
 const ipLimits=new Map<string,{time:number;count:number}>();
 const finished=new Set(['已完成','失败','已取消']);
-const channels:Record<string,string>={getState:'state:get',parseMedia:'media:parse',addJobs:'jobs:add',cancelJob:'jobs:cancel',retryJob:'jobs:retry',clearFinished:'jobs:clear-finished',refreshMinimaxModels:'minimax:refresh',saveMinimaxFavorites:'minimax:favorites',setMinimaxVoiceHidden:'minimax:visibility',generateVoice:'minimax:generate',cloneVoice:'minimax:clone',readVoiceHistoryAudio:'voice-history:audio',removeHistoryRecord:'history:remove'};
+const channels:Record<string,string>={getState:'state:get',parseMedia:'media:parse',addJobs:'jobs:add',cancelJob:'jobs:cancel',retryJob:'jobs:retry',clearFinished:'jobs:clear-finished',refreshMinimaxModels:'minimax:refresh',saveMinimaxFavorites:'minimax:favorites',generateVoice:'minimax:generate',cloneVoice:'minimax:clone',readVoiceHistoryAudio:'voice-history:audio'};
 const costly=new Set(['parseMedia','generateVoice','cloneVoice','refreshMinimaxModels','addJobs','retryJob']);
 function storageBytes(directory:string):number {
   return fs.readdirSync(directory,{withFileTypes:true}).reduce((total,entry)=>{
@@ -27,8 +27,8 @@ function scrub(error:unknown) {
   try {for(const secret of Object.values(readToolSettings().secrets)) if(secret)message=message.split(secret).join('[已隐藏]');}catch{}
   return message.replace(/https?:\/\/\S+/g,'[平台地址]').replaceAll(root,'[任务目录]').slice(0,400);
 }
-function files(session:Session,kind:string,id:string,record?:any) {
-  const state=record?null:session.engine.snapshot();
+function files(session:{directory:string;engine?:ReturnType<typeof makeRuntime>},kind:string,id:string,record?:any) {
+  const state=record?null:session.engine!.snapshot();
   const item=record || (kind==='voice'?state.voiceHistory.find((x:any)=>x.id===id):state.jobs.find((x:any)=>x.id===id && (x.type||'download')===kind));
   const candidates=kind==='voice'?[item?.outputPath]:item?.outputs || [];
   return candidates.filter((p:any)=>typeof p==='string' && p).flatMap((p:string)=>{try{return [safeFile(session.directory,p)];}catch{return [];}});
@@ -52,8 +52,112 @@ function present(session:Session,value:any):any {
   }
   return out;
 }
+function saveVoiceCatalog(models:any[]) {
+  const config=readToolSettings();
+  if(!config.secrets.minimaxApiKey)return;
+  config.voiceModels=models.map(item=>({id:String(item.id),name:String(item.name||item.id),type:String(item.type||'system'),createdAt:String(item.createdAt||'')}));
+  config.voiceModelsAccount=crypto.createHash('sha256').update(config.secrets.minimaxApiKey).digest('hex');
+  writeToolSettings(config);
+}
+function voiceCatalog() {
+  const c=readToolSettings();
+  const account=c.secrets.minimaxApiKey?crypto.createHash('sha256').update(c.secrets.minimaxApiKey).digest('hex'):'';
+  return {configured:!!account,models:(c.voiceModelsAccount===account?c.voiceModels||[]:[]).map(model=>({...model,hidden:(c.hiddenVoices||[]).includes(model.id)}))};
+}
+function historyOwners() {
+  return fs.readdirSync(root,{withFileTypes:true}).filter(entry=>entry.isDirectory() && /^[a-f0-9]{48}$/.test(entry.name)).map(entry=>({id:entry.name,key:crypto.createHash('sha256').update(entry.name).digest('hex').slice(0,24),directory:path.join(root,entry.name)}));
+}
+function historySnapshot(owner:{id:string;directory:string}) {
+  const live=sessions.get(owner.id);
+  if(live)return live.engine.snapshot();
+  const file=path.join(owner.directory,'history.json');
+  return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):{jobs:[],voiceHistory:[]};
+}
+function historyRecord(owner:any,kind:string,id:string) {
+  const history=historySnapshot(owner);
+  return kind==='voice'?(history.voiceHistory||[]).find((row:any)=>row.id===id):(history.jobs||[]).find((row:any)=>row.id===id && (row.type||'download')===kind);
+}
 export function registerWanchuang(app:Express,requireAdmin:RequestHandler) {
   fs.mkdirSync(root,{recursive:true,mode:0o700});
+  const adminBase='/api/admin/tools/wanchuang';
+  app.use(adminBase,(req,res,next)=>{
+    res.setHeader('Cache-Control','no-store');
+    if(!['GET','HEAD'].includes(req.method) && req.headers['sec-fetch-site']==='cross-site'){res.status(403).json({error:'不允许跨站操作'});return;}
+    next();
+  });
+  app.get(adminBase+'/voices',requireAdmin,(_req,res)=>{
+    try{res.json(voiceCatalog());}catch(error){res.status(503).json({error:scrub(error)});}
+  });
+  let managementEngine:ReturnType<typeof makeRuntime>;
+  app.post(adminBase+'/voices/refresh',requireAdmin,async(_req,res)=>{
+    try{
+      managementEngine ||= makeRuntime(path.join(root,'.management'));
+      const profile=await limited(()=>managementEngine.call('minimax:refresh'));
+      saveVoiceCatalog(profile.models);res.json(voiceCatalog());
+    }catch(error){res.status(400).json({error:scrub(error)});}
+  });
+  app.put(adminBase+'/voices/visibility',requireAdmin,(req,res)=>{
+    const {id,hidden}=req.body||{};
+    if(typeof id!=='string'||!id||id.length>200||typeof hidden!=='boolean'){res.status(400).json({error:'音色设置格式错误'});return;}
+    try{
+      const config=readToolSettings(),known=voiceCatalog().models.some(model=>model.id===id);
+      if(!known){res.status(404).json({error:'音色不存在，请先刷新账号音色'});return;}
+      const values=new Set(config.hiddenVoices||[]);if(hidden)values.add(id);else values.delete(id);
+      config.hiddenVoices=[...values];writeToolSettings(config);res.json(voiceCatalog());
+    }catch(error){res.status(500).json({error:scrub(error)});}
+  });
+  app.get(adminBase+'/history',requireAdmin,(req,res)=>{
+    try{
+      const kind=String(req.query.kind||'all'),query=String(req.query.q||'').trim().toLowerCase();
+      const page=Math.max(1,Math.floor(Number(req.query.page)||1));
+      const rows:any[]=[];let unreadable=0;
+      for(const owner of historyOwners()){
+        try{
+          const data=historySnapshot(owner);
+          for(const record of [...(data.jobs||[]),...(data.voiceHistory||[])]){
+            const recordKind=record.voiceId?'voice':record.type||'download';
+            const title=String(record.text||record.title||record.url||record.voiceId||'未命名任务');
+            if(kind!=='all'&&kind!==recordKind)continue;
+            if(query&&!`${title} ${record.status} ${record.voiceId||''}`.toLowerCase().includes(query))continue;
+            const available=files(owner,recordKind,record.id,record);
+            rows.push({id:record.id,owner:owner.key,kind:recordKind,title,status:record.status,createdAt:record.createdAt,finishedAt:record.finishedAt,voiceId:record.voiceId,error:record.error?scrub(new Error(record.error)):'',text:record.transcriptText||record.text||'',files:available.map((file,index)=>({name:path.basename(file),url:`${adminBase}/history/${owner.key}/${recordKind}/${encodeURIComponent(record.id)}/files/${index}`}))});
+          }
+        }catch{unreadable++;}
+      }
+      rows.sort((a,b)=>(Number(b.createdAt)||0)-(Number(a.createdAt)||0));
+      res.json({rows:rows.slice((page-1)*30,page*30),page,total:rows.length,unreadable});
+    }catch(error){res.status(500).json({error:scrub(error)});}
+  });
+  app.get(adminBase+'/history/:owner/:kind/:id/files/:index',requireAdmin,(req,res)=>{
+    try{
+      const owner=historyOwners().find(item=>item.key===req.params.owner);
+      if(!owner)throw new Error('记录不存在');
+      const record=historyRecord(owner,String(req.params.kind),String(req.params.id));
+      if(!record)throw new Error('记录不存在');
+      const list=files(owner,String(req.params.kind),String(req.params.id),record),index=Number(req.params.index);
+      if(!Number.isInteger(index)||!list[index])throw new Error('文件已过期');
+      res.download(list[index],path.basename(list[index]));
+    }catch{res.status(404).json({error:'文件不存在或已过期'});}
+  });
+  app.delete(adminBase+'/history/:owner/:kind/:id',requireAdmin,async(req,res)=>{
+    try{
+      const owner=historyOwners().find(item=>item.key===req.params.owner),kind=String(req.params.kind),id=String(req.params.id);
+      if(!owner)throw new Error('记录不存在');
+      const record=historyRecord(owner,kind,id);
+      if(!record)throw new Error('记录不存在');
+      if(!finished.has(record.status)){res.status(409).json({error:'任务仍在进行，完成后才能移除记录'});return;}
+      const live=sessions.get(owner.id);
+      if(live)await live.engine.call('history:remove',{kind,id});
+      else{
+        const history=historySnapshot(owner);
+        if(kind==='voice')history.voiceHistory=(history.voiceHistory||[]).filter((item:any)=>item.id!==id);
+        else history.jobs=(history.jobs||[]).filter((item:any)=>item.id!==id||(item.type||'download')!==kind);
+        const file=path.join(owner.directory,'history.json'),temporary=file+'.admin.tmp';
+        fs.writeFileSync(temporary,JSON.stringify(history));fs.renameSync(temporary,file);
+      }
+      res.json({ok:true});
+    }catch(error){res.status(400).json({error:scrub(error)});}
+  });
   app.get('/api/admin/tools/wanchuang/status',requireAdmin,(_req,res)=>{
     try{const c=readToolSettings(),b=runtimeBinaries();res.json({connected:true,tools:{ytDlp:!!b.ytDlp,ffmpeg:!!b.ffmpeg,browser:!!b.browser},configured:{cookies:['douyin','bilibili','xiaohongshu'].filter(k=>!!c.secrets[k+'Cookie']),speech:!!(c.iflytekAppId&&c.secrets.iflytekApiKey&&c.secrets.iflytekApiSecret),minimax:!!c.secrets.minimaxApiKey}});}catch(error){res.status(503).json({error:scrub(error)});}
   });
@@ -94,14 +198,13 @@ export function registerWanchuang(app:Express,requireAdmin:RequestHandler) {
   app.post('/api/tools/wanchuang/action',async(req,res)=>{
     const s:Session=res.locals.wanchuang;
     const method=String(req.body?.method||'');let payload=req.body?.payload;
-    if(!channels[method] && method!=='clearHistory'){res.status(400).json({error:'不支持的操作'});return;}
+    if(!channels[method]){res.status(400).json({error:'不支持的操作'});return;}
     if(Date.now()-s.window>3600000){s.window=Date.now();s.requests=0;}
     if(costly.has(method) && (++s.requests>30 || s.pending>=2)){res.status(429).json({error:'操作较多，请等待当前任务完成或稍后重试'});return;}
     s.pending++;
     try {
       if(['addJobs','generateVoice','cloneVoice','retryJob'].includes(method) && storageBytes(root)>2*1024*1024*1024)throw new Error('临时文件空间已满，请等待到期清理后重试');
       if(method==='saveMinimaxFavorites' && (!Array.isArray(payload)||payload.length>300||payload.some(x=>typeof x!=='string'||x.length>100)))throw new Error('音色收藏格式错误');
-      if(method==='setMinimaxVoiceHidden' && (!payload || typeof payload.id!=='string' || payload.id.length>100 || typeof payload.hidden!=='boolean'))throw new Error('音色设置格式错误');
       if(method==='generateVoice' && (!payload || typeof payload.text!=='string' || payload.text.length>1000 || typeof payload.voiceId!=='string'))throw new Error('请填写音色与不超过 1000 字的文案');
       if(method==='parseMedia') {
         const urls=String(payload||'').match(/https?:\/\/[^\s，。！？、]+/gi)||[];
@@ -120,12 +223,10 @@ export function registerWanchuang(app:Express,requireAdmin:RequestHandler) {
         if(!payload || !/^reference-[a-f0-9-]+\.(mp3|wav|m4a|aac|ogg)$/.test(payload.refPath||''))throw new Error('请先上传参考音频');
         payload={voiceId:payload.voiceId,noise:!!payload.noise,refPath:safeFile(s.directory,path.join(s.directory,payload.refPath))};
       }
-      if(method==='clearHistory') {
-        if(!['voice','speech','download'].includes(payload))throw new Error('无效的历史分类');
-        res.json(present(s,s.engine.clearHistory(payload)));return;
-      }
       const run=()=>s.engine.call(channels[method],payload);
+      if(method==='refreshMinimaxModels'){res.json(s.engine.snapshot().settings.minimax);return;}
       const result=await (['parseMedia','generateVoice','cloneVoice','refreshMinimaxModels'].includes(method)?limited(run):run());
+      if(method==='cloneVoice'&&result.profile?.models)saveVoiceCatalog(result.profile.models);
       res.json(present(s,result));
     }catch(error){res.status(400).json({error:scrub(error)});}finally{s.pending--;}
   });

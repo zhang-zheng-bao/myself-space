@@ -15,6 +15,7 @@
       for(const fn of listeners.jobs)fn(next.jobs||[]);
       for(const fn of listeners.voice)fn(next.voiceHistory||[]);
       for(const fn of listeners.cookies)fn(next.settings.cookieProfiles||[]);
+      window.dispatchEvent(new CustomEvent('wanchuang-config',{detail:next.settings.minimax}));
     }
     const missing=Object.entries(next.tools).filter(([,v])=>!v).map(([k])=>({ytDlp:'视频下载组件',ffmpeg:'音频处理组件',browser:'浏览器组件'}[k]));
     status(missing.length?`服务已连接 · 服务器缺少${missing.join('、')}`:'服务已连接 · 结果可下载，历史按浏览器独立保存');
@@ -44,13 +45,11 @@
         };input.click();
       });
     },
-    async clearHistory(kind){if(!confirm('清除此分类已结束的历史记录？'))return {jobs:current?.jobs||[],voiceHistory:current?.voiceHistory||[]};return action('clearHistory',kind);},
     async openPath(){status('请使用结果旁的下载按钮保存到电脑。');},
   };
-  for(const method of ['parseMedia','addJobs','cancelJob','retryJob','clearFinished','refreshMinimaxModels','saveMinimaxFavorites','setMinimaxVoiceHidden','generateVoice','cloneVoice','readVoiceHistoryAudio'])api[method]=payload=>action(method,payload);
-  api.removeHistoryRecord=(kind,id)=>action('removeHistoryRecord',{kind,id});
+  for(const method of ['parseMedia','addJobs','cancelJob','retryJob','clearFinished','refreshMinimaxModels','saveMinimaxFavorites','generateVoice','cloneVoice','readVoiceHistoryAudio'])api[method]=payload=>action(method,payload);
   const managed=async()=>{throw new Error('请在网站管理后台配置此项');};
-  for(const method of ['chooseFolder','saveSettings','importCookies','inspectCookies','validateCookies','authorizeCookies','clearCookies','saveSpeechConfig','validateSpeechConfig','clearSpeechConfig','saveMinimaxConfig','clearMinimaxConfig','deleteHistoryFiles','revealHistoryFile'])api[method]=managed;
+  for(const method of ['chooseFolder','saveSettings','importCookies','inspectCookies','validateCookies','authorizeCookies','clearCookies','saveSpeechConfig','validateSpeechConfig','clearSpeechConfig','saveMinimaxConfig','clearMinimaxConfig','deleteHistoryFiles','revealHistoryFile','setMinimaxVoiceHidden','removeHistoryRecord','clearHistory'])api[method]=managed;
   window.clipHarbor=Object.freeze(api);
   window.addEventListener('unhandledrejection',event=>{status(event.reason?.message||'操作失败');});
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll();});
