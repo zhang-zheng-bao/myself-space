@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, ChevronRight, X, Expand, Download, MoreHorizontal, Minus, Plus, ExternalLink, Images } from "lucide-react";
+import { ChevronLeft, ChevronRight, X, Download, Images } from "lucide-react";
 import "./post-grid.css";
 import { contentIdentity } from "../analytics-model";
 
@@ -118,13 +118,11 @@ function PostReader({ post, onClose }: { post: Post; onClose: () => void }) {
       <header>
         <h2>{post.title || '图文详情'}</h2>
         <div className="notes-header-actions">
-          <button aria-label={fullscreen?'退出全屏':'全屏'} title={fullscreen?'退出全屏':'全屏'} onClick={async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else {await document.documentElement.requestFullscreen();ownsFullscreen.current=true;}}catch{setMessage('当前浏览器不支持全屏，请使用原图入口。');}}}><Expand size={18}/></button>
-          <details className="notes-more"><summary aria-label="更多图片操作" title="更多"><MoreHorizontal size={20}/></summary><div className="notes-menu">
-            <button onClick={()=>{setOriginal(true);setZoom(100);}} aria-pressed={original}>原始尺寸</button>
-            {images[index] && <><a href={images[index]} target="_blank" rel="noreferrer"><ExternalLink size={15}/>查看原图</a><button disabled={downloading} onClick={()=>void download()}><Download size={15}/>{downloading?'下载中…':'下载'}</button></>}
-            <small>{size.width?`${size.width} × ${size.height} px`:'加载原图…'}</small><small>双击放大 · Ctrl＋滚轮缩放<br/>拖拽移动 · 双指缩放</small>
-            {Boolean(post.text || post.tags?.length) && <div className="notes-description"><p>{post.text}</p><small>{post.tags?.map(t=>`#${t}`).join(' ')}</small></div>}
-          </div></details>
+          <select className="notes-zoom-select" aria-label="图片缩放" value={original?'original':String(Math.round(zoom))} onChange={e=>{if(e.target.value==='original'){setOriginal(true);setZoom(100);}else{setOriginal(false);changeZoom(Number(e.target.value));}}}>
+            {Array.from(new Set([25,50,75,100,125,150,200,300,400,Math.round(zoom)])).sort((a,b)=>a-b).map(n=><option key={n} value={n}>{n}%</option>)}
+            <option value="original">原始尺寸</option>
+          </select>
+          <button type="button" disabled={downloading} onClick={()=>void download()} aria-label={downloading?'正在下载图片':'下载图片'} title="下载原图"><Download size={19}/></button>
           <button type="button" onClick={onClose} aria-label="关闭图文" title="关闭"><X size={21}/></button>
         </div>
       </header>
@@ -136,7 +134,7 @@ function PostReader({ post, onClose }: { post: Post; onClose: () => void }) {
       {images.length>1 && showThumbnails && <div className="notes-thumbnails" aria-label="选择图片">{images.map((url,i)=><button key={`${url}-${i}`} onClick={()=>select(i)} aria-label={`查看第${i+1}张`} aria-pressed={i===index}><img src={previewFor(post,url)} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer"/></button>)}</div>}
       <footer className="notes-controls">
         <div className="notes-paging">{images.length>1 ? <><button disabled={index===0} onClick={()=>select(index-1)} aria-label="上一张"><ChevronLeft size={18}/></button><span aria-live="polite">{index+1} / {images.length}</span><button disabled={index>=images.length-1} onClick={()=>select(index+1)} aria-label="下一张"><ChevronRight size={18}/></button></> : <span>1 / 1</span>}</div>
-        <div className="notes-zoom"><button aria-label="缩小" title="缩小" disabled={zoom<=25} onClick={()=>changeZoom(zoom/1.25)}><Minus size={17}/></button><button className="notes-zoom-value" aria-label="适应阅读" title="重置为适应阅读" onClick={()=>{setOriginal(false);setZoom(100);scroll.current?.scrollTo(0,0);}}>{Math.round(zoom)}%</button><button aria-label="放大" title="放大" disabled={zoom>=400} onClick={()=>changeZoom(zoom*1.25)}><Plus size={17}/></button></div>
+        <span className="notes-image-dimensions">{size.width ? `${size.width} × ${size.height}` : ''}</span>
         <div className="notes-footer-end">{images.length>1 && <button aria-label="显示缩略图" title="缩略图" aria-pressed={showThumbnails} onClick={()=>setShowThumbnails(v=>!v)}><Images size={18}/></button>}</div>
       </footer>
     </div>

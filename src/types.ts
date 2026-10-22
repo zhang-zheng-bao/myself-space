@@ -348,12 +348,14 @@ export interface Poem {
 
 /** 一条图文：多张图 + 标题 + 正文，前台一条占一张竖卡。 */
 export interface ImagePost {
+  /** 独立列表封面，不进入正文图集。缺省时使用第一张图片。 */
+  coverUrl?: string;
   previews?: { source: string; url: string }[];
   id: string;
   title: string;
   /** 正文。换行 = 分段。 */
   text: string;
-  /** 图片地址，按顺序就是卡内翻页顺序；第一张兼作封面。 */
+  /** 正文原图，顺序与原始比例保持不变。 */
   images: string[];
   tags?: string[];
   /** 自由文本的日期，例如「2026-10」，留空不显示。 */
@@ -362,6 +364,7 @@ export interface ImagePost {
 
 /** 一份演示文稿。 */
 export interface SlideDeck {
+  pdfFileName?: string;
   id: string;
   title: string;
   description?: string;
