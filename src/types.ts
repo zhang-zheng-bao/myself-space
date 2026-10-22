@@ -64,6 +64,7 @@ export interface Profile {
      * 存在 pageCopy 这个 JSON 列里，避免为它新开一张 Supabase 表。
      */
     aiWorks?: Work[];
+    caseWorks?: Work[];
     /**
      * 「诗与惆怅」栏目的诗。和 aiWorks 一样存在 pageCopy 这个 JSON 列里，不另开表 ——
      * 诗只有文字、没有媒体要签名，塞进 JSON 最省事，也省掉用户手工执行一次建表 SQL。
@@ -94,6 +95,7 @@ export interface Profile {
      * 丢栏目 —— 顶多顺序不完美。后台每次移动都会写一份完整数组。
      */
     sectionOrder?: string[];
+    caseOrderConfigured?: boolean;
     /**
      * 每个前台栏目是否展示，形如 { works: false }。
      *
@@ -172,7 +174,7 @@ export type SectionKey = "intro" | "resume" | "works" | "cases" | "ai" | "toolbo
  * 栏目 key 的固有顺序（sectionOrder 缺省时就用它）。
  * 新栏目必须加在这里，否则 normalizeSectionOrder 会把它当未知 key 过滤掉。
  */
-export const sectionKeys: SectionKey[] = ["intro", "resume", "works", "cases", "ai", "toolbox", "prospects", "posts", "slides", "treasures", "poems", "contact"];
+export const sectionKeys: SectionKey[] = ["intro", "resume", "works", "ai", "cases", "toolbox", "prospects", "posts", "slides", "treasures", "poems", "contact"];
 
 export interface SectionMeta {
   key: SectionKey;
@@ -219,7 +221,7 @@ export function sectionMeta(key: string): SectionMeta | undefined {
  * 任何异常都只能影响顺序，绝不能把栏目弄丢 —— 所以最后一定把没提到的 key
  * 按固有顺序补在尾部。
  */
-export function normalizeSectionOrder(order?: string[]): SectionKey[] {
+export function normalizeSectionOrder(order?: string[], caseOrderConfigured = false): SectionKey[] {
   const seen = new Set<string>();
   const out: SectionKey[] = [];
   for (const raw of Array.isArray(order) ? order : []) {
@@ -229,6 +231,11 @@ export function normalizeSectionOrder(order?: string[]): SectionKey[] {
     out.push(key as SectionKey);
   }
   for (const key of sectionKeys) if (!seen.has(key)) out.push(key);
+  // Migrate the original position before AI, and place newly introduced cases after AI.
+  if (!caseOrderConfigured) {
+    out.splice(out.indexOf("cases"), 1);
+    out.splice(out.indexOf("ai") + 1, 0, "cases");
+  }
   return out;
 }
 
@@ -283,6 +290,8 @@ export interface ResumeProfile {
 }
 
 export interface Work {
+  /** Case study destination; covers use the same images field as other works. */
+  pageUrl?: string;
   id: string;
   category: "operation" | "app" | "prototype" | "video" | "poetry" | string;
   title: string;
