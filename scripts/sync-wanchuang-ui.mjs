@@ -18,5 +18,14 @@ js=js.replace('function setActiveView(view) {',"function setActiveView(view) {\n
   .replace("if (full) controls.append(historyActionButton('delete', '删除本地素材', 'trash-2', () => window.clipHarbor.deleteHistoryFiles(kind, item.id), true));",'')
   .replace('本地素材文件和进行中的任务已保留。','已清除当前浏览器的已结束记录。')
   .replace('查看本机保存的声音生成记录。','查看当前浏览器的生成历史。');
+js=js.replace("initialize().then(() => setActiveView('download'));", `initialize().then(() => {
+  const params = new URLSearchParams(window.location.search);
+  const view = params.get('view');
+  setActiveView(['download', 'speech', 'voice', 'voiceClone'].includes(view) ? view : 'download');
+  const requestedMode = params.get('mode');
+  if (['video', 'cover', 'both'].includes(requestedMode)) {
+    document.querySelector('.segment[data-mode="' + requestedMode + '"]')?.click();
+  }
+});`);
 writeFileSync(resolve(target,'renderer.js'),js.replace(/[ \t]+\r?$/gm,''));
 console.log('Synced desktop UI with browser transport and downloads.');

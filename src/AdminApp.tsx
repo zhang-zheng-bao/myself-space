@@ -6804,7 +6804,7 @@ export default function AdminApp() {
                         <input
                           value={visitorQueryDraft}
                           onChange={(event) => setVisitorQueryDraft(event.target.value)}
-                          placeholder="搜索备注、IP、城市或访客 ID"
+                          placeholder="搜索访客名称、IP、城市或访客 ID"
                           aria-label="搜索访客"
                           className={`${inputBaseClass} min-h-9 min-w-[220px] flex-1 px-3 py-1.5 text-sm`}
                         />
@@ -6867,6 +6867,7 @@ export default function AdminApp() {
                               </div>
                               <span className="text-xs text-zinc-400 md:text-right" title={formatVisitTime(visitor.last_seen)}>
                                 {formatVisitAgo(visitor.last_seen)}
+                                <span className="ml-3 text-zinc-300">查看 / 重命名</span>
                               </span>
                             </button>
 
@@ -6875,29 +6876,35 @@ export default function AdminApp() {
                                 title={visitor.label || "访客 " + shortVisitorKey(visitor.visitor_key)}
                                 onClose={() => { setVisitsExpandedKey(null); setVisitsConfirm(null); setVisitorVisits(null); }}
                                 footer={
+                                  <>
                                   <p className="mr-auto text-[11px] leading-5 text-zinc-500">
-                                    备注与屏蔽标记即时保存；删除不可恢复，所以要点两次。
+                                    名称仅用于后台识别，不影响访问记录；清空名称可恢复默认显示。
                                   </p>
+                                  {visitsLabelDraft.trim() !== (visitor.label || "") && (
+                                    <div className="adm-save-actions">
+                                      <span>{busy ? "正在保存" : "未保存"}</span>
+                                      <button type="button" className="adm-save-button" disabled={busy}
+                                        onClick={() => { void patchVisitor(visitor.visitor_key, { label: visitsLabelDraft.trim() }); }}>
+                                        {busy && <Loader2 className="animate-spin" size={14} />}保存名称
+                                      </button>
+                                    </div>
+                                  )}
+                                  </>
                                 }
                               >
                                 <div className="flex flex-wrap items-end gap-2">
                                   <label className="grid min-w-[200px] flex-1 gap-1.5">
-                                    <span className="text-xs font-medium text-zinc-400">备注名（只改后台显示，方便认出自己人）</span>
+                                    <span className="text-xs font-medium text-zinc-400">访客名称</span>
                                     <input
+                                      aria-label="访客名称"
+                                      maxLength={60}
+                                      disabled={busy}
                                       value={visitsLabelDraft}
                                       onChange={(event) => setVisitsLabelDraft(event.target.value)}
                                       placeholder="例如：我自己 / 客户张三 / 疑似爬虫"
                                       className={`${inputBaseClass} min-h-10 px-3 py-2`}
                                     />
                                   </label>
-                                  <button
-                                    type="button"
-                                    onClick={() => { void patchVisitor(visitor.visitor_key, { label: visitsLabelDraft.trim() }); }}
-                                    disabled={busy}
-                                    className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-emerald-300 px-3 text-sm font-semibold text-zinc-950 transition-colors duration-200 hover:bg-emerald-200 disabled:opacity-60"
-                                  >
-                                    {busy ? <Loader2 className="animate-spin" size={14} /> : null} 保存备注
-                                  </button>
                                   <button
                                     type="button"
                                     onClick={() => { void patchVisitor(visitor.visitor_key, { blocked: !visitor.blocked }); }}
