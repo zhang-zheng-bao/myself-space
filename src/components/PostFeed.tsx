@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, ChevronRight, X, ZoomIn, Expand, Download } from "lucide-react";
+import { ChevronLeft, ChevronRight, X, Expand, Download, MoreHorizontal, Minus, Plus, ExternalLink, Images } from "lucide-react";
 import "./post-grid.css";
 import { contentIdentity } from "../analytics-model";
 
@@ -34,6 +34,7 @@ function PostReader({ post, onClose }: { post: Post; onClose: () => void }) {
   const [zoom, setZoom] = useState(100);
   const [error, setError] = useState(''), [message, setMessage] = useState(''), [retry, setRetry] = useState(0);
   const [downloading, setDownloading] = useState(false), [fullscreen, setFullscreen] = useState(false);
+  const [showThumbnails, setShowThumbnails] = useState(false);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ x: number; y: number; distance: number } | null>(null);
   const anchor = useRef<{ x: number; y: number; left: number; top: number; width: number } | null>(null);
@@ -114,21 +115,30 @@ function PostReader({ post, onClose }: { post: Post; onClose: () => void }) {
   }
   return createPortal(<dialog ref={dialog} className={`notes-dialog${fullscreen ? ' notes-fullscreen' : ''}`} aria-label={post.title || "图文详情"} onCancel={onClose} onClick={e => { if (e.target === dialog.current) onClose(); }} onKeyDown={e=>{ if ((e.target as HTMLElement).matches('input,textarea,select')) return; if(e.key==='ArrowLeft'){e.preventDefault();select(index-1);} if(e.key==='ArrowRight'){e.preventDefault();select(index+1);} if(e.key==='+'||e.key==='=')changeZoom(zoom*1.25); if(e.key==='-')changeZoom(zoom/1.25); }}>
     <div className="notes-reader" data-analytics-kind="work" data-analytics-key={contentIdentity("posts", post)} data-analytics-title={post.title || "图文"}>
-      <header><h2>{post.title || "图文详情"}</h2><button type="button" onClick={onClose} aria-label="关闭图文"><X size={21} /></button></header>
-      <div className="notes-controls"><button disabled={index===0} onClick={()=>select(index-1)} aria-label="上一张"><ChevronLeft/></button><span aria-live="polite">{images.length?index+1:0} / {images.length}</span><button disabled={index>=images.length-1} onClick={()=>select(index+1)} aria-label="下一张"><ChevronRight/></button>
-        <button onClick={()=>{setOriginal(false);setZoom(100);scroll.current?.scrollTo(0,0);}}>适应阅读</button><button onClick={()=>{setOriginal(true);setZoom(100);}} aria-pressed={original}><ZoomIn size={17}/>原始尺寸</button>
-        <label className="notes-zoom">缩放 <input aria-label="图片缩放" type="range" min="25" max="400" step="5" value={zoom} onChange={e=>changeZoom(Number(e.target.value))}/>{Math.round(zoom)}%</label>
-        <button onClick={async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else {await document.documentElement.requestFullscreen();ownsFullscreen.current=true;}}catch{setMessage('当前浏览器不支持全屏，请使用原图入口。');}}}><Expand size={16}/>{fullscreen?'退出全屏':'全屏'}</button>
-        {images[index] && <><a href={images[index]} target="_blank" rel="noreferrer">查看原图</a><button disabled={downloading} onClick={()=>void download()}><Download size={16}/>{downloading?'下载中…':'下载'}</button></>}
-      </div>
-      <div className="notes-reader-meta"><span>{size.width?`${size.width} × ${size.height} px${isLong?' · 长图':''}`:'加载原图…'}</span><span>上下滚动 · Ctrl＋滚轮缩放 · 双击放大 · 拖拽移动 · 双指缩放</span></div>
+      <header>
+        <h2>{post.title || '图文详情'}</h2>
+        <div className="notes-header-actions">
+          <button aria-label={fullscreen?'退出全屏':'全屏'} title={fullscreen?'退出全屏':'全屏'} onClick={async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else {await document.documentElement.requestFullscreen();ownsFullscreen.current=true;}}catch{setMessage('当前浏览器不支持全屏，请使用原图入口。');}}}><Expand size={18}/></button>
+          <details className="notes-more"><summary aria-label="更多图片操作" title="更多"><MoreHorizontal size={20}/></summary><div className="notes-menu">
+            <button onClick={()=>{setOriginal(true);setZoom(100);}} aria-pressed={original}>原始尺寸</button>
+            {images[index] && <><a href={images[index]} target="_blank" rel="noreferrer"><ExternalLink size={15}/>查看原图</a><button disabled={downloading} onClick={()=>void download()}><Download size={15}/>{downloading?'下载中…':'下载'}</button></>}
+            <small>{size.width?`${size.width} × ${size.height} px`:'加载原图…'}</small><small>双击放大 · Ctrl＋滚轮缩放<br/>拖拽移动 · 双指缩放</small>
+            {Boolean(post.text || post.tags?.length) && <div className="notes-description"><p>{post.text}</p><small>{post.tags?.map(t=>`#${t}`).join(' ')}</small></div>}
+          </div></details>
+          <button type="button" onClick={onClose} aria-label="关闭图文" title="关闭"><X size={21}/></button>
+        </div>
+      </header>
       {message && <p className="notes-reader-message" role="status">{message}</p>}
       <div ref={scroll} className="notes-image-scroll" tabIndex={0} aria-label="图片阅读区，可滚动" onPointerDown={pointer} onPointerMove={pointer} onPointerUp={pointer} onPointerCancel={pointer} onLostPointerCapture={e=>{pointers.current.delete(e.pointerId);gesture.current=null;}} onDoubleClick={e=>changeZoom(zoom>100?100:200,e.clientX,e.clientY)}>
         {!size.width && !error && images[index] && <p role="status">正在加载高清图片…</p>}
         {error ? <div role="alert"><p>{error}</p><button onClick={()=>{setError('');setRetry(n=>n+1);}}>重新加载</button></div> : images[index] ? <img key={`${images[index]}-${retry}`} draggable={false} decoding="async" style={{width:displayWidth,maxWidth:'none',height:'auto',display:size.width?'block':'none'}} onLoad={e=>setSize({width:e.currentTarget.naturalWidth,height:e.currentTarget.naturalHeight})} onError={()=>setError('图片加载失败，请重试或查看原图。')} src={images[index]} alt={`${post.title} 第${index+1}张`} referrerPolicy="no-referrer"/> : <p>暂无图片</p>}
       </div>
-      {images.length>1 && <div className="notes-thumbnails" aria-label="选择图片">{images.map((url,i)=><button key={`${url}-${i}`} onClick={()=>select(i)} aria-label={`查看第${i+1}张`} aria-pressed={i===index}><img src={previewFor(post,url)} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer"/><small>{i+1}</small></button>)}</div>}
-      {Boolean(post.text || post.tags?.length) && <details className="notes-description"><summary>图文说明</summary><p>{post.text}</p><small>{post.tags?.map(t=>`#${t}`).join(' ')}</small></details>}
+      {images.length>1 && showThumbnails && <div className="notes-thumbnails" aria-label="选择图片">{images.map((url,i)=><button key={`${url}-${i}`} onClick={()=>select(i)} aria-label={`查看第${i+1}张`} aria-pressed={i===index}><img src={previewFor(post,url)} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer"/></button>)}</div>}
+      <footer className="notes-controls">
+        <div className="notes-paging">{images.length>1 ? <><button disabled={index===0} onClick={()=>select(index-1)} aria-label="上一张"><ChevronLeft size={18}/></button><span aria-live="polite">{index+1} / {images.length}</span><button disabled={index>=images.length-1} onClick={()=>select(index+1)} aria-label="下一张"><ChevronRight size={18}/></button></> : <span>1 / 1</span>}</div>
+        <div className="notes-zoom"><button aria-label="缩小" title="缩小" disabled={zoom<=25} onClick={()=>changeZoom(zoom/1.25)}><Minus size={17}/></button><button className="notes-zoom-value" aria-label="适应阅读" title="重置为适应阅读" onClick={()=>{setOriginal(false);setZoom(100);scroll.current?.scrollTo(0,0);}}>{Math.round(zoom)}%</button><button aria-label="放大" title="放大" disabled={zoom>=400} onClick={()=>changeZoom(zoom*1.25)}><Plus size={17}/></button></div>
+        <div className="notes-footer-end">{images.length>1 && <button aria-label="显示缩略图" title="缩略图" aria-pressed={showThumbnails} onClick={()=>setShowThumbnails(v=>!v)}><Images size={18}/></button>}</div>
+      </footer>
     </div>
   </dialog>, document.body);
 }

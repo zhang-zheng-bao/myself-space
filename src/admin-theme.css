@@ -1,4 +1,9 @@
 /* Shared admin appearance. Scoped away from the public portfolio and application UI. */
+.adm-save-actions { position:sticky;bottom:0;z-index:2;display:flex;align-items:center;justify-content:flex-end;gap:12px;width:100%;margin-top:16px;padding:12px 0;background:#18181b;border-top:1px solid #ffffff0a; }
+.adm-save-actions>span { font-size:12px;color:#a1a1aa; }
+.admin-theme .adm-save-button,.adm-modal .adm-save-button { display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:36px;padding:7px 18px;border:1px solid #52525b;border-radius:8px;background:#27272a;color:#f4f4f5;font-size:13px;font-weight:500; }
+.adm-save-button:hover { background:#3f3f46; }.adm-save-button:disabled { opacity:.55;cursor:wait; }
+.adm-modal footer .adm-save-actions { position:static;width:auto;margin:0;padding:0;border:0;background:transparent; }
 .admin-theme audio, .adm-modal audio { color-scheme: dark; width: 100%; max-width: 720px; height: 40px; border-radius: 8px; accent-color: #34d399; }
 .admin-theme audio::-webkit-media-controls-panel, .adm-modal audio::-webkit-media-controls-panel { background-color: #202023; }
 .cover-picker { width: min(720px, 94vw); max-height: 90dvh; overflow:auto; margin:auto; padding:24px; color:#e4e4e7; border:1px solid #3f3f46; }

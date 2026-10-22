@@ -9,6 +9,7 @@ const groups = [
 type Config = { concurrency: number; retentionHours: number; iflytekAppId: string; configured: Record<string, boolean> };
 export default function ToolSettingsAdmin() {
   const [config, setConfig] = useState<Config | null>(null);
+  const [baseline, setBaseline] = useState('');
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [clearSecrets, setClearSecrets] = useState<string[]>([]);
   const [message, setMessage] = useState('');
@@ -23,7 +24,7 @@ export default function ToolSettingsAdmin() {
     void checkRuntime();
     const abort = new AbortController();
     fetch('/api/admin/tools/wanchuang/settings', { signal: abort.signal }).then(async res => {
-      const body = await res.json(); if (!res.ok) throw new Error(body.error); setConfig(body);
+      const body = await res.json(); if (!res.ok) throw new Error(body.error); setConfig(body); setBaseline(JSON.stringify(body));
     }).catch(error => { if (error.name !== 'AbortError') setMessage(error.message || '读取失败'); });
     return () => abort.abort();
   }, []);
@@ -45,7 +46,7 @@ export default function ToolSettingsAdmin() {
       try {
         const res = await fetch('/api/admin/tools/wanchuang/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...config, secrets, clearSecrets }) });
         const body = await res.json(); if (!res.ok) throw new Error(body.error);
-        setConfig(body); setSecrets({}); setClearSecrets([]); setMessage('已加密保存，后续任务将使用最新配置。'); void checkRuntime();
+        setConfig(body); setBaseline(JSON.stringify(body)); setSecrets({}); setClearSecrets([]); setMessage('已加密保存，后续任务将使用最新配置。'); void checkRuntime();
       } catch (error) { setMessage(error instanceof Error ? error.message : '保存失败'); } finally { setSaving(false); }
     }}><fieldset disabled={saving} className="space-y-5 disabled:opacity-60">
       <div className="space-y-3">{groups.map(group => {
@@ -68,7 +69,7 @@ export default function ToolSettingsAdmin() {
           </div>
         </details>;
       })}</div>
-      <button className="rounded-lg bg-emerald-400 px-5 py-2 text-sm font-semibold text-zinc-950" type="submit">{saving ? '正在保存…' : '保存应用配置'}</button>
+      {(JSON.stringify(config)!==baseline || Object.values(secrets).some(v=>String(v).trim()) || clearSecrets.length>0) && <div className="adm-save-actions"><span>{saving?'正在保存':'未保存'}</span><button className="adm-save-button" type="submit">{saving ? '保存中…' : '保存'}</button></div>}
     </fieldset></form>}
     <p role="status" className="mt-4 text-sm text-emerald-200">{message || (!config ? '正在读取配置…' : '')}</p>
     {config && <WanchuangManagementAdmin />}
