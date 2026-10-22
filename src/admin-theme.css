@@ -25,9 +25,17 @@
 .admin-theme .adm-drawer { border-top: 1px solid #27272a; background: #09090b; }
 .admin-theme .adm-section-heading + div { padding-top: 20px; }
 .admin-theme .admin-scroll > div { gap: 16px; }
-.admin-theme .adm-note { border-radius: 8px; padding: 12px; font-size: 12px; line-height: 1.7; }
-.admin-theme .adm-note-info { background: #11251e; }
-.admin-theme .adm-note-warn { background: #292012; }
+/* Keep help text consistent across settings, module pages and editor dialogs. */
+.admin-theme .adm-note, .adm-modal .adm-note {
+  border: 0;
+  border-radius: 8px;
+  background: #121214;
+  color: #a1a1aa;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.admin-theme .adm-note-warn, .adm-modal .adm-note-warn { color: #fcd34d; }
 .admin-theme :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]), textarea, select),
 .adm-modal :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]), textarea, select) {
   background-color: #09090b;
