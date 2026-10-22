@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { registerToolSettings } from "./server/tool-settings";
+import { registerWanchuang } from "./server/wanchuang";
 import { registerEngagementAnalytics } from "./server/engagement-analytics";
 import { contentIdentity } from "./src/analytics-model";
 import crypto from "crypto";
@@ -1411,6 +1412,7 @@ async function startServer() {
 
   app.use(express.json({ limit: "60mb" }));
   registerToolSettings(app, requireAdmin);
+  registerWanchuang(app, requireAdmin);
   app.use(express.urlencoded({ limit: "60mb", extended: true }));
   app.use((_req, res, next) => {
     res.charset = "utf-8";

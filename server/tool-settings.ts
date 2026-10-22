@@ -4,7 +4,17 @@ import path from 'node:path';
 import type { Express, RequestHandler } from 'express';
 
 const fields = ['iflytekApiKey', 'iflytekApiSecret', 'minimaxApiKey', 'douyinCookie', 'bilibiliCookie', 'xiaohongshuCookie'];
-type Settings = { concurrency: number; retentionHours: number; iflytekAppId: string; secrets: Record<string, string> };
+export type Settings = { concurrency: number; retentionHours: number; iflytekAppId: string; secrets: Record<string, string> };
+export function readToolSettings(): Settings {
+  const file = path.resolve(process.env.TOOL_SETTINGS_FILE || '.private/wanchuang-settings.enc');
+  if (!fs.existsSync(file)) return { concurrency: 2, retentionHours: 6, iflytekAppId: '', secrets: {} };
+  const secret = process.env.TOOL_SETTINGS_SECRET || process.env.ADMIN_SESSION_SECRET;
+  if (!secret || secret.length < 32) throw new Error('应用配置加密密钥未配置');
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const decipher = crypto.createDecipheriv('aes-256-gcm', crypto.createHash('sha256').update(secret).digest(), Buffer.from(data.iv, 'base64'));
+  decipher.setAuthTag(Buffer.from(data.tag, 'base64'));
+  return JSON.parse(Buffer.concat([decipher.update(Buffer.from(data.value, 'base64')), decipher.final()]).toString());
+}
 export function registerToolSettings(app: Express, requireAdmin: RequestHandler) {
   const file = path.resolve(process.env.TOOL_SETTINGS_FILE || '.private/wanchuang-settings.enc');
   function key() {
@@ -13,11 +23,7 @@ export function registerToolSettings(app: Express, requireAdmin: RequestHandler)
     return crypto.createHash('sha256').update(value).digest();
   }
   function read(): Settings {
-    if (!fs.existsSync(file)) return { concurrency: 2, retentionHours: 6, iflytekAppId: '', secrets: {} };
-    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(data.iv, 'base64'));
-    decipher.setAuthTag(Buffer.from(data.tag, 'base64'));
-    return JSON.parse(Buffer.concat([decipher.update(Buffer.from(data.value, 'base64')), decipher.final()]).toString());
+    return readToolSettings();
   }
   function masked(config: Settings) {
     return { concurrency: config.concurrency, retentionHours: config.retentionHours, iflytekAppId: config.iflytekAppId,

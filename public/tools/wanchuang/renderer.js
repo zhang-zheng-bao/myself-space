@@ -2,7 +2,7 @@ const $ = (selector) => document.querySelector(selector);
 let state;
 let settingsReturnView = 'download';
 function selectSettingsSection(section) {
-  const labels = { general: '常规', cookies: '平台 Cookie', speech: '语音服务', minimax: 'MiniMax 语音' };
+  const labels = { general: '常规', cookies: '平台 Cookie', speech: '语音服务', minimax: 'MiniMax 语音', voices: '音色管理', history: '历史记录' };
   if (!labels[section]) return;
   document.querySelectorAll('[data-settings-panel]').forEach(panel => { panel.hidden = panel.dataset.settingsPanel !== section; });
   document.querySelectorAll('[data-settings-section]').forEach(button => {
@@ -27,6 +27,9 @@ let voiceReferencePath = '';
 let voiceOutputPath = '';
 let voiceAudioObjectUrl = '';
 let voiceCategory = 'favorites';
+let manageVoicesCategory = 'all';
+let historyKind = 'voice';
+let historyReturnView = 'settings';
 let voiceEmotion = '';
 const VIEW_COPY = {
   download: {
@@ -48,20 +51,27 @@ const VIEW_COPY = {
     title: '声音生成',
     headline: '让每一种声音，都有回响。',
     eyebrow: '03 / VOICE',
-    subtitle: '克隆你的音色，把文字变成自然语音。',
+    subtitle: '选择已有音色，把文字变成自然语音。',
+  },
+  voiceClone: {
+    icon: 'mic-vocal',
+    title: '声音克隆',
+    headline: '创建你的专属音色。',
+    eyebrow: '04 / CLONE',
+    subtitle: '上传一段人声样本，创建可反复使用的账号音色。',
   },
   voiceHistory: {
     icon: 'history',
-    title: '声音历史',
+    title: '历史记录',
     headline: '声音历史',
     eyebrow: 'HISTORY',
-    subtitle: '查看本机保存的声音生成记录。',
+    subtitle: '查看当前浏览器的生成历史。',
   },
   settings: {
     icon: 'settings-2',
     title: '设置',
     headline: '按你的习惯。',
-    eyebrow: '04 / PREFERENCES',
+    eyebrow: '05 / PREFERENCES',
     subtitle: '保存位置、平台连接，以及你的语音服务。',
   },
 };
@@ -115,17 +125,17 @@ function historyActionButton(action, title, iconName, handler, danger = false) {
   return button;
 }
 
-function historyFileActions(kind, item) {
+function historyFileActions(kind, item, full = false) {
   const controls = document.createElement('div');
   controls.className = 'history-actions';
   if (item.status === '已完成') {
-    controls.append(historyActionButton('reveal', '查看素材位置', 'folder-search', () => window.clipHarbor.revealHistoryFile(kind, item.id)));
-    controls.append(historyActionButton('delete', '删除本地素材', 'trash-2', () => window.clipHarbor.deleteHistoryFiles(kind, item.id), true));
+    controls.append(historyActionButton('download', '下载结果文件', 'download', () => window.webDownloads.downloadItem(kind,item)));
+
   }
   if (kind === 'voice' && item.status === '失败') {
     controls.append(historyActionButton('retry', '使用原参数重新生成', 'rotate-cw', () => retryVoiceHistoryItem(item)));
   }
-  controls.append(historyActionButton('remove', '仅移除历史记录', 'x', () => window.clipHarbor.removeHistoryRecord(kind, item.id)));
+  if (full) controls.append(historyActionButton('remove', '仅移除历史记录', 'x', () => window.clipHarbor.removeHistoryRecord(kind, item.id)));
   return controls;
 }
 
@@ -184,21 +194,64 @@ function createVoiceHistoryItem(item, full = false) {
   const model = full && item.model ? ` · ${item.model}` : '';
   meta.textContent = friendlyVoiceError(item.error) || `${item.voiceId}${duration}${model} · ${formatDate(item.finishedAt || item.createdAt)}`;
   copy.append(title, meta);
-  node.append(play, copy, historyFileActions('voice', item));
+  node.append(play, copy, historyFileActions('voice', item, full));
   return node;
 }
 
 function renderVoiceHistory(history = []) {
   state.voiceHistory = history;
   const list = $('#voiceHistoryList');
-  const pageList = $('#voiceHistoryPageList');
   list.replaceChildren(...history.slice(0, 3).map((item) => createVoiceHistoryItem(item)));
-  pageList.replaceChildren(...history.map((item) => createVoiceHistoryItem(item, true)));
   $('#voiceHistoryCount').textContent = `${history.length} 条`;
-  $('#voiceHistoryPageCount').textContent = `${history.length} 条记录`;
   $('#voiceHistoryEmpty').hidden = history.length > 0;
-  $('#voiceHistoryPageEmpty').hidden = history.length > 0;
   $('#openVoiceHistory').hidden = history.length <= 3;
+  renderHistoryPage();
+  renderIcons();
+}
+
+function openHistoryPage(kind, returnView = 'voice') {
+  historyKind = kind;
+  historyReturnView = returnView;
+  $('#backFromVoiceHistory').innerHTML = `${icon('arrow-left')}返回${returnView === 'settings' ? '设置' : '声音生成'}`;
+  $('#historyMessage').textContent = '';
+  setActiveView('voiceHistory');
+  renderHistoryPage();
+}
+
+function renderHistoryPage() {
+  if (!state) return;
+  const records = historyKind === 'voice' ? state.voiceHistory || [] : (state.jobs || []).filter(item => (item.type || 'download') === historyKind).slice().reverse();
+  document.querySelectorAll('[data-history-kind]').forEach(button => {
+    const active = button.dataset.historyKind === historyKind;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  $('#voiceHistoryPageCount').textContent = `${records.length} 条记录`;
+  $('#voiceHistoryPageEmpty').hidden = records.length > 0;
+  if (historyKind !== 'voice') {
+    $('#voiceHistoryPlayer').hidden = true;
+    $('#voiceHistoryAudio').pause();
+  }
+  $('#clearHistoryButton').disabled = !records.some(item => ['已完成', '失败', '已取消'].includes(item.status));
+  const nodes = records.map(item => {
+    if (historyKind === 'voice') return createVoiceHistoryItem(item, true);
+    const row = document.createElement('article');
+    row.className = 'voice-history-item full';
+    const avatar = document.createElement('span');
+    avatar.className = 'voice-avatar';
+    avatar.innerHTML = icon(historyKind === 'speech' ? 'mic' : 'download');
+    const copy = document.createElement('div');
+    copy.className = 'voice-history-copy';
+    const title = document.createElement('strong');
+    title.textContent = item.resolved?.title || item.url || '本地任务';
+    const meta = document.createElement('span');
+    meta.textContent = `${item.status} · ${formatDate(item.finishedAt || item.createdAt)}${item.error ? ` · ${item.error}` : ''}`;
+    copy.append(title, meta);
+    const actions = ['已完成', '失败', '已取消'].includes(item.status) ? historyFileActions(historyKind, item, true) : document.createElement('span');
+    row.append(avatar, copy, actions);
+    return row;
+  });
+  $('#voiceHistoryPageList').replaceChildren(...nodes);
   renderIcons();
 }
 
@@ -207,11 +260,11 @@ function platformLabel(platform) {
 }
 
 function setActiveView(view) {
-  if (view === 'settings') return;
+ if(view==='settings'){document.getElementById('webStatus').textContent='服务凭证由网站管理员配置，请联系管理员检查应用配置。';return;}
   const current = VIEW_COPY[view] ? view : 'download';
   if (current === 'settings' && document.body.dataset.view !== 'settings') settingsReturnView = document.body.dataset.view || 'download';
   document.querySelectorAll('.feature-tab').forEach((item) => {
-    const active = item.dataset.view === current || (current === 'voiceHistory' && item.dataset.view === 'voice');
+    const active = item.dataset.view === current || (current === 'voiceHistory' && item.dataset.view === historyReturnView);
     item.classList.toggle('active', active);
     if (active) item.setAttribute('aria-current', 'page');
     else item.removeAttribute('aria-current');
@@ -509,6 +562,66 @@ function renderMinimaxMeta() {
     ? `${minimax.accountModelCount || 0} 个账号自定义音色${minimax.checkedAt ? ` · 刷新 ${formatDate(minimax.checkedAt)}` : ''}${minimax.message ? ` · ${minimax.message}` : ''}`
     : '连接后可直接读取账号中的克隆音色、生成音色与系统音色。';
   renderVoicePicker();
+  renderVoiceManagement();
+  $('#cloneConnectionBadge').textContent = minimax.configured ? 'MiniMax 已连接' : '未连接';
+  $('#cloneConnectionBadge').className = `status-badge${minimax.configured ? ' ok' : ''}`;
+}
+
+function renderVoiceManagement() {
+  if (!state) return;
+  const minimax = state.settings.minimax || {};
+  const hidden = new Set(minimax.hiddenVoices || []);
+  const query = $('#manageVoicesSearch').value.trim().toLowerCase();
+  const models = [...(minimax.models || [])];
+  for (const id of hidden) if (!models.some(model => model.id === id)) models.push({ id, name: id, type: 'unknown' });
+  const filtered = models.filter(model => (manageVoicesCategory !== 'hidden' || hidden.has(model.id)) && `${model.name || ''} ${model.id}`.toLowerCase().includes(query));
+  $('#manageVoicesCount').textContent = `${models.length} 个音色 · ${hidden.size} 个已隐藏 · 当前显示 ${filtered.length} 个`;
+  document.querySelectorAll('[data-manage-voices]').forEach(button => {
+    const active = button.dataset.manageVoices === manageVoicesCategory;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  const list = $('#manageVoicesList');
+  list.replaceChildren();
+  for (const model of filtered) {
+    const row = document.createElement('div');
+    row.className = `manage-voice-row${hidden.has(model.id) ? ' is-hidden' : ''}`;
+    const copy = document.createElement('div');
+    const name = document.createElement('strong');
+    name.textContent = model.name || model.id;
+    const detail = document.createElement('small');
+    detail.textContent = `${model.type === 'system' ? '系统音色' : '我的音色'} · ${model.id}`;
+    copy.append(name, detail);
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'voice-visibility-switch';
+    toggle.setAttribute('role', 'switch');
+    toggle.setAttribute('aria-checked', String(!hidden.has(model.id)));
+    toggle.setAttribute('aria-label', `启用音色 ${model.name || model.id}`);
+    toggle.title = hidden.has(model.id) ? '恢复音色' : '禁用并隐藏音色';
+    toggle.addEventListener('click', async () => {
+      toggle.disabled = true;
+      try {
+        const hide = !hidden.has(model.id);
+        state.settings.minimax = await window.clipHarbor.setMinimaxVoiceHidden({ id: model.id, hidden: hide });
+        if (hide && $('#voiceId').value.trim() === model.id) $('#voiceId').value = '';
+        renderVoicePicker();
+        renderVoiceManagement();
+        $('#manageVoicesMessage').textContent = hide ? '已禁用并隐藏，刷新音色或重启后仍然生效。' : '已恢复，可在声音生成中选择。';
+      } catch (error) {
+        $('#manageVoicesMessage').textContent = errorMessage(error);
+        toggle.disabled = false;
+      }
+    });
+    row.append(copy, toggle);
+    list.append(row);
+  }
+  if (!filtered.length) {
+    const empty = document.createElement('p');
+    empty.className = 'cookie-meta';
+    empty.textContent = !models.length ? '请先在 MiniMax 语音中连接账号并刷新音色。' : manageVoicesCategory === 'hidden' ? '没有匹配的隐藏音色。' : '没有匹配的音色。';
+    list.append(empty);
+  }
 }
 
 function selectedVoiceModel() {
@@ -520,6 +633,7 @@ function renderVoicePicker() {
   if (!state) return;
   const minimax = state.settings.minimax || { models: [], favorites: [] };
   const favorites = new Set(minimax.favorites || []);
+  const hidden = new Set(minimax.hiddenVoices || []);
   const query = ($('#voicePickerSearch')?.value || '').trim().toLowerCase();
   const selected = selectedVoiceModel();
   $('#voicePickerLabel').textContent = selected
@@ -528,7 +642,7 @@ function renderVoicePicker() {
   document.querySelectorAll('[data-voice-category]').forEach((button) => {
     button.classList.toggle('active', button.dataset.voiceCategory === voiceCategory);
   });
-  let models = minimax.models || [];
+  let models = (minimax.models || []).filter(model => !hidden.has(model.id));
   if (voiceCategory === 'favorites') models = models.filter((model) => favorites.has(model.id));
   else if (voiceCategory === 'mine') models = models.filter((model) => model.type !== 'system');
   else models = models.filter((model) => model.type === 'system');
@@ -652,7 +766,7 @@ function renderSpeechJobList(speechJobs) {
       actions.className = 'history-actions';
       const action = historyActionButton('retry', '重试', 'rotate-cw', () => window.clipHarbor.retryJob(job.id));
       action.title = '重试';
-      actions.append(action, historyActionButton('remove', '仅移除历史记录', 'x', () => window.clipHarbor.removeHistoryRecord('speech', job.id)));
+      actions.append(action);
     }
 
     node.append(dot, main, actions);
@@ -712,6 +826,7 @@ function renderSpeechJobs(jobs) {
 
 function renderJobs(jobs) {
   state.jobs = jobs;
+  renderHistoryPage();
   renderSpeechJobs(jobs);
   const downloadJobs = jobs.filter((job) => job.type !== 'speech');
   const list = $('#jobList');
@@ -1195,6 +1310,33 @@ $('#clearVoiceReference').addEventListener('click', () => {
   $('#voiceReferenceName').textContent = '未选择，仅使用已有音色';
   $('#clearVoiceReference').hidden = true;
 });
+$('#cloneVoiceButton').addEventListener('click', async () => {
+  if (!state.settings.minimax?.configured) {
+    setActiveView('settings');
+    selectSettingsSection('minimax');
+    $('#settingsMessage').textContent = '请先连接 MiniMax 账号';
+    return;
+  }
+  if (!voiceReferencePath) return void ($('#voiceCloneStatus').textContent = '请先选择参考音频');
+  const voiceId = $('#cloneVoiceId').value.trim();
+  if (!/^[A-Za-z0-9_-]{8,20}$/.test(voiceId)) return void ($('#voiceCloneStatus').textContent = '音色 ID 需为 8–20 位英文、数字、下划线或短横线');
+  const button = $('#cloneVoiceButton');
+  button.disabled = true;
+  $('#voiceCloneStatus').className = 'parse-status';
+  $('#voiceCloneStatus').textContent = '正在上传样本并创建音色…';
+  try {
+    const result = await window.clipHarbor.cloneVoice({ refPath: voiceReferencePath, voiceId, noise: $('#voiceNoise').checked });
+    state.settings.minimax = result.profile;
+    renderMinimaxMeta();
+    renderTools();
+    $('#voiceCloneStatus').className = 'parse-status ok';
+    $('#voiceCloneStatus').textContent = `音色 ${voiceId} 创建成功，已刷新列表`;
+  } catch (error) {
+    $('#voiceCloneStatus').className = 'parse-status bad';
+    $('#voiceCloneStatus').textContent = errorMessage(error);
+  } finally { button.disabled = false; renderIcons(); }
+});
+$('#goVoiceGenerate').addEventListener('click', () => setActiveView('voice'));
 $('#generateVoiceButton').addEventListener('click', async () => {
   if (!state.settings.minimax?.configured) {
     setActiveView('settings');
@@ -1206,13 +1348,11 @@ $('#generateVoiceButton').addEventListener('click', async () => {
   const status = $('#voiceGenerateStatus');
   button.disabled = true;
   status.className = 'parse-status';
-  status.textContent = voiceReferencePath ? '正在上传参考音频并运行克隆工作流…' : '正在调用已有音色生成…';
+    status.textContent = '正在调用已有音色生成…';
   try {
     const result = await window.clipHarbor.generateVoice({
       text: $('#voiceText').value,
       voiceId: $('#voiceId').value,
-      refPath: voiceReferencePath,
-      noise: $('#voiceNoise').checked,
       emotion: voiceEmotion,
     });
     voiceOutputPath = result.outputPath;
@@ -1245,8 +1385,35 @@ $('#generateVoiceButton').addEventListener('click', async () => {
   }
 });
 $('#openVoiceOutput').addEventListener('click', () => window.clipHarbor.openPath(voiceOutputPath || state.settings.outputDir));
-$('#openVoiceHistory').addEventListener('click', () => setActiveView('voiceHistory'));
-$('#backFromVoiceHistory').addEventListener('click', () => setActiveView('voice'));
+$('#openVoiceHistory').addEventListener('click', () => openHistoryPage('voice', 'voice'));
+$('#backFromVoiceHistory').addEventListener('click', () => {
+  setActiveView(historyReturnView);
+  if (historyReturnView === 'settings') selectSettingsSection('history');
+});
+document.querySelectorAll('[data-open-history]').forEach(button => button.addEventListener('click', () => openHistoryPage(button.dataset.openHistory)));
+document.querySelectorAll('[data-history-kind]').forEach(button => button.addEventListener('click', () => {
+  historyKind = button.dataset.historyKind;
+  $('#historyMessage').textContent = '';
+  renderHistoryPage();
+}));
+$('#clearHistoryButton').addEventListener('click', async () => {
+  const button = $('#clearHistoryButton');
+  button.disabled = true;
+  try {
+    const result = await window.clipHarbor.clearHistory(historyKind);
+    state.voiceHistory = result.voiceHistory;
+    renderJobs(result.jobs);
+    renderVoiceHistory(result.voiceHistory);
+    $('#historyMessage').textContent = '已清除当前浏览器的已结束记录。';
+  } catch (error) {
+    $('#historyMessage').textContent = errorMessage(error);
+  } finally { renderHistoryPage(); }
+});
+$('#manageVoicesSearch').addEventListener('input', renderVoiceManagement);
+document.querySelectorAll('[data-manage-voices]').forEach(button => button.addEventListener('click', () => {
+  manageVoicesCategory = button.dataset.manageVoices;
+  renderVoiceManagement();
+}));
 
 $('#saveSettingsButton').addEventListener('click', async (event) => {
   event.preventDefault();
@@ -1255,7 +1422,6 @@ $('#saveSettingsButton').addEventListener('click', async (event) => {
 });
 
 $('#openFolderButton').addEventListener('click', () => window.clipHarbor.openPath(state.settings.outputDir));
-$('#clearButton').addEventListener('click', async () => renderJobs(await window.clipHarbor.clearFinished()));
 window.clipHarbor.onJobsChanged(renderJobs);
 window.clipHarbor.onVoiceHistoryChanged(renderVoiceHistory);
 window.clipHarbor.onCookieStatus((profiles) => {
