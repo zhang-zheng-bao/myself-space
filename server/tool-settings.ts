@@ -4,7 +4,8 @@ import path from 'node:path';
 import type { Express, RequestHandler } from 'express';
 
 const fields = ['iflytekApiKey', 'iflytekApiSecret', 'minimaxApiKey', 'douyinCookie', 'bilibiliCookie', 'xiaohongshuCookie'];
-export type Settings = { concurrency: number; retentionHours: number; iflytekAppId: string; secrets: Record<string, string> };
+export type VoiceModel = { id: string; name: string; type: string; createdAt?: string };
+export type Settings = { concurrency: number; retentionHours: number; iflytekAppId: string; secrets: Record<string, string>; hiddenVoices?: string[]; voiceModels?: VoiceModel[]; voiceModelsAccount?: string };
 export function readToolSettings(): Settings {
   const file = path.resolve(process.env.TOOL_SETTINGS_FILE || '.private/wanchuang-settings.enc');
   if (!fs.existsSync(file)) return { concurrency: 2, retentionHours: 6, iflytekAppId: '', secrets: {} };
@@ -15,13 +16,22 @@ export function readToolSettings(): Settings {
   decipher.setAuthTag(Buffer.from(data.tag, 'base64'));
   return JSON.parse(Buffer.concat([decipher.update(Buffer.from(data.value, 'base64')), decipher.final()]).toString());
 }
-export function registerToolSettings(app: Express, requireAdmin: RequestHandler) {
+export function writeToolSettings(settings: Settings) {
   const file = path.resolve(process.env.TOOL_SETTINGS_FILE || '.private/wanchuang-settings.enc');
-  function key() {
-    const value = process.env.TOOL_SETTINGS_SECRET || process.env.ADMIN_SESSION_SECRET;
-    if (!value || value.length < 32) throw new Error('Missing encryption key');
-    return crypto.createHash('sha256').update(value).digest();
-  }
+  const secret = process.env.TOOL_SETTINGS_SECRET || process.env.ADMIN_SESSION_SECRET;
+  if (!secret || secret.length < 32) throw new Error('Missing encryption key');
+  const encryptionKey = crypto.createHash('sha256').update(secret).digest();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', encryptionKey, iv);
+  const value = Buffer.concat([cipher.update(JSON.stringify(settings), 'utf8'), cipher.final()]);
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const temporary = `${file}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporary, JSON.stringify({ iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), value: value.toString('base64') }), { mode: 0o600 });
+    fs.renameSync(temporary, file);
+  } finally { fs.rmSync(temporary, { force: true }); }
+}
+export function registerToolSettings(app: Express, requireAdmin: RequestHandler) {
   function read(): Settings {
     return readToolSettings();
   }
@@ -41,16 +51,10 @@ export function registerToolSettings(app: Express, requireAdmin: RequestHandler)
       res.status(400).json({ error: '配置格式有误：并发 1–3，文件保留时间 1–24 小时。' }); return;
     }
     try {
-      const encryptionKey = key();
       const next = read();
       next.concurrency = b.concurrency; next.retentionHours = b.retentionHours; next.iflytekAppId = b.iflytekAppId;
       for (const f of fields) { if (b.clearSecrets.includes(f)) delete next.secrets[f]; else if (b.secrets[f]?.trim()) next.secrets[f] = b.secrets[f].trim(); }
-      const iv = crypto.randomBytes(12);
-      const cipher = crypto.createCipheriv('aes-256-gcm', encryptionKey, iv);
-      const value = Buffer.concat([cipher.update(JSON.stringify(next), 'utf8'), cipher.final()]);
-      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-      fs.writeFileSync(`${file}.tmp`, JSON.stringify({ iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), value: value.toString('base64') }), { mode: 0o600 });
-      fs.renameSync(`${file}.tmp`, file);
+      writeToolSettings(next);
       res.json(masked(next));
     } catch { res.status(500).json({ error: '保存失败：请配置至少 32 位的 TOOL_SETTINGS_SECRET（或 ADMIN_SESSION_SECRET），并检查配置目录权限。' }); }
   });

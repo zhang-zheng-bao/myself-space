@@ -9,6 +9,7 @@ import { PassThrough } from 'node:stream';
 import express from 'express';
 import createEngine from './wanchuang-engine.cjs';
 import {validateMediaUrl,validateRemote,safeFile} from './wanchuang-runtime';
+import { writeToolSettings } from './tool-settings';
 
 test('media URL and local file boundaries',async()=>{
   assert.equal(validateMediaUrl('https://www.bilibili.com/video/BV1xx411c7mD'),'https://www.bilibili.com/video/BV1xx411c7mD');
@@ -53,7 +54,7 @@ test('HTTP sessions isolate history/downloads; invalid actions never execute',as
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'wanchuang-http-'));
   process.env.WANCHUANG_DATA_DIR=path.join(directory,'jobs');process.env.TOOL_SETTINGS_FILE=path.join(directory,'settings.enc');
   const {registerWanchuang}=await import('./wanchuang');
-  const app=express();app.use(express.json());registerWanchuang(app,(_req,res)=>{res.status(401).end();});
+  const app=express();app.use(express.json());registerWanchuang(app,(req,res,next)=>{if(req.headers.authorization==='test-admin')next();else res.status(401).end();});
   const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
   const address=server.address() as any,base=`http://127.0.0.1:${address.port}/api/tools/wanchuang`;
   try {
@@ -64,6 +65,8 @@ test('HTTP sessions isolate history/downloads; invalid actions never execute',as
     assert.equal((await action('parseMedia','http://127.0.0.1')).status,400);
     assert.equal((await action('cloneVoice',{refPath:'../../etc/passwd'})).status,400);
     assert.equal((await action('saveSettings',{})).status,400);
+    assert.equal((await action('setMinimaxVoiceHidden',{id:'testvoice123',hidden:true})).status,400);
+    assert.equal((await action('removeHistoryRecord',{kind:'voice',id:'example'})).status,400);
     assert.equal((await fetch(base+'/action',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,401);
     const id=cookie.split('=')[1],ownerRoot=path.join(process.env.WANCHUANG_DATA_DIR!,id);
     const output=path.join(ownerRoot,'outputs','example.txt');fs.mkdirSync(path.dirname(output),{recursive:true});fs.writeFileSync(output,'test result');
@@ -76,5 +79,34 @@ test('HTTP sessions isolate history/downloads; invalid actions never execute',as
     assert.equal((await fetch(base+'/files/download/own-record/0',{headers:{Cookie:other}})).status,404);
     assert.equal((await fetch(base+'/files/download/test-record/0',{headers:{Cookie:other}})).status,404);
     const state=await (await fetch(base+'/state',{headers:{Cookie:cookie}})).text();assert.equal(state.includes(ownerRoot),false);
+    const adminBase=`http://127.0.0.1:${address.port}/api/admin/tools/wanchuang`,adminHeaders={Authorization:'test-admin','Content-Type':'application/json'};
+    for(const route of ['/history','/voices'])assert.equal((await fetch(adminBase+route)).status,401);
+    const history=await(await fetch(adminBase+'/history',{headers:adminHeaders})).json();
+    assert.equal(history.total,2);const record=history.rows.find((row:any)=>row.id==='own-record');
+    assert.ok(record);assert.equal(JSON.stringify(history).includes(thirdId),false);assert.equal(record.files.length,1);
+    assert.equal((await fetch(`http://127.0.0.1:${address.port}`+record.files[0].url)).status,401);
+    const adminDownload=await fetch(`http://127.0.0.1:${address.port}`+record.files[0].url,{headers:adminHeaders});assert.equal(await adminDownload.text(),'private result');
+    const removeUrl=`${adminBase}/history/${record.owner}/download/own-record`;
+    assert.equal((await fetch(removeUrl,{method:'DELETE'})).status,401);
+    assert.equal((await fetch(removeUrl,{method:'DELETE',headers:{...adminHeaders,'Sec-Fetch-Site':'cross-site'}})).status,403);
+    assert.equal((await fetch(removeUrl,{method:'DELETE',headers:adminHeaders})).status,200);
+    assert.equal(fs.readFileSync(ownOutput,'utf8'),'private result');
+    assert.equal((await(await fetch(adminBase+'/history',{headers:adminHeaders})).json()).total,1);
+
+    process.env.TOOL_SETTINGS_SECRET='test-only-secret-with-at-least-32-characters';
+    writeToolSettings({concurrency:2,retentionHours:6,iflytekAppId:'',secrets:{minimaxApiKey:'test-key',douyinCookie:'invalid-cookie-content'},voiceModelsAccount:crypto.createHash('sha256').update('test-key').digest('hex'),voiceModels:[{id:'testvoice123',name:'测试音色',type:'clone'}]});
+    const voices=await(await fetch(adminBase+'/voices',{headers:adminHeaders})).json();assert.equal(voices.models[0].hidden,false);
+    const visibility=adminBase+'/voices/visibility',body=JSON.stringify({id:'testvoice123',hidden:true});
+    assert.equal((await fetch(visibility,{method:'PUT',headers:{'Content-Type':'application/json'},body})).status,401);
+    assert.equal((await fetch(visibility,{method:'PUT',headers:adminHeaders,body})).status,200);
+    for(const browserCookie of [cookie,other]){
+      const browserState=await(await fetch(base+'/state',{headers:{Cookie:browserCookie}})).json();
+      assert.deepEqual(browserState.settings.minimax.hiddenVoices,['testvoice123']);
+      assert.equal(browserState.settings.cookieProfiles.find((profile:any)=>profile.platform==='douyin').status,'格式有误');
+      assert.equal(JSON.stringify(browserState).includes('test-key'),false);
+    }
+    const blocked=await action('generateVoice',{text:'测试',voiceId:'testvoice123'});assert.equal(blocked.status,400);assert.match((await blocked.json()).error,/禁用|隐藏/);
+    assert.equal((await fetch(visibility,{method:'PUT',headers:adminHeaders,body:JSON.stringify({id:'testvoice123',hidden:false})})).status,200);
+    assert.deepEqual((await(await fetch(base+'/state',{headers:{Cookie:cookie}})).json()).settings.minimax.hiddenVoices,[]);
   }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));fs.rmSync(directory,{recursive:true,force:true});}
 });

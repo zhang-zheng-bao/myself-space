@@ -16,10 +16,16 @@
     dialog.onclose=()=>dialog.remove();document.body.append(dialog);dialog.showModal();
   }
   window.webDownloads={downloadItem,report};
+  window.addEventListener('wanchuang-config',event=>{
+    if(typeof state==='undefined')return;
+    const next=event.detail;
+    if(JSON.stringify(state.settings.minimax)!==JSON.stringify(next)){
+      state.settings.minimax=next;
+      if((next.hiddenVoices||[]).includes(document.getElementById('voiceId').value))document.getElementById('voiceId').value='';
+      renderMinimaxMeta();
+    }
+  });
   const add=(parent,text,handler)=>{if(!parent)return;const b=document.createElement('button');b.type='button';b.className='secondary-button';b.textContent=text;b.onclick=()=>Promise.resolve().then(handler).catch(report);parent.append(b);};
   const open=document.getElementById('openVoiceOutput');
   if(open){open.hidden=true;add(open.parentElement,'下载音频',()=>{const src=document.getElementById('voiceAudio').getAttribute('src');if(!src)throw new Error('请先生成音频');download(src);});}
-  add(document.querySelector('.side-nav'),'历史记录',()=>openHistoryPage('download','download'));
-  const panel=document.querySelector('[data-settings-panel="voices"]');
-  if(panel){const d=document.createElement('dialog');d.className='web-file-list';add(d,'关闭音色管理',()=>d.close());panel.hidden=false;d.append(panel);document.body.append(d);add(document.querySelector('.side-nav'),'音色管理',()=>{renderVoiceManagement();d.showModal();});}
 })();

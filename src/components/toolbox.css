@@ -42,6 +42,12 @@
 .tb-capabilities { border-top: 1px solid var(--portfolio-line); margin-top: 24px; padding-top: 22px; }
 .tb-capability-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .tb-capability { display: flex; align-items: center; gap: 12px; padding: 16px 12px; border: 1px solid #2a3835; border-radius: 11px; background: #10191c; min-width: 0; }
+.tb-capability { color: inherit; text-decoration: none; cursor: pointer; transition: background .18s ease, border-color .18s ease; }
+.tb-capability:hover { background: #192724; border-color: #6b8580; }
+.tb-capability:focus-visible { outline: 2px solid #83d9c2; outline-offset: 3px; }
+.tb-capability:active { background: #233832; }
+.tb-capability-arrow { margin-left: auto; flex-shrink: 0; color: #9aaba7; }
+@media (prefers-reduced-motion: reduce) { .tb-capability { transition: none; } }
 .tb-capability-icon { display: grid; place-items: center; width: 42px; height: 46px; border-radius: 10px; flex-shrink: 0; }
 .tb-capability-icon--cyan { background: #19404b; color: #78d9f2; }
 .tb-capability-icon--violet { background: #382751; color: #c4a2f1; }

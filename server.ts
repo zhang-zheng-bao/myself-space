@@ -3,6 +3,7 @@ import { registerToolSettings } from "./server/tool-settings";
 import { registerWanchuang } from "./server/wanchuang";
 import { registerEngagementAnalytics } from "./server/engagement-analytics";
 import { contentIdentity } from "./src/analytics-model";
+import { mergePortfolioChanges } from './src/portfolio-changes';
 import crypto from "crypto";
 import express, { NextFunction, Request, Response } from "express";
 import fs from "fs";
@@ -88,6 +89,7 @@ function getSupabase(): SupabaseClient | null {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
   return createClient(url, key, {
+    global: { fetch: (input, init) => fetch(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000) }) },
     auth: { persistSession: false, autoRefreshToken: false },
     realtime: { transport: WebSocket as any },
   });
@@ -957,6 +959,7 @@ function normalizePageCopy(pageCopy: JsonRecord | undefined, transform: (url?: s
       const post = item as JsonRecord;
       return {
         ...post,
+        previews: Array.isArray(post.previews) ? post.previews.filter((preview: any) => preview && typeof preview.source === 'string' && typeof preview.url === 'string').map((preview: any) => ({ source: transform(preview.source), url: transform(preview.url) })) : [],
         images: Array.isArray(post.images) ? post.images.map((url) => transform(String(url || ""))).filter(Boolean) : [],
       };
     });
@@ -1301,11 +1304,6 @@ async function replaceList(
     .map((row) => row.id)
     .filter((id) => !incomingIds.includes(id));
 
-  if (idsToDelete.length > 0) {
-    const deleted = await supabase.from(table).delete().in("id", idsToDelete);
-    if (deleted.error) throw deleted.error;
-  }
-
   if (rows.length > 0) {
     const saved = await supabase.from(table).upsert(rows, { onConflict: "id" });
     if (saved.error) {
@@ -1315,20 +1313,26 @@ async function replaceList(
         const retryRows = rows.map(({ badge_text, ...row }) => row);
         const retry = await supabase.from(table).upsert(retryRows, { onConflict: "id" });
         if (retry.error) throw retry.error;
+        if (idsToDelete.length > 0) { const deleted = await supabase.from(table).delete().in('id', idsToDelete); if (deleted.error) throw deleted.error; }
         return;
       }
       throw saved.error;
     }
   }
+  if (idsToDelete.length > 0) {
+    const deleted = await supabase.from(table).delete().in('id', idsToDelete);
+    if (deleted.error) throw deleted.error;
+  }
 }
 
-async function savePortfolioData(supabase: SupabaseClient | null, data: JsonRecord) {
+async function savePortfolioData(supabase: SupabaseClient | null, data: JsonRecord, sections?: Set<string>) {
   if (!supabase) {
     throw new Error("Supabase 未配置，已取消本地 JSON 兜底保存。");
   }
 
   const { resumePdfUrl, resume_pdf_url, pageCopy, page_copy, musicAutoplay, music_autoplay, ...profileFields } = data.profile || {};
   const cleanPageCopy = normalizePageCopy(pageCopy || page_copy || {}, stripCosSignature);
+  if (!sections || sections.has('profile')) {
   const profile = await supabase.from("portfolio_profile").upsert({
     id: "main",
     ...profileFields,
@@ -1338,12 +1342,17 @@ async function savePortfolioData(supabase: SupabaseClient | null, data: JsonReco
     page_copy: cleanPageCopy,
   });
   if (profile.error) throw profile.error;
+  }
 
+  if (!sections || sections.has('prospects')) {
   const prospects = await supabase.from("portfolio_prospects").upsert({ id: "main", ...data.prospects });
   if (prospects.error) throw prospects.error;
+  }
 
+  if (!sections || sections.has('contact')) {
   const contact = await supabase.from("portfolio_contact").upsert({ id: "main", ...(data.contact || {}) });
   if (contact.error) throw contact.error;
+  }
 
   const experiences = (data.experiences || []).map((row: JsonRecord, index: number) => ({
     ...row,
@@ -1390,11 +1399,11 @@ async function savePortfolioData(supabase: SupabaseClient | null, data: JsonReco
     sort_order: index,
   }));
 
-  await replaceList(supabase, "portfolio_experiences", experiences.map((row) => row.id), experiences);
-  await replaceList(supabase, "portfolio_works", works.map((row) => row.id), works);
-  await replaceList(supabase, "portfolio_gallery", gallery.map((row) => row.id), gallery);
-  await replaceList(supabase, "portfolio_treasures", treasures.map((row) => row.id), treasures);
-  await replaceList(supabase, "portfolio_music_tracks", musicTracks.map((row) => row.id), musicTracks);
+  if (!sections || sections.has('experiences')) await replaceList(supabase, "portfolio_experiences", experiences.map((row) => row.id), experiences);
+  if (!sections || sections.has('works')) await replaceList(supabase, "portfolio_works", works.map((row) => row.id), works);
+  if (!sections || sections.has('gallery')) await replaceList(supabase, "portfolio_gallery", gallery.map((row) => row.id), gallery);
+  if (!sections || sections.has('treasures')) await replaceList(supabase, "portfolio_treasures", treasures.map((row) => row.id), treasures);
+  if (!sections || sections.has('musicTracks')) await replaceList(supabase, "portfolio_music_tracks", musicTracks.map((row) => row.id), musicTracks);
 
   return fetchPortfolioData(supabase);
 }
@@ -1453,6 +1462,20 @@ async function startServer() {
    *   - txt/md 等文本 → 直读
    *   - 其余（doc/xls/xlsx/ppt/zip/rar…）→ 明确回「不支持在线预览」，前台引导下载
    */
+  app.get('/api/media/image-download', async (req, res) => {
+    try {
+      const key = getCosObjectKey(String(req.query.url || ''));
+      const ext = key.toLowerCase().match(/\.(png|jpe?g|webp|gif|avif)$/)?.[1];
+      if (!cos || !key.startsWith('portfolio/') || !ext) return res.status(404).json({ error: '图片不存在' });
+      const bytes = await getCosObjectBuffer(cos, key);
+      res.setHeader('Content-Type', `image/${ext === 'jpg' ? 'jpeg' : ext}`);
+      res.setHeader('Content-Disposition', `attachment; filename="image.${ext}"`);
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      res.send(bytes);
+    } catch { res.status(502).json({ error: '下载失败，请稍后重试' }); }
+  });
+
   app.get("/api/media/attachment-preview", async (req, res) => {
     const fail = (code: number, message: string) => {
       res.status(code);
@@ -1599,6 +1622,18 @@ async function startServer() {
       storageProvider: cos ? "tencent-cos" : "supabase",
       maxUploadSizeMb: effectiveUploadSizeMb,
     });
+  });
+
+  let portfolioSaveQueue: Promise<unknown> = Promise.resolve();
+  app.patch('/api/admin/portfolio', requireAdmin, async (req, res) => {
+    const task = portfolioSaveQueue.then(async () => {
+      const current = await fetchPortfolioData(supabase);
+      const { next, sections } = mergePortfolioChanges(current, req.body?.changes);
+      return sections.size ? savePortfolioData(supabase, next, sections) : current;
+    });
+    portfolioSaveQueue = task.catch(() => {});
+    try { res.json({ success: true, data: await task }); }
+    catch (error: any) { res.status(error.status || 500).json({ error: error.message || '保存失败，请核对已保存内容后重试。' }); }
   });
 
   app.put("/api/admin/portfolio", requireAdmin, async (req, res) => {

@@ -1431,7 +1431,15 @@ window.clipHarbor.onCookieStatus((profiles) => {
   renderCookieMeta();
 });
 
-initialize().then(() => setActiveView('download'));
+initialize().then(() => {
+  const params = new URLSearchParams(window.location.search);
+  const view = params.get('view');
+  setActiveView(['download', 'speech', 'voice', 'voiceClone'].includes(view) ? view : 'download');
+  const requestedMode = params.get('mode');
+  if (['video', 'cover', 'both'].includes(requestedMode)) {
+    document.querySelector('.segment[data-mode="' + requestedMode + '"]')?.click();
+  }
+});
 document.querySelectorAll('[data-settings-section]').forEach(button => button.addEventListener('click', () => selectSettingsSection(button.dataset.settingsSection)));
 $('#backFromSettings').addEventListener('click', () => {
   setActiveView(settingsReturnView);

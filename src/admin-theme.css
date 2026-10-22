@@ -1,4 +1,21 @@
 /* Shared admin appearance. Scoped away from the public portfolio and application UI. */
+.adm-save-actions { position:sticky;bottom:0;z-index:2;display:flex;align-items:center;justify-content:flex-end;gap:12px;width:100%;margin-top:16px;padding:12px 0;background:#18181b;border-top:1px solid #ffffff0a; }
+.adm-save-actions>span { font-size:12px;color:#a1a1aa; }
+.admin-theme .adm-save-button,.adm-modal .adm-save-button { display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:36px;padding:7px 18px;border:1px solid #52525b;border-radius:8px;background:#27272a;color:#f4f4f5;font-size:13px;font-weight:500; }
+.adm-save-button:hover { background:#3f3f46; }.adm-save-button:disabled { opacity:.55;cursor:wait; }
+.adm-modal footer .adm-save-actions { position:static;width:auto;margin:0;padding:0;border:0;background:transparent; }
+.admin-theme audio, .adm-modal audio { color-scheme: dark; width: 100%; max-width: 720px; height: 40px; border-radius: 8px; accent-color: #34d399; }
+.admin-theme audio::-webkit-media-controls-panel, .adm-modal audio::-webkit-media-controls-panel { background-color: #202023; }
+.cover-picker { width: min(720px, 94vw); max-height: 90dvh; overflow:auto; margin:auto; padding:24px; color:#e4e4e7; border:1px solid #3f3f46; }
+.cover-picker::backdrop { background:#000b; }
+.cover-picker h2 { font-size:18px; }.cover-picker h2 span { color:#a1a1aa;font-size:13px; }
+.cover-picker p { color:#a1a1aa;font-size:13px;margin:12px 0; }
+.cover-picker canvas { width:100%;height:auto;aspect-ratio:16/9;background:#09090b;border-radius:8px; }
+.cover-picker label { display:flex;align-items:center;gap:16px;margin-top:16px;font-size:13px; }
+.cover-picker input { flex:1;accent-color:#34d399; }
+.cover-picker footer { display:flex;flex-wrap:wrap;justify-content:flex-end;gap:12px;margin-top:24px; }
+.cover-picker button { border:1px solid #3f3f46;border-radius:8px;padding:10px 14px;background:#27272a; }
+.cover-picker button:last-child { background:#34d399;color:#09090b; }.cover-picker button:disabled { opacity:.5; }
 .admin-theme {
   --admin-surface: #18181b;
   --admin-field: #09090b;
@@ -25,9 +42,17 @@
 .admin-theme .adm-drawer { border-top: 1px solid #27272a; background: #09090b; }
 .admin-theme .adm-section-heading + div { padding-top: 20px; }
 .admin-theme .admin-scroll > div { gap: 16px; }
-.admin-theme .adm-note { border-radius: 8px; padding: 12px; font-size: 12px; line-height: 1.7; }
-.admin-theme .adm-note-info { background: #11251e; }
-.admin-theme .adm-note-warn { background: #292012; }
+/* Keep help text consistent across settings, module pages and editor dialogs. */
+.admin-theme .adm-note, .adm-modal .adm-note {
+  border: 0;
+  border-radius: 8px;
+  background: #121214;
+  color: #a1a1aa;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.admin-theme .adm-note-warn, .adm-modal .adm-note-warn { color: #fcd34d; }
 .admin-theme :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]), textarea, select),
 .adm-modal :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]), textarea, select) {
   background-color: #09090b;

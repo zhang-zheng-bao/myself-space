@@ -7,7 +7,7 @@ const input = fs.readFileSync(source, 'utf8').replace(/\r\n/g,'\n');
 const ast = ts.createSourceFile(source, input, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
 const replacements = {
   defaultOutput: `function defaultOutput() { return path.join(root, 'outputs'); }`,
-  decryptCookieHeader: `function decryptCookieHeader(platform = 'douyin') { const raw = readConfig().secrets[platform + 'Cookie']; return raw ? normalizeCookieInput(raw, platform).header : ''; }`,
+  decryptCookieHeader: `function decryptCookieHeader(platform = 'douyin') { const raw = readConfig().secrets[platform + 'Cookie']; if(!raw)return ''; try{return normalizeCookieInput(raw, platform).header;}catch{throw new Error(platformConfig(platform).label+' Cookie 格式无法识别，请管理员在后台检查该平台配置');} }`,
   decryptSpeechCredentials: `function decryptSpeechCredentials() { const c = readConfig(); return c.iflytekAppId && c.secrets.iflytekApiKey && c.secrets.iflytekApiSecret ? { appId:c.iflytekAppId, apiKey:c.secrets.iflytekApiKey, apiSecret:c.secrets.iflytekApiSecret } : null; }`,
   decryptMinimaxCredentials: `function decryptMinimaxCredentials() { const apiKey = readConfig().secrets.minimaxApiKey; return apiKey ? {apiKey} : null; }`,
   persistSettings: `function persistSettings() { fs.mkdirSync(root,{recursive:true}); fs.writeFileSync(configPath(), JSON.stringify({minimaxVoiceModels:settings.minimaxVoiceModels,minimaxVoiceFavorites:settings.minimaxVoiceFavorites,minimaxHiddenVoices:settings.minimaxHiddenVoices})); }`,
@@ -78,8 +78,15 @@ function syncConfig() {
   for (const platform of ['douyin','bilibili','xiaohongshu']) {
     const config = platformConfig(platform), raw = c.secrets[platform+'Cookie'];
     settings[config.encryptedKey] = raw ? 'server-managed' : '';
-    settings[config.metaKey] = raw ? {names:normalizeCookieInput(raw,platform).names} : null;
+    settings[config.metaKey] = null;
+    if(raw) {
+      try { settings[config.metaKey] = {names:normalizeCookieInput(raw,platform).names}; }
+      catch { cookieHealth[platform] = {status:'格式有误',checkedAt:null,message:config.label+' Cookie 格式无法识别，请管理员检查'}; }
+    }
   }
+  const account = c.secrets.minimaxApiKey ? crypto.createHash('sha256').update(c.secrets.minimaxApiKey).digest('hex') : '';
+  settings.minimaxVoiceModels = c.voiceModelsAccount === account ? (c.voiceModels || []) : [];
+  settings.minimaxHiddenVoices = c.hiddenVoices || [];
   settings.iflytekCredentialsEncrypted = decryptSpeechCredentials() ? 'server-managed' : '';
   settings.minimaxCredentialsEncrypted = decryptMinimaxCredentials() ? 'server-managed' : '';
 }
