@@ -2,6 +2,7 @@ import React, { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState }
 import { createPortal } from "react-dom";
 import "./admin-theme.css";
 import AppSettingsAdmin from "./components/AppSettingsAdmin";
+import ImageCoverPicker, { type CoverPosition } from './components/ImageCoverPicker';
 import ContentAnalytics, { analyticsCatalog, VisitorEngagement } from "./components/ContentAnalytics";
 import VisitNotifications from "./components/VisitNotifications";
 import { isInstrumental, setInstrumental } from "./musicMetadata";
@@ -609,15 +610,16 @@ function useFileDrop(onFile: (file: File) => void, onActiveChange: (active: bool
   }, []);
 }
 
-async function compressImageForUpload(file: File) {
+async function createImagePreview(file: File, position: CoverPosition) {
   const compressibleTypes = ["image/jpeg", "image/png", "image/webp"];
   if (!compressibleTypes.includes(file.type)) return file;
 
   const bitmap = await createImageBitmap(file);
-  const maxEdge = 1600;
-  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
-  const width = Math.max(1, Math.round(bitmap.width * scale));
-  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const cropWidth = Math.min(bitmap.width, bitmap.height * 16 / 9);
+  const cropHeight = cropWidth * 9 / 16;
+  const scale = Math.min(1, 640 / cropWidth);
+  const width = Math.max(1, Math.round(cropWidth * scale));
+  const height = Math.max(1, Math.round(cropHeight * scale));
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -627,16 +629,16 @@ async function compressImageForUpload(file: File) {
     return file;
   }
 
-  context.drawImage(bitmap, 0, 0, width, height);
+  context.drawImage(bitmap, (bitmap.width-cropWidth)*position.x, (bitmap.height-cropHeight)*position.y, cropWidth, cropHeight, 0, 0, width, height);
   bitmap.close();
 
   const blob = await new Promise<Blob | null>((resolve) => {
     canvas.toBlob(resolve, "image/webp", 0.82);
   });
 
-  if (!blob || blob.size >= file.size) return file;
+  if (!blob) return file;
   const cleanName = file.name.replace(/\.[^.]+$/, "");
-  return new File([blob], `${cleanName}.webp`, { type: "image/webp", lastModified: Date.now() });
+  return new File([blob], `${cleanName}-preview.webp`, { type: "image/webp", lastModified: Date.now() });
 }
 
 function normalize(data: PortfolioData): PortfolioData {
@@ -3207,6 +3209,7 @@ export default function AdminApp() {
   const savedRef = useRef<PortfolioData>(normalize(emptyPortfolioData));
   const [status, setStatus] = useState("");
   const [uploadProgress, setUploadProgress] = useState<{ fileName: string; percent: number } | null>(null);
+  const [coverPicker, setCoverPicker] = useState<{ file: File; resolve: (position: CoverPosition) => void } | null>(null);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   // 有没有「改了但还没保存」的内容。任何走 update() 的编辑都会点亮它，save() 成功才熄灭。
@@ -3876,18 +3879,28 @@ export default function AdminApp() {
   }
 
   /**
-   * 图文多图上传。逐张串行走 uploadMediaFile（复用压缩 / 大小上限 / 进度提示），
+   * 图文多图上传。保留原图，另外生成列表预览，复用大小上限与进度提示。
    * 每传完一张就按 id 追加 —— 用 id 而不是下标定位，上传途中列表被拖动排序也不会写错条目。
    */
   async function uploadPostImages(event: ChangeEvent<HTMLInputElement>, postId: string) {
     const files = Array.from(event.target.files ?? []) as File[];
     event.target.value = "";
     for (const file of files) {
-      await uploadMediaFile(file, (url) => {
+      await uploadMediaFile(file, async (url) => {
         update((draft) => {
           const target = (draft.profile.pageCopy?.postList || []).find((item) => item.id === postId);
           if (target) target.images = [...(target.images || []), url];
         });
+        try {
+          const position = await new Promise<CoverPosition>(resolve => setCoverPicker({file,resolve}));
+          const preview = await createImagePreview(file, position);
+          if (preview !== file) await uploadMediaFile(preview, previewUrl => {
+            update(draft => {
+              const target = draft.profile.pageCopy?.postList?.find(item => item.id === postId);
+              if (target) target.previews = [...(target.previews || []), { source: url, url: previewUrl }];
+            });
+          });
+        } catch { /* Original remains available if preview generation fails. */ }
       });
     }
   }
@@ -3975,26 +3988,15 @@ export default function AdminApp() {
    */
   async function uploadMediaFile(file: File, onUrl: (url: string, file: File) => void | Promise<void>) {
     const maxBytes = maxUploadSizeMb * 1024 * 1024;
-    // 压缩可能换掉文件名（jpg → webp），所以另起一个变量，file 留着算压缩率。
-    let uploadFile = file;
-
-    if (file.type.startsWith("image/")) {
-      setStatus("正在压缩图片...");
-      try {
-        uploadFile = await compressImageForUpload(file);
-      } catch {
-        uploadFile = file;
-      }
-    }
+    // Preserve uploaded originals; lightweight previews are generated separately.
+    const uploadFile = file;
 
     if (uploadFile.size > maxBytes) {
       setStatus(`文件超过 ${maxUploadSizeMb}MB 上传上限，请压缩后再试，或调整 MAX_UPLOAD_SIZE_MB。`);
       return;
     }
 
-    const savedSize = file.size - uploadFile.size;
-    const savedText = savedSize > 0 ? `，已压缩 ${Math.round((savedSize / file.size) * 100)}%` : "";
-    setStatus(`正在上传媒体${savedText}...`);
+    setStatus('正在上传原文件…');
     setUploadProgress({ fileName: uploadFile.name, percent: 0 });
 
     if (storageProvider === "tencent-cos") {
@@ -4461,6 +4463,7 @@ export default function AdminApp() {
      * 切栏目时连右栏内部都不会横跳。两层保险。
      */
     <main className="admin-theme flex h-dvh flex-col overflow-hidden bg-[#09090b] text-zinc-100">
+      {coverPicker && <ImageCoverPicker file={coverPicker.file} onSelect={position=>{coverPicker.resolve(position);setCoverPicker(null);}}/>}
       <header className="z-30 shrink-0 border-b border-zinc-900 bg-zinc-950/90 px-3 py-2.5 backdrop-blur md:px-5">
         <div className="mx-auto flex max-w-[1600px] flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
@@ -6010,7 +6013,7 @@ export default function AdminApp() {
                   return (
                     <EditorRow key={key} expanded={isActive}>
                       <ListSummaryRow
-                        thumb={item.images?.[0]}
+                        thumb={item.previews?.find(p => p.source.split('?')[0] === item.images?.[0]?.split('?')[0])?.url || item.images?.[0]}
                         title={item.title || "图文 " + (index + 1)}
                         meta={`${(item.images || []).length} 张图`}
                         preview={item.text}
@@ -6022,7 +6025,7 @@ export default function AdminApp() {
                         onDelete={() => {
                           void removeAndSave(
                             (draft) => { draft.profile.pageCopy!.postList = (draft.profile.pageCopy!.postList || []).filter((_, i) => i !== index); },
-                            item.images || [],
+                            [...(item.images || []), ...(item.previews || []).map(p => p.url)],
                             () => setExpandedPostId(null),
                           );
                         }}
@@ -6035,7 +6038,7 @@ export default function AdminApp() {
                   const item = (data.profile.pageCopy?.postList || [])[postModalIndex];
                   const index = postModalIndex;
                   const images = item.images || [];
-                  const setImages = (next: string[]) => update((draft) => { draft.profile.pageCopy!.postList![index].images = next; });
+                  const setImages = (next: string[]) => update((draft) => { const target = draft.profile.pageCopy!.postList![index]; target.images = next; target.previews = target.previews?.filter(p => next.some(url => url.split('?')[0] === p.source.split('?')[0])); });
                   return (
                     <EditorModal title={"图文 " + (index + 1)} size="lg" onClose={() => setExpandedPostId(null)} footer={<SaveCurrentButton label="保存" scoped={scopedList((d) => d.profile.pageCopy?.postList, (d, v) => { d.profile.pageCopy!.postList = v; })} />}>
                       <section className="adm-panel space-y-3 p-3">
@@ -6048,7 +6051,7 @@ export default function AdminApp() {
                       </section>
                       <section className="adm-panel mt-3 p-3">
                         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                          <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-500">图片 / IMAGES · {images.length} 张 · 第一张为封面</p>
+                          <p className="text-xs text-zinc-400">图片 · {images.length} 张 · 保留原图，第一张自动生成轻量封面</p>
                           <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-zinc-600">
                             <ImagePlus size={15} /> 上传图片（可多选）
                             <input className="hidden" type="file" accept="image/*" multiple onChange={(event) => void uploadPostImages(event, item.id)} />
@@ -6057,19 +6060,19 @@ export default function AdminApp() {
                         {images.length > 0 ? (
                           <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                             {images.map((url, i) => (
-                              <div key={`${url}-${i}`} className="group relative aspect-[3/4] overflow-hidden rounded-lg border border-zinc-800 bg-black">
-                                <img src={url} alt={`第 ${i + 1} 张`} className="h-full w-full object-cover" />
+                              <div key={`${url}-${i}`} className="group relative aspect-video overflow-hidden rounded-lg border border-zinc-800 bg-black">
+                                <img src={item.previews?.find(p => p.source.split('?')[0] === url.split('?')[0])?.url || url} alt={`第 ${i + 1} 张`} className="h-full w-full object-cover" />
                                 {i === 0 && <span className="absolute left-1.5 top-1.5 rounded bg-emerald-500/90 px-1.5 py-0.5 text-[10px] text-black">封面</span>}
                                 <div className="absolute inset-x-0 bottom-0 flex justify-between gap-1 bg-black/70 p-1">
                                   <button type="button" aria-label="前移" disabled={i === 0} onClick={() => setImages(moveItem(images, i, i - 1))} className="rounded p-1 text-zinc-200 hover:bg-white/10 disabled:opacity-30"><ArrowUp size={13} className="-rotate-90" /></button>
-                                  <button type="button" aria-label="删除这张" onClick={() => { setImages(images.filter((_, j) => j !== i)); void deleteMedia([url], false); }} className="rounded p-1 text-zinc-200 hover:bg-red-500/30 hover:text-red-200"><Trash2 size={13} /></button>
+                                  <button type="button" aria-label="删除这张" onClick={() => { setImages(images.filter((_, j) => j !== i)); void deleteMedia([url, ...(item.previews || []).filter(p => p.source.split('?')[0] === url.split('?')[0]).map(p => p.url)], false); }} className="rounded p-1 text-zinc-200 hover:bg-red-500/30 hover:text-red-200"><Trash2 size={13} /></button>
                                   <button type="button" aria-label="后移" disabled={i === images.length - 1} onClick={() => setImages(moveItem(images, i, i + 1))} className="rounded p-1 text-zinc-200 hover:bg-white/10 disabled:opacity-30"><ArrowUp size={13} className="rotate-90" /></button>
                                 </div>
                               </div>
                             ))}
                           </div>
                         ) : (
-                          <p className="rounded-lg border border-dashed border-zinc-800 px-3 py-6 text-center text-xs text-zinc-500">还没有图片。建议 3:4 竖图，前台卡片按这个比例裁切。</p>
+                          <p className="rounded-lg border border-dashed border-zinc-800 px-3 py-6 text-center text-xs text-zinc-500">支持横图、多图和长图。列表使用独立预览，点开后查看完整原图。</p>
                         )}
                       </section>
                     </EditorModal>

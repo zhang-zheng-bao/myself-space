@@ -1666,7 +1666,7 @@ function WorksPane({
               onClick={() => onSelect(work)}
               className="work-card group flex h-full cursor-pointer flex-col overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/60 transition-all duration-500 hover:border-zinc-700 hover:bg-zinc-950"
             >
-              <div className="work-card__media relative aspect-[1.92/1] overflow-hidden bg-zinc-950/60 shadow-inner">
+              <div className="work-card__media relative aspect-video overflow-hidden bg-zinc-950/60 shadow-inner">
                    {work.images?.[0] ? (
                      <img src={work.images[0]} alt={zhText(work.title)} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" referrerPolicy="no-referrer" />
                    ) : (

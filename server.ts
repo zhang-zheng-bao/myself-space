@@ -957,6 +957,7 @@ function normalizePageCopy(pageCopy: JsonRecord | undefined, transform: (url?: s
       const post = item as JsonRecord;
       return {
         ...post,
+        previews: Array.isArray(post.previews) ? post.previews.filter((preview: any) => preview && typeof preview.source === 'string' && typeof preview.url === 'string').map((preview: any) => ({ source: transform(preview.source), url: transform(preview.url) })) : [],
         images: Array.isArray(post.images) ? post.images.map((url) => transform(String(url || ""))).filter(Boolean) : [],
       };
     });
@@ -1453,6 +1454,20 @@ async function startServer() {
    *   - txt/md 等文本 → 直读
    *   - 其余（doc/xls/xlsx/ppt/zip/rar…）→ 明确回「不支持在线预览」，前台引导下载
    */
+  app.get('/api/media/image-download', async (req, res) => {
+    try {
+      const key = getCosObjectKey(String(req.query.url || ''));
+      const ext = key.toLowerCase().match(/\.(png|jpe?g|webp|gif|avif)$/)?.[1];
+      if (!cos || !key.startsWith('portfolio/') || !ext) return res.status(404).json({ error: '图片不存在' });
+      const bytes = await getCosObjectBuffer(cos, key);
+      res.setHeader('Content-Type', `image/${ext === 'jpg' ? 'jpeg' : ext}`);
+      res.setHeader('Content-Disposition', `attachment; filename="image.${ext}"`);
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      res.send(bytes);
+    } catch { res.status(502).json({ error: '下载失败，请稍后重试' }); }
+  });
+
   app.get("/api/media/attachment-preview", async (req, res) => {
     const fail = (code: number, message: string) => {
       res.status(code);

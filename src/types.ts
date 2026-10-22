@@ -348,6 +348,7 @@ export interface Poem {
 
 /** 一条图文：多张图 + 标题 + 正文，前台一条占一张竖卡。 */
 export interface ImagePost {
+  previews?: { source: string; url: string }[];
   id: string;
   title: string;
   /** 正文。换行 = 分段。 */
