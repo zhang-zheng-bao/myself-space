@@ -959,6 +959,7 @@ function normalizePageCopy(pageCopy: JsonRecord | undefined, transform: (url?: s
       const post = item as JsonRecord;
       return {
         ...post,
+        coverUrl: transform(String(post.coverUrl || "")),
         previews: Array.isArray(post.previews) ? post.previews.filter((preview: any) => preview && typeof preview.source === 'string' && typeof preview.url === 'string').map((preview: any) => ({ source: transform(preview.source), url: transform(preview.url) })) : [],
         images: Array.isArray(post.images) ? post.images.map((url) => transform(String(url || ""))).filter(Boolean) : [],
       };

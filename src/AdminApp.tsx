@@ -1,4 +1,4 @@
-import React, { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { ChangeEvent, createContext, useContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import "./admin-theme.css";
 import AppSettingsAdmin from "./components/AppSettingsAdmin";
@@ -612,11 +612,8 @@ function useFileDrop(onFile: (file: File) => void, onActiveChange: (active: bool
 }
 
 async function createImagePreview(file: File, position: CoverPosition) {
-  const compressibleTypes = ["image/jpeg", "image/png", "image/webp"];
-  if (!compressibleTypes.includes(file.type)) return file;
-
   const bitmap = await createImageBitmap(file);
-  const cropWidth = Math.min(bitmap.width, bitmap.height * 16 / 9);
+  const cropWidth = Math.min(bitmap.width, bitmap.height * 16 / 9) / Math.max(1, position.zoom || 1);
   const cropHeight = cropWidth * 9 / 16;
   const scale = Math.min(1, 640 / cropWidth);
   const width = Math.max(1, Math.round(cropWidth * scale));
@@ -1714,6 +1711,7 @@ function ClearableField({ label, value, onChange, placeholder }: {
  * 它是新的一层表面（fixed），弹窗面板是这一层唯一的那个框；内部只用
  * .adm-panel / .adm-note / .adm-row（无整圈描边），不构成框套框。
  */
+const UploadFeedback = createContext<{progress:{fileName:string;percent:number}|null;status:string}>({progress:null,status:''});
 function EditorModal({
   title,
   onClose,
@@ -1733,9 +1731,10 @@ function EditorModal({
   size?: "sm" | "md" | "lg";
   children: React.ReactNode;
 }) {
+  const feedback = useContext(UploadFeedback);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape" && !document.querySelector('dialog[open]')) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -1774,6 +1773,9 @@ function EditorModal({
          * 右上角再放一个「关闭」纯属重复。底部的取消按钮和保存按钮成对摆放，
          * 位置固定，比右上角更好找。
          */}
+        {(feedback.progress || feedback.status) && <div className="border-b border-zinc-800 px-4 py-2 text-xs text-zinc-300" role="status">
+          {feedback.progress ? <><span>{feedback.progress.fileName} · {feedback.progress.percent}% · {feedback.status}</span><div role="progressbar" aria-label="文件上传进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={feedback.progress.percent} className="mt-2 h-1 overflow-hidden rounded bg-zinc-800"><div className="h-full bg-emerald-300 transition-[width]" style={{width:`${feedback.progress.percent}%`}}/></div></> : feedback.status}
+        </div>}
         <div className="adm-modal-scroll min-h-0 flex-1 px-4 py-4">{children}</div>
 
         <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-800/70 px-4 py-3">
@@ -1932,7 +1934,7 @@ function WorkListEditor({
   /** 绑给 <input type=file> 的 change 处理器（读 event.target.files）。 */
   upload: (event: ChangeEvent<HTMLInputElement>, onUrl: (url: string, file: File) => void | Promise<void>) => void;
   /** 直接上传一个 File（拖拽走这条）。真正的实现是后台的 uploadMediaFile。 */
-  uploadFile: (file: File, onUrl: (url: string, file: File) => void | Promise<void>) => Promise<void>;
+  uploadFile: (file: File, onUrl: (url: string, file: File) => void | Promise<void>) => Promise<boolean>;
   deleteMedia: (urls: string[]) => Promise<boolean>;
   update: (mutator: (draft: PortfolioData) => void) => void;
   updateAndSave: (mutator: (draft: PortfolioData) => void) => Promise<void>;
@@ -2448,7 +2450,7 @@ function WorkListEditor({
                   actions={
                     <label className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-600">
                       <ImagePlus size={12} /> 上传图片
-                      <input className="hidden" type="file" accept="image/*" onChange={(event) => upload(event, (url) => updateAndSave((draft) => { readItems(draft)[index].images = [...(readItems(draft)[index].images || []), url]; }))} />
+                      <input className="sr-only" type="file" accept="image/*" multiple onChange={(event) => upload(event, (url) => update((draft) => { readItems(draft)[index].images = [...(readItems(draft)[index].images || []), url]; }))} />
                     </label>
                   }
                 />
@@ -3212,6 +3214,11 @@ export default function AdminApp() {
   const [status, setStatus] = useState("");
   const [uploadProgress, setUploadProgress] = useState<{ fileName: string; percent: number } | null>(null);
   const [coverPicker, setCoverPicker] = useState<{ file: File; resolve: (position: CoverPosition) => void } | null>(null);
+  const [postImagesBusy, setPostImagesBusy] = useState(false);
+  const [slideUploadBusy, setSlideUploadBusy] = useState(false);
+  const slideUploadBusyRef = useRef(false);
+  const postImagesBusyRef = useRef(false);
+  const uploadClearTimer = useRef<number | undefined>(undefined);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [loading, setLoading] = useState(true);
@@ -3899,24 +3906,48 @@ export default function AdminApp() {
   async function uploadPostImages(event: ChangeEvent<HTMLInputElement>, postId: string) {
     const files = Array.from(event.target.files ?? []) as File[];
     event.target.value = "";
+    if(postImagesBusyRef.current || !files.length)return;
+    postImagesBusyRef.current=true;setPostImagesBusy(true);
+    const failed: string[]=[];
+    try {
     for (const file of files) {
-      await uploadMediaFile(file, async (url) => {
+      if(file.size>maxUploadSizeMb*1024*1024){failed.push(file.name);continue;}
+      const current = draftRef.current.profile.pageCopy?.postList?.find(item=>item.id===postId);
+      const needsCover = !current?.coverUrl && !current?.images?.length;
+      // Choose the independent cover immediately; no network round trip before interaction.
+      const position = needsCover ? await new Promise<CoverPosition>(resolve=>setCoverPicker({file,resolve})) : null;
+      const uploaded = await uploadMediaFile(file, async (url) => {
         update((draft) => {
           const target = (draft.profile.pageCopy?.postList || []).find((item) => item.id === postId);
           if (target) target.images = [...(target.images || []), url];
         });
-        try {
-          const position = await new Promise<CoverPosition>(resolve => setCoverPicker({file,resolve}));
+        if(position) try {
           const preview = await createImagePreview(file, position);
           if (preview !== file) await uploadMediaFile(preview, previewUrl => {
             update(draft => {
               const target = draft.profile.pageCopy?.postList?.find(item => item.id === postId);
-              if (target) target.previews = [...(target.previews || []), { source: url, url: previewUrl }];
+              if (target) target.coverUrl = previewUrl;
             });
           });
-        } catch { /* Original remains available if preview generation fails. */ }
+        } catch { setStatus('原图已上传，但封面生成失败，可单独上传封面后保存。'); }
       });
+      if(!uploaded)failed.push(file.name);
     }
+    if(failed.length)setStatus(`部分图片未上传：${failed.join('、')}。请检查文件大小和网络后重试，其他已上传图片已保留。`);
+    } catch(error:any) {setStatus(error?.message || '图片处理失败，请重试。');}
+    finally {postImagesBusyRef.current=false;setPostImagesBusy(false);}
+  }
+
+  async function uploadPostCover(event: ChangeEvent<HTMLInputElement>, postId: string) {
+    const file=event.target.files?.[0];event.target.value='';
+    if(!file||postImagesBusyRef.current)return;
+    postImagesBusyRef.current=true;setPostImagesBusy(true);
+    try {
+      const position=await new Promise<CoverPosition>(resolve=>setCoverPicker({file,resolve}));
+      const cover=await createImagePreview(file,position);
+      await uploadMediaFile(cover,url=>update(draft=>{const post=draft.profile.pageCopy?.postList?.find(p=>p.id===postId);if(post)post.coverUrl=url;}));
+    } catch(error:any) {setStatus(error?.message || '封面处理失败，请换一张图片重试。');}
+    finally {postImagesBusyRef.current=false;setPostImagesBusy(false);}
   }
 
   /**
@@ -3933,39 +3964,60 @@ export default function AdminApp() {
       setStatus("请选择 .pdf 或 .pptx 文件（旧版 .ppt 请先用 PowerPoint / WPS 另存）。");
       return;
     }
+    if(slideUploadBusyRef.current)return;
+    slideUploadBusyRef.current=true;setSlideUploadBusy(true);
+    try {
     const deck = (data.profile.pageCopy?.slideList || []).find((item) => item.id === deckId);
     const hadCover = Boolean(deck?.cover);
     let uploaded = false;
     await uploadMediaFile(file, (url) => {
       uploaded = true;
-      const previous = kind === "pdf" ? deck?.pdfUrl : deck?.fileUrl;
-      if (previous && previous !== url) void deleteMedia([previous], false);
       update((draft) => {
         const target = (draft.profile.pageCopy?.slideList || []).find((item) => item.id === deckId);
         if (!target) return;
-        if (kind === "pdf") target.pdfUrl = url;
+        if (kind === "pdf") {target.pdfUrl = url;target.pdfFileName=file.name;}
         else { target.fileUrl = url; target.fileName = file.name; }
         if (!target.title) target.title = file.name.replace(/\.(pdf|pptx)$/i, "");
       });
     });
-    if (uploaded && kind === "pdf" && !hadCover) await generateSlideCover(file, deckId);
+    if (uploaded && !hadCover) await generateSlideCover(file, deckId);
+    else if(uploaded)setStatus(`${file.name} 已上传，点击「确认保存」发布。`);
+    } finally {slideUploadBusyRef.current=false;setSlideUploadBusy(false);}
   }
 
   /** 用 PDF 第一页生成封面。失败不影响 PDF 本身，只提示一句、前台显示占位。 */
   async function generateSlideCover(file: File, deckId: string) {
     try {
-      setStatus("正在用第一页生成封面…");
-      const { pdfFirstPageCover } = await import("./pdfDeck");
-      const cover = await pdfFirstPageCover(file);
+      window.clearTimeout(uploadClearTimer.current);setUploadProgress(null);
+      setStatus("文件已上传，正在用第一页生成封面…");
+      const { slideFirstPageCover } = await import("./slide-cover");
+      let timer=0;
+      const cover = await Promise.race([slideFirstPageCover(file),new Promise<never>((_,reject)=>{timer=window.setTimeout(()=>reject(new Error('首页生成超时，可点击重新生成')),25000);})]).finally(()=>window.clearTimeout(timer));
+      let coverUploaded=false;
       await uploadMediaFile(cover, (url) => {
+        coverUploaded=true;
         update((draft) => {
           const target = (draft.profile.pageCopy?.slideList || []).find((item) => item.id === deckId);
-          if (target && !target.cover) target.cover = url;
+          if (target) target.cover = url;
         });
       });
+      if(coverUploaded)setStatus('文件与首页封面已就绪，点击「确认保存」发布。');
     } catch (error: any) {
-      setStatus(`PDF 已上传，但自动封面生成失败：${error?.message || "未知错误"}。可以手动上传封面。`);
+      setStatus(`文件已上传，但首页封面生成失败：${error?.message || "未知错误"}。可重新生成或手动上传封面。`);
     }
+  }
+
+  async function regenerateSlideCover(deck: SlideDeck) {
+    if(slideUploadBusyRef.current)return;
+    slideUploadBusyRef.current=true;setSlideUploadBusy(true);setStatus('正在读取文件首页…');
+    try {
+      const url=deck.pdfUrl||deck.fileUrl;
+      const response=await fetch(`/api/media/slides?url=${encodeURIComponent(url || '')}`,{signal:AbortSignal.timeout(30000)});
+      if(!response.ok)throw new Error('读取演示文件失败');
+      const file=new File([await response.blob()],deck.pdfUrl?'presentation.pdf':'presentation.pptx');
+      await generateSlideCover(file,deck.id);
+    }catch(error:any){setStatus(error?.message||'生成封面失败');}
+    finally{slideUploadBusyRef.current=false;setSlideUploadBusy(false);}
   }
 
   async function uploadMusicAudio(file: File, trackId: string) {
@@ -3989,10 +4041,9 @@ export default function AdminApp() {
   }
 
   async function upload(event: ChangeEvent<HTMLInputElement>, onUrl: (url: string, file: File) => void | Promise<void>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    await uploadMediaFile(file, onUrl);
+    const files = Array.from(event.target.files || []) as File[];
     event.target.value = "";
+    for(const file of files)await uploadMediaFile(file, onUrl);
   }
 
   /**
@@ -4001,16 +4052,17 @@ export default function AdminApp() {
    * 调用方负责清空 input.value。
    */
   async function uploadMediaFile(file: File, onUrl: (url: string, file: File) => void | Promise<void>) {
+    window.clearTimeout(uploadClearTimer.current);
     const maxBytes = maxUploadSizeMb * 1024 * 1024;
     // Preserve uploaded originals; lightweight previews are generated separately.
     const uploadFile = file;
 
     if (uploadFile.size > maxBytes) {
       setStatus(`文件超过 ${maxUploadSizeMb}MB 上传上限，请压缩后再试，或调整 MAX_UPLOAD_SIZE_MB。`);
-      return;
+      return false;
     }
 
-    setStatus('正在上传原文件…');
+    setStatus('正在准备上传原文件…');
     setUploadProgress({ fileName: uploadFile.name, percent: 0 });
 
     if (storageProvider === "tencent-cos") {
@@ -4023,9 +4075,11 @@ export default function AdminApp() {
             contentType: uploadFile.type || "application/octet-stream",
             size: uploadFile.size,
           }),
+          signal: AbortSignal.timeout(20000),
         });
         const token = await tokenRes.json().catch(() => ({}));
         if (!tokenRes.ok || !token.uploadUrl) throw new Error(token.error || "创建上传签名失败");
+        setStatus('正在上传原文件…');
 
         await new Promise<void>((resolve, reject) => {
           const xhr = new XMLHttpRequest();
@@ -4048,13 +4102,13 @@ export default function AdminApp() {
 
         await onUrl(token.signedUrl || token.url, file);
         setUploadProgress({ fileName: uploadFile.name, percent: 100 });
-        setStatus("媒体已上传。");
-        window.setTimeout(() => setUploadProgress(null), 1000);
-        return;
+        setStatus("文件已上传，请保存当前修改。");
+        uploadClearTimer.current=window.setTimeout(() => setUploadProgress(null), 1000);
+        return true;
       } catch (error: any) {
         setStatus(error.message || "腾讯云直传失败");
         setUploadProgress(null);
-        return;
+        return false;
       }
     }
 
@@ -4092,19 +4146,20 @@ export default function AdminApp() {
     } catch (error: any) {
       setStatus(error.message || "上传失败");
       setUploadProgress(null);
-      return;
+      return false;
     }
 
     if (!json.url) {
       setStatus(json.error || "上传失败");
       setUploadProgress(null);
-      return;
+      return false;
     }
 
     await onUrl(json.url, file);
     setUploadProgress({ fileName: uploadFile.name, percent: 100 });
-    setStatus("媒体已上传。");
-    window.setTimeout(() => setUploadProgress(null), 1000);
+    setStatus("文件已上传，请保存当前修改。");
+    uploadClearTimer.current=window.setTimeout(() => setUploadProgress(null), 1000);
+    return true;
   }
 
   async function deleteMedia(urls: string[], announceSuccess = true) {
@@ -4361,11 +4416,11 @@ export default function AdminApp() {
     const candidate = cloneData(savedRef.current);
     if (scoped) scoped(candidate, data);
     const changed = portfolioChanges(savedRef.current, scoped ? candidate : data).length > 0;
-    if (!changed) return null;
+    if (!changed && !slideUploadBusy && !postImagesBusy && !(uploadProgress && uploadProgress.percent<100)) return null;
     return <div className="adm-save-actions"><span>{saving ? '正在保存' : '未保存'}</span><button
       type="button"
       onClick={() => { void (scoped ? saveScoped(scoped) : save()); }}
-      disabled={saving}
+      disabled={saving || postImagesBusy || slideUploadBusy || Boolean(uploadProgress && uploadProgress.percent < 100)}
       className="adm-save-button"
     >
       {/*
@@ -4373,7 +4428,7 @@ export default function AdminApp() {
        * 而且「保存」这两个字已经说完了全部意思。
        * 转圈的 Loader2 保留 —— 那是保存中的状态反馈，不是装饰。
        */}
-      {saving ? <Loader2 className="animate-spin" size={14} /> : null} {saving ? '保存中…' : '保存'}
+      {saving ? <Loader2 className="animate-spin" size={14} /> : null} {saving ? '保存中…' : label}
     </button></div>;
   };
 
@@ -4480,7 +4535,7 @@ export default function AdminApp() {
      * → 宽度恒定。再加 scrollbar-gutter: stable 把右栏滚动槽也常驻，
      * 切栏目时连右栏内部都不会横跳。两层保险。
      */
-    <main className="admin-theme flex h-dvh flex-col overflow-hidden bg-[#09090b] text-zinc-100">
+    <UploadFeedback.Provider value={{progress:uploadProgress,status}}><main className="admin-theme flex h-dvh flex-col overflow-hidden bg-[#09090b] text-zinc-100">
       {coverPicker && <ImageCoverPicker file={coverPicker.file} onSelect={position=>{coverPicker.resolve(position);setCoverPicker(null);}}/>}
       <header className="z-30 shrink-0 border-b border-zinc-900 bg-zinc-950/90 px-3 py-2.5 backdrop-blur md:px-5">
         <div className="mx-auto flex max-w-[1600px] flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
@@ -6031,7 +6086,7 @@ export default function AdminApp() {
                   return (
                     <EditorRow key={key} expanded={isActive}>
                       <ListSummaryRow
-                        thumb={item.previews?.find(p => p.source.split('?')[0] === item.images?.[0]?.split('?')[0])?.url || item.images?.[0]}
+                        thumb={item.coverUrl || item.previews?.find(p => p.source.split('?')[0] === item.images?.[0]?.split('?')[0])?.url || item.images?.[0]}
                         title={item.title || "图文 " + (index + 1)}
                         meta={`${(item.images || []).length} 张图`}
                         preview={item.text}
@@ -6043,7 +6098,7 @@ export default function AdminApp() {
                         onDelete={() => {
                           void removeAndSave(
                             (draft) => { draft.profile.pageCopy!.postList = (draft.profile.pageCopy!.postList || []).filter((_, i) => i !== index); },
-                            [...(item.images || []), ...(item.previews || []).map(p => p.url)],
+                            [...(item.images || []), ...(item.previews || []).map(p => p.url), item.coverUrl || ''],
                             () => setExpandedPostId(null),
                           );
                         }}
@@ -6069,18 +6124,30 @@ export default function AdminApp() {
                       </section>
                       <section className="adm-panel mt-3 p-3">
                         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                          <p className="text-xs text-zinc-400">图片 · {images.length} 张 · 保留原图，第一张自动生成轻量封面</p>
+                          <p className="text-xs text-zinc-400">独立封面 · 16:9 · 默认取第一张正文图片</p>
+                          <div className="flex items-center gap-2">
+                            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300">
+                              <ImagePlus size={15}/> 上传 / 更换封面
+                              <input aria-label="上传独立封面" className="sr-only" type="file" accept="image/*" disabled={postImagesBusy} onChange={event=>void uploadPostCover(event,item.id)}/>
+                            </label>
+                            {item.coverUrl && <button type="button" className="text-xs text-zinc-400" disabled={postImagesBusy} onClick={()=>update(draft=>{draft.profile.pageCopy!.postList![index].coverUrl='';})}>恢复默认</button>}
+                          </div>
+                        </div>
+                        {(item.coverUrl||images[0]) && <img src={item.coverUrl || item.previews?.find(p=>p.source.split('?')[0]===images[0]?.split('?')[0])?.url || images[0]} alt="独立列表封面" className="aspect-video w-64 max-w-full rounded-lg object-cover"/>}
+                      </section>
+                      <section className="adm-panel mt-3 p-3">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs text-zinc-400">正文图片 · {images.length} 张 · 保留原图尺寸与比例</p>
                           <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-zinc-600">
-                            <ImagePlus size={15} /> 上传图片（可多选）
-                            <input className="hidden" type="file" accept="image/*" multiple onChange={(event) => void uploadPostImages(event, item.id)} />
+                            <ImagePlus size={15} /> {postImagesBusy ? '正在处理图片…' : '上传图片（可多选）'}
+                            <input className="sr-only" type="file" accept="image/*" multiple disabled={postImagesBusy} onChange={(event) => void uploadPostImages(event, item.id)} />
                           </label>
                         </div>
                         {images.length > 0 ? (
                           <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                             {images.map((url, i) => (
-                              <div key={`${url}-${i}`} className="group relative aspect-video overflow-hidden rounded-lg border border-zinc-800 bg-black">
-                                <img src={item.previews?.find(p => p.source.split('?')[0] === url.split('?')[0])?.url || url} alt={`第 ${i + 1} 张`} className="h-full w-full object-cover" />
-                                {i === 0 && <span className="absolute left-1.5 top-1.5 rounded bg-emerald-500/90 px-1.5 py-0.5 text-[10px] text-black">封面</span>}
+                              <div key={`${url}-${i}`} className="group relative self-start overflow-hidden rounded-lg bg-black">
+                                <img src={url} alt={`第 ${i + 1} 张`} className="h-auto w-full" />
                                 <div className="absolute inset-x-0 bottom-0 flex justify-between gap-1 bg-black/70 p-1">
                                   <button type="button" aria-label="前移" disabled={i === 0} onClick={() => setImages(moveItem(images, i, i - 1))} className="rounded p-1 text-zinc-200 hover:bg-white/10 disabled:opacity-30"><ArrowUp size={13} className="-rotate-90" /></button>
                                   <button type="button" aria-label="删除这张" onClick={() => { setImages(images.filter((_, j) => j !== i)); void deleteMedia([url, ...(item.previews || []).filter(p => p.source.split('?')[0] === url.split('?')[0]).map(p => p.url)], false); }} className="rounded p-1 text-zinc-200 hover:bg-red-500/30 hover:text-red-200"><Trash2 size={13} /></button>
@@ -6153,36 +6220,34 @@ export default function AdminApp() {
                   const item = (data.profile.pageCopy?.slideList || [])[slideModalIndex];
                   const index = slideModalIndex;
                   return (
-                    <EditorModal title={"演示 " + (index + 1)} onClose={() => setExpandedSlideId(null)} footer={<SaveCurrentButton label="保存" scoped={scopedList((d) => d.profile.pageCopy?.slideList, (d, v) => { d.profile.pageCopy!.slideList = v; })} />}>
+                    <EditorModal title={"演示 " + (index + 1)} onClose={() => setExpandedSlideId(null)} footer={<SaveCurrentButton label="确认保存" scoped={scopedList((d) => d.profile.pageCopy?.slideList, (d, v) => { d.profile.pageCopy!.slideList = v; })} />}>
                       <section className="adm-panel space-y-3 p-3">
                         <Field label="标题" value={item.title} onChange={(value) => update((draft) => { draft.profile.pageCopy!.slideList![index].title = value; })} />
                         <Field label="简介（可留空）" value={item.description || ""} textarea onChange={(value) => update((draft) => { draft.profile.pageCopy!.slideList![index].description = value; })} />
                         <Field label="日期（可留空）" value={item.date || ""} placeholder="例如 2026-10" onChange={(value) => update((draft) => { draft.profile.pageCopy!.slideList![index].date = value; })} />
                       </section>
                       <section className="adm-panel mt-3 space-y-3 p-3">
-                        <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-500">演示文件 / PDF（推荐）</p>
+                        <div className="adm-deck-files">
+                        <div className="adm-deck-file">
+                        <div className="adm-deck-file-heading"><FileText size={18}/><strong>PDF 演示文件</strong><span>{item.pdfUrl?'已上传':'推荐'}</span></div>
+                        <p className="adm-deck-file-name">{item.pdfUrl ? (item.pdfFileName || 'PDF 文件已就绪') : '用于在线演示，保留原始排版'}</p>
                         <div className="flex flex-wrap items-center gap-2">
                           <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-emerald-500/40 px-2.5 py-2 text-xs text-emerald-200 hover:border-emerald-400">
                             <FileText size={15} /> {item.pdfUrl ? "替换 PDF" : "上传 PDF"}
-                            <input className="hidden" type="file" accept=".pdf,application/pdf" onChange={(event) => void uploadSlideFile(event, item.id)} />
+                            <input aria-label="上传PDF文件" className="sr-only" type="file" accept=".pdf,application/pdf" disabled={slideUploadBusy} onChange={(event) => void uploadSlideFile(event, item.id)} />
                           </label>
-                          {item.pdfUrl ? (
-                            <span className="text-xs text-emerald-300/80">已上传，前台用 PDF 演示</span>
-                          ) : (
-                            <span className="text-xs text-zinc-500">PowerPoint / WPS：文件 → 另存为 → PDF。</span>
-                          )}
                         </div>
-                        <p className="pt-1 font-mono text-[10px] uppercase tracking-widest text-zinc-500">原文件 / PPTX（可选，供下载）</p>
+                        </div>
+                        <div className="adm-deck-file">
+                        <div className="adm-deck-file-heading"><FileText size={18}/><strong>PPTX 原文件</strong><span>{item.fileUrl?'已上传':'可选'}</span></div>
+                        <p className="adm-deck-file-name" title={item.fileName}>{item.fileName || (item.fileUrl?'PPTX 文件已就绪':'供访客下载，也可在线预览')}</p>
                         <div className="flex flex-wrap items-center gap-2">
                           <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-2 text-xs text-zinc-300 hover:border-zinc-600">
                             <FileText size={15} /> {item.fileUrl ? "替换 .pptx" : "上传 .pptx"}
-                            <input className="hidden" type="file" accept={pptxAccept} onChange={(event) => void uploadSlideFile(event, item.id)} />
+                            <input className="sr-only" type="file" accept={pptxAccept} disabled={slideUploadBusy} onChange={(event) => void uploadSlideFile(event, item.id)} />
                           </label>
-                          {item.fileUrl ? (
-                            <span className="max-w-[260px] truncate text-xs text-zinc-400" title={item.fileName}>{item.fileName || item.fileUrl}</span>
-                          ) : (
-                            <span className="text-xs text-zinc-500">只支持 .pptx；旧版 .ppt 请先另存为 .pptx。</span>
-                          )}
+                        </div>
+                        </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 pt-1">
                           {item.pdfUrl || item.fileUrl ? (
@@ -6191,26 +6256,23 @@ export default function AdminApp() {
                             </button>
                           ) : null}
                           {!item.pdfUrl && item.fileUrl ? (
-                            <span className="text-xs text-amber-300/90">目前只有 PPTX，前台会现场解析（较慢、可能错位），建议补一份 PDF。</span>
+                            <span className="text-xs leading-5 text-zinc-500">已支持 PPTX 预览；上传 PDF 可获得更稳定的排版。</span>
                           ) : null}
                         </div>
                       </section>
                       <section className="adm-panel mt-3 space-y-3 p-3">
-                        <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-500">封面 / COVER（可留空）</p>
+                        <p className="text-sm font-medium text-zinc-300">演示封面</p>
                         <div className="flex flex-wrap items-center gap-2">
                           <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-2 text-xs text-zinc-300 hover:border-zinc-600">
                             <ImagePlus size={15} /> 上传封面
                             <input className="hidden" type="file" accept="image/*" onChange={(event) => upload(event, (url) => {
-                              const previous = item.cover;
-                              if (previous) void deleteMedia([previous], false);
                               update((draft) => { draft.profile.pageCopy!.slideList![index].cover = url; });
                             })} />
                           </label>
-                          {item.cover ? (
-                            <button type="button" onClick={() => { const previous = item.cover; update((draft) => { draft.profile.pageCopy!.slideList![index].cover = ""; }); if (previous) void deleteMedia([previous], false); }} className="rounded-lg border border-zinc-800 px-2.5 py-2 text-xs text-zinc-400 hover:border-red-500 hover:text-red-300">移除封面</button>
-                          ) : <span className="text-xs text-zinc-500">留空时自动用 PDF 第一页作封面。</span>}
+                          {(item.pdfUrl||item.fileUrl) && <button type="button" disabled={slideUploadBusy} onClick={()=>void regenerateSlideCover(item)} className="rounded-lg border border-zinc-800 px-2.5 py-2 text-xs text-zinc-300 disabled:opacity-50">{slideUploadBusy?'正在处理…':'使用文稿首页'}</button>}
+                          {!item.cover && <span className="text-xs text-zinc-500">上传文稿后自动生成首页封面，也可单独上传。</span>}
                         </div>
-                        {item.cover ? <img src={item.cover} alt="封面预览" className="aspect-video w-full rounded-lg bg-black object-cover" /> : null}
+                        {item.cover ? <img src={item.cover} alt="封面预览" className="aspect-video w-80 max-w-full rounded-lg bg-black object-contain" /> : <div className="flex aspect-video w-80 max-w-full items-center justify-center rounded-lg bg-zinc-950 text-xs text-zinc-500">{slideUploadBusy?'正在准备首页封面…':'暂无封面'}</div>}
                       </section>
                     </EditorModal>
                   );
@@ -7162,6 +7224,6 @@ export default function AdminApp() {
         setActive("tracking"); setAnalyticsView("visitors"); setAnalyticsRange("all");
         setVisitorQuery(key); setVisitorQueryDraft(key); setVisitorPageNo(1);
       }} />
-    </main>
+    </main></UploadFeedback.Provider>
   );
 }
