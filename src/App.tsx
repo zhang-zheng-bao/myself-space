@@ -34,7 +34,7 @@ import TimelineArc from "./components/TimelineArc";
 import EntranceCinematic from "./components/EntranceCinematic";
 import ShibaAssistant from "./components/ShibaAssistant";
 import PostFeed from "./components/PostFeed";
-import CaseStudies from "./components/CaseStudies";
+import { defaultCaseWorks, casePageUrl } from "./caseStudies";
 import MobileViewingNotice from "./components/MobileViewingNotice";
 import SlidePlayer from "./components/SlidePlayer";
 import Toolbox from "./components/Toolbox";
@@ -2736,7 +2736,7 @@ export default function App() {
   //
   const visibleNavItems = useMemo(() => {
     const byKey = new Map(navItems.map((item) => [item.key as string, item]));
-    return normalizeSectionOrder(data.profile.pageCopy?.sectionOrder)
+    return normalizeSectionOrder(data.profile.pageCopy?.sectionOrder, data.profile.pageCopy?.caseOrderConfigured)
       .filter((key) => isSectionVisible(data.profile.pageCopy, key))
       .map((key) => byKey.get(key))
       .filter((item): item is NonNullable<typeof item> => Boolean(item));
@@ -2748,7 +2748,7 @@ export default function App() {
   // 落到第一个还开着的栏目上；一个都不剩就什么都不切，交给下面的空态接住。
   useEffect(() => {
     if (isSectionVisible(data.profile.pageCopy, activeTab)) return;
-    const fallback = normalizeSectionOrder(data.profile.pageCopy?.sectionOrder)
+    const fallback = normalizeSectionOrder(data.profile.pageCopy?.sectionOrder, data.profile.pageCopy?.caseOrderConfigured)
       .find((key) => isSectionVisible(data.profile.pageCopy, key));
     if (fallback) setActiveTab(fallback);
   }, [data.profile.pageCopy, activeTab]);
@@ -2822,7 +2822,7 @@ export default function App() {
               <>
             {activeTab === "intro" && sectionShown("intro") && <IntroDashboard data={data} onSelectWork={setSelectedWork} onNavigate={setActiveTab} />}
             {activeTab === "toolbox" && sectionShown("toolbox") && <Toolbox description={pageCopy.toolbox} />}
-            {activeTab === "cases" && sectionShown("cases") && <CaseStudies description={pageCopy.cases} />}
+            {activeTab === "cases" && sectionShown("cases") && <WorksPane items={data.profile.pageCopy?.caseWorks ?? defaultCaseWorks} description={pageCopy.cases} onSelect={(work) => { const url = casePageUrl(work.pageUrl); if (url) window.location.assign(url); }} eyebrow="案例分析 / CASE STUDIES" emptyTitle="暂无案例" emptyDescription="案例将在发布后展示。" />}
             {activeTab === "works" && sectionShown("works") && <WorksPane items={[...data.works, ...((data.profile.pageCopy?.poemList || []).map(poemToWork))]} description={pageCopy.works} onSelect={setSelectedWork} categoryOrder={workCategories} />}
             {activeTab === "ai" && sectionShown("ai") && <WorksPane items={data.profile.pageCopy?.aiWorks || []} description={pageCopy.aiZone} onSelect={setSelectedAiWork} eyebrow="与 AI 共作 / AI ZONE EXHIBITS" emptyTitle="暂无 AI 作品" emptyDescription="请进入后台 /admin，在「AI 专区」中新增作品并保存。" />}
             {activeTab === "prospects" && sectionShown("prospects") && <GalleryPane items={data.gallery || []} onSelect={setSelectedGallery} description={pageCopy.gallery} />}

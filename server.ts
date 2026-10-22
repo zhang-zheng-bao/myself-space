@@ -974,13 +974,15 @@ function normalizePageCopy(pageCopy: JsonRecord | undefined, transform: (url?: s
   }
 
   // AI 专区作品，字段结构与作品一致，媒体地址的转换方式也照抄作品那条路径。
-  if (Array.isArray(copy.aiWorks)) {
-    copy.aiWorks = copy.aiWorks.map((item) => {
+  for (const collection of ["aiWorks", "caseWorks"] as const) {
+  if (Array.isArray(copy[collection])) {
+    copy[collection] = copy[collection].map((item) => {
       if (!item || typeof item !== "object") return item;
       const work = item as JsonRecord;
       return {
         ...work,
-        id: work.id || contentIdentity("ai", work).replace(/^work:/, ""),
+        id: work.id || contentIdentity(collection === "caseWorks" ? "cases" : "ai", work).replace(/^work:/, ""),
+        ...(collection === "caseWorks" ? { pageUrl: transform(String(work.pageUrl || "")) } : {}),
         images: Array.isArray(work.images) ? work.images.map((url) => transform(String(url || ""))) : [],
         videoUrl: transform(String(work.videoUrl || "")),
         links: Array.isArray(work.links)
@@ -994,6 +996,7 @@ function normalizePageCopy(pageCopy: JsonRecord | undefined, transform: (url?: s
     });
   }
 
+  }
   return copy;
 }
 

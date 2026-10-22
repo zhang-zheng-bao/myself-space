@@ -54,6 +54,7 @@ import {
   ZoomIn,
 } from "lucide-react";
 import SlidePlayer from "./components/SlidePlayer";
+import { defaultCaseWorks } from "./caseStudies";
 import { Experience, GalleryItem, HomeStatCopy, ImagePost, MusicTrack, Poem, PortfolioData, SlideDeck, ResumeProfile, SectionKey, TreasureItem, AnalyticsCount, AnalyticsRange, AnalyticsSummaryPayload, AnalyticsVisitorsPayload, AssistantConversationMessage, AssistantConversationSummary, AssistantKeywordPayload, TrafficType, VisitRecord, VisitorRecord, Work, WorkLink, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder, sectionMeta } from "./types";
 
 const emptyWork: Work = {
@@ -520,6 +521,7 @@ function setSectionCopy(draft: PortfolioData, key: SectionKey, value: string) {
     case "resume": editPageCopy(draft, { resume: value }); return;
     case "works": editPageCopy(draft, { works: value }); return;
     case "ai": editPageCopy(draft, { aiZone: value }); return;
+    case "cases": editPageCopy(draft, { cases: value }); return;
     case "prospects": editPageCopy(draft, { gallery: value }); return;
     case "treasures": editPageCopy(draft, { treasures: value }); return;
     case "poems": editPageCopy(draft, { poems: value }); return;
@@ -536,6 +538,7 @@ function sectionCopyValue(pageCopy: PortfolioData["profile"]["pageCopy"], key: S
     case "resume": return pageCopy?.resume;
     case "works": return pageCopy?.works;
     case "ai": return pageCopy?.aiZone;
+    case "cases": return pageCopy?.cases;
     case "prospects": return pageCopy?.gallery;
     case "treasures": return pageCopy?.treasures;
     case "poems": return pageCopy?.poems;
@@ -642,7 +645,7 @@ function normalize(data: PortfolioData): PortfolioData {
     profile: {
       ...(data.profile || { name: "", avatar: "", tagline: "", intro: "", quote: "", resumePdfUrl: "" }),
       musicAutoplay: Boolean(data.profile?.musicAutoplay),
-      pageCopy: { ...defaultPageCopy, ...(data.profile?.pageCopy || {}) },
+      pageCopy: { ...defaultPageCopy, ...(data.profile?.pageCopy || {}), caseWorks: data.profile?.pageCopy?.caseWorks ?? structuredClone(defaultCaseWorks) },
     },
     prospects: data.prospects || { title: "", content: "", points: [] },
     contact: data.contact || { wechat: "", qq: "", email: "", phone: "", github: "" },
@@ -1907,6 +1910,7 @@ function WorkListEditor({
   migrate,
   renderSaveButton,
   itemNoun,
+  webpage = false,
   reorder,
   onStatus,
 }: {
@@ -1947,6 +1951,7 @@ function WorkListEditor({
   renderSaveButton: () => React.ReactNode;
   /** 弹窗标题与按钮文案里的名词，作品媒体是「作品」，AI 专区是「AI 作品」。 */
   itemNoun?: string;
+  webpage?: boolean;
   /**
    * 拖动排序：给一个「把 from 挪到 to」的执行器。
    * 不传就整个拖动能力关闭（行的左侧不会出现手柄）——
@@ -2428,6 +2433,7 @@ function WorkListEditor({
                   />
                 </div>
                 <Field label="简介" value={work.description} onChange={(value) => update((draft) => { readItems(draft)[index].description = value; })} textarea />
+                {webpage && <Field label="案例网页地址" value={work.pageUrl || ""} onChange={(value) => update((draft) => { readItems(draft)[index].pageUrl = value; })} placeholder="/cases/案例名称/index.html 或 https://…" />}
               </section>
 
               <section className="adm-panel space-y-4 p-3">
@@ -3211,6 +3217,7 @@ export default function AdminApp() {
   const [expandedExperienceId, setExpandedExperienceId] = useState<string | null>(null);
   const [expandedWorkId, setExpandedWorkId] = useState<string | null>(null);
   const [expandedAiWorkId, setExpandedAiWorkId] = useState<string | null>(null);
+  const [expandedCaseId, setExpandedCaseId] = useState<string | null>(null);
   const [expandedResumeId, setExpandedResumeId] = useState<string | null>(null);
   const [expandedGalleryId, setExpandedGalleryId] = useState<string | null>(null);
   const [expandedTreasureId, setExpandedTreasureId] = useState<string | null>(null);
@@ -3513,6 +3520,7 @@ export default function AdminApp() {
       { key: "experiences", label: "我的经历", icon: Briefcase },
       { key: "works", label: "作品媒体", icon: LayoutGrid },
       { key: "ai", label: "AI专区", icon: Sparkles },
+      { key: "cases", label: "案例分析", icon: FileText },
       { key: "gallery", label: "应用技能", icon: Images },
       { key: "treasures", label: "我的珍藏", icon: Gem },
       { key: "poems", label: "诗与惆怅", icon: Feather },
@@ -3536,7 +3544,7 @@ export default function AdminApp() {
   // 实际的栏目顺序。normalizeSectionOrder 会把残缺 / 过期 / 重复的 sectionOrder
   // 补成一份完整名单，所以这里永远是 7 项、且不含未知键。
   const moduleOrder = useMemo(
-    () => normalizeSectionOrder(data.profile.pageCopy?.sectionOrder),
+    () => normalizeSectionOrder(data.profile.pageCopy?.sectionOrder, data.profile.pageCopy?.caseOrderConfigured),
     [data.profile.pageCopy],
   );
 
@@ -3550,6 +3558,7 @@ export default function AdminApp() {
       case "resume": return resumeProfiles.length;
       case "works": return (data.works || []).length;
       case "ai": return (data.profile.pageCopy?.aiWorks || []).length;
+      case "cases": return (data.profile.pageCopy?.caseWorks ?? defaultCaseWorks).length;
       case "prospects": return (data.gallery || []).length;
       case "treasures": return (data.treasures || []).length;
       case "poems": return (data.profile.pageCopy?.poemList || []).length;
@@ -3561,7 +3570,7 @@ export default function AdminApp() {
 
   /** 上移 / 下移一格。写回的是**一整份**顺序数组，前台只认这一份。 */
   function moveModule(key: SectionKey, delta: number) {
-    const order = normalizeSectionOrder(data.profile.pageCopy?.sectionOrder);
+    const order = normalizeSectionOrder(data.profile.pageCopy?.sectionOrder, data.profile.pageCopy?.caseOrderConfigured);
     const from = order.indexOf(key);
     const to = from + delta;
     if (from < 0 || to < 0 || to >= order.length) return;
@@ -3573,7 +3582,7 @@ export default function AdminApp() {
     // 用户没有任何理由再去找一个「保存」来确认这一步。
     // 底栏还在的时候它靠草稿机制兜着，底栏一撤（宝：不需要底栏了），
     // 这里再走 update() 就会变成「点了箭头、数字变了、刷新之后顺序回去」的静默丢数据。
-    void mutateAndSave((draft) => { editPageCopy(draft, { sectionOrder: next }); }, undefined, { collapse: false });
+    void mutateAndSave((draft) => { editPageCopy(draft, { sectionOrder: next, caseOrderConfigured: true }); }, undefined, { collapse: false });
   }
 
   /**
@@ -5087,6 +5096,36 @@ export default function AdminApp() {
                   renderSaveButton={() => <SaveCurrentButton label="保存" scoped={scopedList((d) => d.profile.pageCopy?.aiWorks, (d, v) => { d.profile.pageCopy!.aiWorks = v; })} />}
                 />
               </>
+            )}
+
+            {active === "cases" && (
+              <WorkListEditor
+                items={data.profile.pageCopy?.caseWorks ?? defaultCaseWorks}
+                title="案例分析"
+                hint="与作品一样管理标题、分类与封面；封面可稍后上传。填写案例网页地址后，访客点击卡片直接打开网页。"
+                addLabel="新增案例"
+                itemNoun="案例"
+                webpage
+                emptyDraft={{ ...emptyWork, category: "视频案例", pageUrl: "" }}
+                categoryOptions={[{ value: "视频案例", label: "视频案例" }, { value: "设计案例", label: "设计案例" }, { value: "其他案例", label: "其他案例" }]}
+                readItems={(draft) => draft.profile.pageCopy?.caseWorks ?? defaultCaseWorks}
+                writeItems={(draft, items) => { editPageCopy(draft, { caseWorks: items }); }}
+                expandedId={expandedCaseId}
+                setExpandedId={setExpandedCaseId}
+                update={update}
+                updateAndSave={updateAndSave}
+                upload={upload}
+                uploadFile={uploadMediaFile}
+                deleteMedia={deleteMedia}
+                addDraft={addDraft}
+                removeAndSave={removeAndSave}
+                reorder={(from, to) => reorderWorks(
+                  (draft) => draft.profile.pageCopy?.caseWorks ?? defaultCaseWorks,
+                  (draft, items) => { editPageCopy(draft, { caseWorks: items }); }, from, to,
+                )}
+                onStatus={setStatus}
+                renderSaveButton={() => <SaveCurrentButton label="保存" scoped={scopedList((d) => d.profile.pageCopy?.caseWorks ?? defaultCaseWorks, (d, v) => { editPageCopy(d, { caseWorks: v }); })} />}
+              />
             )}
 
             {active === "gallery" && (
