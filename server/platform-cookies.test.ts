@@ -2,6 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeCookieInput } from './platform-cookies.cjs';
 
+test('recovers Netscape records whose newlines were removed by a legacy input', () => {
+  const rows=['.douyin.com\tTRUE\t/\tTRUE\t0\tsessionid\tlogin-value', '.example.com\tTRUE\t/\tTRUE\t0\tsessionid\tforeign', '#HttpOnly_.douyin.com\tTRUE\t/\tTRUE\t0\tttwid\tdevice-value'];
+  assert.equal(normalizeCookieInput('# Netscape HTTP Cookie File '+rows.join(' '),'douyin').header,'sessionid=login-value; ttwid=device-value');
+});
+
 test('plugin JSON and Netscape exports preserve values and isolate platform domains', () => {
   const cookie = { name: 'sessionid', value: 'test-session==', domain: '.douyin.com', httpOnly: true };
   for (const input of [

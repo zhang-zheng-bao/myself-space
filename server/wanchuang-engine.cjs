@@ -1,5 +1,5 @@
 // Generated from WanChuangCore 0.1.33 (MIT). Regenerate with scripts/sync-wanchuang-engine.mjs.
-module.exports = function createEngine({root, readConfig, binaries, chromium, fetch, spawn, acquire, validateRemote}) {
+module.exports = function createEngine({root, readConfig, binaries, chromium, fetch, spawn, acquire, validateRemote, onEvent}) {
 const {spawnSync} = require('node:child_process');
 const WebSocket = require('ws');
 const app = {getPath:()=>root,isPackaged:false};
@@ -80,7 +80,7 @@ function platformConfig(platform) {
   return COOKIE_PLATFORM_CONFIG[platform] || COOKIE_PLATFORM_CONFIG.douyin;
 }
 
-let mainWindow;
+let mainWindow = {webContents:{send:(name,data)=>onEvent?.(name,data)}};
 
 let settings;
 

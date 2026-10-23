@@ -53,6 +53,7 @@ test('desktop engine reads current server Cookie and KEY, persists history witho
 test('HTTP sessions isolate history/downloads; invalid actions never execute',async()=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'wanchuang-http-'));
   process.env.WANCHUANG_DATA_DIR=path.join(directory,'jobs');process.env.TOOL_SETTINGS_FILE=path.join(directory,'settings.enc');
+  process.env.WANCHUANG_AUDIT_DIR=path.join(directory,'audit');
   const {registerWanchuang}=await import('./wanchuang');
   const app=express();app.use(express.json());
   const requireAdmin:express.RequestHandler=(req,res,next)=>{if(req.headers.authorization==='test-admin')next();else res.status(401).end();};
@@ -83,7 +84,11 @@ test('HTTP sessions isolate history/downloads; invalid actions never execute',as
     assert.equal((await fetch(base+'/files/download/test-record/0',{headers:{Cookie:other}})).status,404);
     const state=await (await fetch(base+'/state',{headers:{Cookie:cookie}})).text();assert.equal(state.includes(ownerRoot),false);
     const adminBase=`http://127.0.0.1:${address.port}/api/admin/tools/wanchuang`,adminHeaders={Authorization:'test-admin','Content-Type':'application/json'};
-    for(const route of ['/history','/voices'])assert.equal((await fetch(adminBase+route)).status,401);
+    for(const route of ['/history','/voices','/operations'])assert.equal((await fetch(adminBase+route)).status,401);
+    const operations=await(await fetch(adminBase+'/operations',{headers:adminHeaders})).json();
+    assert.ok(operations.rows.some((row:any)=>row.operation==='parseMedia'&&row.status==='失败'));
+    assert.ok(operations.rows.some((row:any)=>row.operation==='cloneVoice'&&row.status==='失败'));
+    assert.equal(JSON.stringify(operations).includes(cookie.split('=')[1]),false);
     const history=await(await fetch(adminBase+'/history',{headers:adminHeaders})).json();
     assert.equal(history.total,2);const record=history.rows.find((row:any)=>row.id==='own-record');
     assert.ok(record);assert.equal(JSON.stringify(history).includes(thirdId),false);assert.equal(record.files.length,1);

@@ -6,10 +6,14 @@ import { spawn as nativeSpawn } from 'node:child_process';
 import { chromium as browserDriver } from 'playwright-core';
 import createEngine from './wanchuang-engine.cjs';
 import { readToolSettings } from './tool-settings';
+import {recordOperation} from './wanchuang-audit';
+import crypto from 'node:crypto';
 
 const blocked = new net.BlockList();
 for (const [ip, prefix] of [['0.0.0.0',8],['10.0.0.0',8],['100.64.0.0',10],['127.0.0.0',8],['169.254.0.0',16],['172.16.0.0',12],['192.168.0.0',16],['192.0.0.0',24],['198.18.0.0',15],['224.0.0.0',4],['240.0.0.0',4]] as const) blocked.addSubnet(ip,prefix);
-for (const [ip,prefix] of [['::',128],['::1',128],['fc00::',7],['fe80::',10],['ff00::',8],['::ffff:0:0',96],['2001:db8::',32]] as const) blocked.addSubnet(ip,prefix,'ipv6');
+// BlockList also matches IPv4 addresses against mapped IPv6 subnets. Blocking
+// ::ffff:0:0/96 therefore blocks every public IPv4 address as well.
+for (const [ip,prefix] of [['::',128],['::1',128],['fc00::',7],['fe80::',10],['ff00::',8],['2001:db8::',32]] as const) blocked.addSubnet(ip,prefix,'ipv6');
 export async function validateRemote(raw: string) {
   const u = new URL(raw);
   if (!['https:','http:'].includes(u.protocol) || u.username || u.password || (u.port && !['80','443'].includes(u.port))) throw new Error('不支持的网络地址');
@@ -80,6 +84,7 @@ export async function acquire() {
 export async function limited<T>(fn:()=>Promise<T>) { const release=await acquire(); try{return await fn();}finally{release();} }
 
 export function makeRuntime(root: string) {
+  const completed=new Set<string>();
   const binaries=runtimeBinaries();
   const spawn = (command: string,args: string[],options: any) => {
     if(!command) throw new Error('服务器缺少运行依赖，请在后台查看服务状态');
@@ -100,7 +105,17 @@ export function makeRuntime(root: string) {
     };
     return browser;
   }};
-  return createEngine({root,readConfig:readToolSettings,binaries,chromium,fetch:publicFetch,spawn,acquire,validateRemote});
+  return createEngine({root,readConfig:readToolSettings,binaries,chromium,fetch:publicFetch,spawn,acquire,validateRemote,onEvent:(name:string,rows:any[])=>{
+    if(!['jobs:changed','voice-history:changed'].includes(name))return;
+    for(const row of rows){
+      if(!['已完成','失败','已取消'].includes(row.status))continue;
+      const key=`${row.id}:${row.status}:${row.finishedAt || ''}`;
+      if(completed.has(key))continue;
+      completed.add(key);
+      const error=String(row.error||'').replace(/https?:\/\/\S+/g,'[平台地址]').replaceAll(root,'[任务目录]').slice(0,400);
+      try{recordOperation({actor:crypto.createHash('sha256').update(path.basename(root)).digest('hex').slice(0,16),operation:name==='jobs:changed'?`${row.type||'download'}:result`:'generateVoice:result',status:row.status,durationMs:Math.max(0,(row.finishedAt||Date.now())-(row.createdAt||Date.now())),error,reference:String(row.url||row.voiceId||row.id).split('?')[0].slice(0,200)});}catch{console.error('WanChuang task audit write failed');}
+    }
+  }});
 }
 
 export function safeFile(root: string, candidate: string) {

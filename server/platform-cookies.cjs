@@ -81,12 +81,21 @@ function normalizeCookieInput(raw, forcedPlatform = '') {
     }
   } catch {}
 
+  // Older single-line settings inputs removed newlines from Netscape exports.
+  // Recover complete records using their domain/flags/path/expiry columns.
+  const netscape = /(?:^|\s)(?:#HttpOnly_)?([.a-zA-Z0-9-]+)\t(TRUE|FALSE)\t([^\t\s]+)\t(TRUE|FALSE)\t(-?\d+)\t([^\t\s]+)\t([^\s]+)/g;
+  const netscapeRecords = [...input.matchAll(netscape)];
+  for (const match of netscapeRecords) {
+    candidates.push({ domain: match[1], name: match[6], value: match[7] });
+  }
+  const hasNetscapeRecords = netscapeRecords.length > 0;
+
   for (const line of input.split(/\r?\n/)) {
     const table = splitTableLine(line);
     if (table) candidates.push(table);
     const normalizedLine = line.replace(/^#HttpOnly_/, '');
     const columns = normalizedLine.split('\t').map((cell) => cell.trim());
-    if (columns.length >= 2 && !normalizedLine.startsWith('#')) {
+    if (columns.length >= 2 && !normalizedLine.startsWith('#') && !hasNetscapeRecords) {
       if (ALL_REQUIRED_COOKIES.has(columns[0])) {
         // Chromium DevTools copies cookies as Name, Value, Domain, Path, ...
         candidates.push({ name: columns[0], value: columns[1], domain: columns[2] || '' });

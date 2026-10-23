@@ -1,6 +1,16 @@
 .web-status { position: fixed; top: 0; left: 0; right: 0; z-index: 1000; min-height: 36px; display: flex; align-items: center; gap: 20px; padding: 8px 18px; background: #172422; color: #d2e7df; font: 12px/1.6 system-ui, sans-serif; }
 .web-status a { color: #8de7cb; flex-shrink: 0; text-decoration: none; }
 body { padding-top: 42px; }
+/* Preserve view visibility even when a layout rule declares display:grid. */
+[hidden] { display:none !important; }
+.voice-clone-layout { grid-template-columns:minmax(0,1fr) minmax(240px,300px); }
+.voice-clone-studio { min-height:0; padding:24px; }
+.clone-info-panel { min-height:0; padding:24px; }
+.clone-footer { display:flex; flex-wrap:wrap; gap:16px; align-items:center; }
+#voiceCloneStatus { flex:1 1 220px; white-space:normal; overflow-wrap:anywhere; }
+#voiceCloneStatus.bad { color:#b02d37; }
+.web-notice { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); z-index:2000; width:min(560px,calc(100vw - 32px)); padding:16px 20px; border:1px solid #e6b9bd; border-radius:12px; background:#fff5f5; color:#9b2530; box-shadow:0 8px 32px #0002; font:14px/1.6 system-ui; }
+@media(max-width:1020px) { .voice-clone-layout {grid-template-columns:minmax(0,1fr);} .clone-info-panel{min-height:0;} }
 .app-shell { min-height: calc(100vh - 42px); }
 #settingsView { display: none !important; }
 [data-view="settings"].feature-tab, #openFolderButton { display: none !important; }

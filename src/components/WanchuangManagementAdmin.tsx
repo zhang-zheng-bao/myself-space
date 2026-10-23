@@ -122,6 +122,34 @@ function HistoryManagement() {
     </div>}
   </details>;
 }
+function OperationManagement() {
+  const [open,setOpen]=useState(false);
+  const [page,setPage]=useState(1);
+  const [query,setQuery]=useState('');
+  const [refresh,setRefresh]=useState(0);
+  const [message,setMessage]=useState('');
+  const [data,setData]=useState<{total:number;rows:{id:string;createdAt:number;actor:string;operation:string;status:string;durationMs:number;error:string;reference:string}[]}>();
+  useEffect(()=>{
+    if(!open)return;
+    const controller=new AbortController();setMessage('正在读取…');
+    request('/operations?'+new URLSearchParams({page:String(page),q:query}),{signal:controller.signal}).then(result=>{setData(result);setMessage('');}).catch(error=>{if(!controller.signal.aborted)setMessage(error.message);});
+    return ()=>controller.abort();
+  },[open,page,query,refresh]);
+  const names:Record<string,string>={parseMedia:'解析链接',addJobs:'提交任务',cloneVoice:'克隆音色',generateVoice:'生成语音','/audio':'上传参考音频','download:result':'下载结果','speech:result':'转写结果','generateVoice:result':'语音生成结果',cancelJob:'取消任务',retryJob:'重试任务'};
+  return <details className={group} onToggle={e=>setOpen(e.currentTarget.open)}>
+    <summary className={summary}><GroupTitle title="操作记录" description="记录解析、上传、克隆、下载及后台操作；独立保存，不随临时文件到期清除" />{data&&<span className="text-xs text-zinc-400">{data.total} 条</span>}</summary>
+    {open&&<div className="space-y-4 border-t border-zinc-800 p-4">
+      <div className="flex gap-3"><input className={`${input} min-w-0 flex-1`} aria-label="搜索操作记录" placeholder="搜索操作、结果或错误" value={query} onChange={e=>{setQuery(e.target.value);setPage(1);}}/><button className={button} type="button" onClick={()=>setRefresh(n=>n+1)}><RefreshCw size={14}/>刷新</button></div>
+      <div className="max-h-[560px] space-y-2 overflow-auto">{data?.rows.map(row=><div key={row.id} className="rounded-lg border border-zinc-800 p-3 text-xs">
+        <div className="flex flex-wrap justify-between gap-2"><strong>{names[row.operation]||row.operation} · <span className={['失败','已取消'].includes(row.status)?'text-rose-300':'text-emerald-300'}>{row.status}</span></strong><span className="text-zinc-400">{new Date(row.createdAt).toLocaleString()} · {(row.durationMs/1000).toFixed(1)} 秒</span></div>
+        {row.reference&&<p className="mt-2 break-all text-zinc-400">{row.reference}</p>}{row.error&&<p className="mt-2 whitespace-pre-wrap break-all text-rose-300">{row.error}</p>}<p className="mt-2 text-zinc-500">会话 {row.actor}</p>
+      </div>)}</div>
+      {data&&!data.total&&<p className="text-sm text-zinc-400">暂无记录。更新前未记录的操作无法补回。</p>}
+      {data&&data.total>30&&<div className="flex justify-end gap-3"><button className={button} disabled={page<=1} onClick={()=>setPage(n=>n-1)}>上一页</button><span>{page} / {Math.ceil(data.total/30)}</span><button className={button} disabled={page*30>=data.total} onClick={()=>setPage(n=>n+1)}>下一页</button></div>}
+      <p role="status" className="text-sm text-rose-300">{message}</p>
+    </div>}
+  </details>;
+}
 export default function WanchuangManagementAdmin() {
-  return <div className="mt-5 space-y-3"><VoiceManagement /><HistoryManagement /></div>;
+  return <div className="mt-5 space-y-3"><VoiceManagement /><OperationManagement /><HistoryManagement /></div>;
 }

@@ -53,7 +53,7 @@ for (const node of ast.statements) {
     if (channels.has(channel)) parts.push(code);
   }
 }
-let body = parts.join('\n\n');
+let body = parts.join('\n\n').replace('let mainWindow;', 'let mainWindow = {webContents:{send:(name,data)=>onEvent?.(name,data)}};');
 body = body.replace("path.join(os.tmpdir(), `clipharbor-${id}.cookies.txt`)", "path.join(root, `clipharbor-${id}.cookies.txt`)")
   .replace("fs.writeFileSync(cookieFile, lines.join(os.EOL));", "fs.writeFileSync(cookieFile, lines.join(os.EOL), {mode:0o600});")
   .replace("const settled = await Promise.allSettled(urls.map(probeMedia));", "const settled = []; for (const url of urls) { try { settled.push({status:'fulfilled',value:await probeMedia(url)}); } catch(reason) { settled.push({status:'rejected',reason}); } }")
@@ -102,5 +102,5 @@ return {
 };
 };
 `;
-fs.writeFileSync('server/wanchuang-engine.cjs', header + body + footer);
+fs.writeFileSync('server/wanchuang-engine.cjs', header.replace('acquire, validateRemote})','acquire, validateRemote, onEvent})') + body + footer);
 console.log('Synced portable server engine (no Electron dependency).');

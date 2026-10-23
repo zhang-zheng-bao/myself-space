@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Express, RequestHandler } from 'express';
 import { normalizeCookieInput } from './platform-cookies.cjs';
+import {recordOperation} from './wanchuang-audit';
 
 const fields = ['iflytekApiKey', 'iflytekApiSecret', 'minimaxApiKey', 'douyinCookie', 'bilibiliCookie', 'xiaohongshuCookie'];
 export type VoiceModel = { id: string; name: string; type: string; createdAt?: string };
@@ -33,6 +34,13 @@ export function writeToolSettings(settings: Settings) {
   } finally { fs.rmSync(temporary, { force: true }); }
 }
 export function registerToolSettings(app: Express, requireAdmin: RequestHandler) {
+  app.use('/api/admin/tools/wanchuang/settings',(req,res,next)=>{
+    if(req.method==='PUT'){
+      const start=Date.now();
+      res.on('finish',()=>{try{recordOperation({actor:'admin',operation:'保存应用配置',status:res.statusCode<400?'成功':'失败',durationMs:Date.now()-start,error:res.statusCode<400?'':`HTTP ${res.statusCode}`,reference:''});}catch{console.error('Settings audit write failed');}});
+    }
+    next();
+  });
   function read(): Settings {
     return readToolSettings();
   }

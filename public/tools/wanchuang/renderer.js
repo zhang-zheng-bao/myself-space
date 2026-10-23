@@ -1312,9 +1312,9 @@ $('#clearVoiceReference').addEventListener('click', () => {
 });
 $('#cloneVoiceButton').addEventListener('click', async () => {
   if (!state.settings.minimax?.configured) {
-    setActiveView('settings');
-    selectSettingsSection('minimax');
-    $('#settingsMessage').textContent = '请先连接 MiniMax 账号';
+    $('#voiceCloneStatus').className = 'parse-status bad';
+    $('#voiceCloneStatus').textContent = 'MiniMax 尚未配置，请联系管理员在后台配置 API Key';
+    window.dispatchEvent(new CustomEvent('wanchuang-error',{detail:$('#voiceCloneStatus').textContent}));
     return;
   }
   if (!voiceReferencePath) return void ($('#voiceCloneStatus').textContent = '请先选择参考音频');

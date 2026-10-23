@@ -4,6 +4,7 @@ import path from 'node:path';
 import multer from 'multer';
 import type { Express, Request, RequestHandler } from 'express';
 import { limited, makeRuntime, runtimeBinaries, safeFile, validateMediaUrl } from './wanchuang-runtime';
+import {recordOperation,operationHistory} from './wanchuang-audit';
 import { readToolSettings, writeToolSettings } from './tool-settings';
 
 const root=path.resolve(process.env.WANCHUANG_DATA_DIR || '.private/wanchuang-jobs');
@@ -80,6 +81,27 @@ function historyRecord(owner:any,kind:string,id:string) {
 export function registerWanchuang(app:Express,requireAdmin:RequestHandler) {
   fs.mkdirSync(root,{recursive:true,mode:0o700});
   const adminBase='/api/admin/tools/wanchuang';
+  app.get(adminBase+'/operations',requireAdmin,(req,res)=>{
+    try{res.json(operationHistory(Math.max(1,Number(req.query.page)||1),String(req.query.q||'').slice(0,200)));}catch{res.status(500).json({error:'读取操作记录失败'});}
+  });
+  app.use(['/api/tools/wanchuang',adminBase],(req,res,next)=>{
+    if(['GET','HEAD','OPTIONS'].includes(req.method) && !(req.method==='GET'&&req.path.includes('/files/'))){next();return;}
+    const started=Date.now();
+    const method=String(req.body?.method||req.path).slice(0,80);
+    let failure='';
+    const original=res.json.bind(res);
+    res.json=((body:any)=>{
+      const failures=Array.isArray(body)?body.filter(x=>x?.ok===false).map(x=>x.error):[];
+      if(body?.error || failures.length)failure=scrub(new Error(String(body?.error || failures.join('；'))));
+      return original(body);
+    }) as typeof res.json;
+    res.on('finish',()=>{
+      const raw=String(req.body?.payload?.voiceId || (method==='parseMedia'?req.body?.payload:'') || req.body?.payload?.urls || '');
+      const reference=(raw.match(/https?:\/\/[^\s，。]+/)?.[0]?.split('?')[0] || (method==='cloneVoice'?raw:'')).slice(0,200);
+      try{recordOperation({actor:crypto.createHash('sha256').update(sessionId(req)||'admin').digest('hex').slice(0,16),operation:method,status:res.statusCode>=400||failure?'失败':'成功',durationMs:Date.now()-started,error:failure||(res.statusCode>=400?`HTTP ${res.statusCode}`:''),reference});}catch(error){console.error('WanChuang audit write failed',error instanceof Error?error.message:'write error');}
+    });
+    next();
+  });
   app.use(adminBase,(req,res,next)=>{
     res.setHeader('Cache-Control','no-store');
     if(!['GET','HEAD'].includes(req.method) && req.headers['sec-fetch-site']==='cross-site'){res.status(403).json({error:'不允许跨站操作'});return;}
