@@ -1317,9 +1317,15 @@ $('#cloneVoiceButton').addEventListener('click', async () => {
     window.dispatchEvent(new CustomEvent('wanchuang-error',{detail:$('#voiceCloneStatus').textContent}));
     return;
   }
-  if (!voiceReferencePath) return void ($('#voiceCloneStatus').textContent = '请先选择参考音频');
+  if (!voiceReferencePath) {
+    window.dispatchEvent(new CustomEvent('wanchuang-error',{detail:'请先选择参考音频'}));
+    return;
+  }
   const voiceId = $('#cloneVoiceId').value.trim();
-  if (!/^[A-Za-z0-9_-]{8,20}$/.test(voiceId)) return void ($('#voiceCloneStatus').textContent = '音色 ID 需为 8–20 位英文、数字、下划线或短横线');
+  if (!/^[A-Za-z0-9_-]{8,20}$/.test(voiceId)) {
+    window.dispatchEvent(new CustomEvent('wanchuang-error',{detail:'音色 ID 需为 8–20 位英文、数字、下划线或短横线'}));
+    $('#cloneVoiceId').focus();return;
+  }
   const button = $('#cloneVoiceButton');
   button.disabled = true;
   $('#voiceCloneStatus').className = 'parse-status';

@@ -96,6 +96,7 @@ export function registerWanchuang(app:Express,requireAdmin:RequestHandler) {
       return original(body);
     }) as typeof res.json;
     res.on('finish',()=>{
+      failure ||= res.locals.auditError || '';
       const raw=String(req.body?.payload?.voiceId || (method==='parseMedia'?req.body?.payload:'') || req.body?.payload?.urls || '');
       const reference=(raw.match(/https?:\/\/[^\s，。]+/)?.[0]?.split('?')[0] || (method==='cloneVoice'?raw:'')).slice(0,200);
       try{recordOperation({actor:crypto.createHash('sha256').update(sessionId(req)||'admin').digest('hex').slice(0,16),operation:method,status:res.statusCode>=400||failure?'失败':'成功',durationMs:Date.now()-started,error:failure||(res.statusCode>=400?`HTTP ${res.statusCode}`:''),reference});}catch(error){console.error('WanChuang audit write failed',error instanceof Error?error.message:'write error');}
@@ -207,6 +208,12 @@ export function registerWanchuang(app:Express,requireAdmin:RequestHandler) {
     }catch(error){res.status(503).json({error:scrub(error)});}
   });
   app.get('/api/tools/wanchuang/state',(_req,res)=>{try{res.json(present(res.locals.wanchuang,res.locals.wanchuang.engine.snapshot()));}catch(error){res.status(503).json({error:scrub(error)});}});
+  app.post('/api/tools/wanchuang/client-errors',(req,res)=>{
+    const messages:Record<string,string>={'minimax-unconfigured':'MiniMax 尚未配置，创建音色未提交','audio-too-large':'参考音频超过 20MB，上传未提交','operation-failed':'前端显示操作失败，请结合相邻接口记录查看原因'};
+    if(!messages[req.body?.code]){res.status(400).json({error:'不支持的错误类型'});return;}
+    res.locals.auditError=messages[req.body.code];
+    res.status(204).end();
+  });
   const upload=multer({storage:multer.diskStorage({destination:(_req,res,done)=>done(null,root),filename:(_req,file,done)=>done(null,'upload-'+crypto.randomUUID()+path.extname(file.originalname).toLowerCase())}),limits:{fileSize:20*1024*1024,files:1},fileFilter:(_req,file,done)=>done(null,/\.(mp3|wav|m4a|aac|ogg)$/i.test(file.originalname))}).single('audio');
   app.post('/api/tools/wanchuang/audio',(req,res)=>{
     const s:Session=res.locals.wanchuang;

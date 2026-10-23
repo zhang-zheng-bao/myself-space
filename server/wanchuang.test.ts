@@ -67,6 +67,7 @@ test('HTTP sessions isolate history/downloads; invalid actions never execute',as
     const second=await fetch(base+'/state');const other=second.headers.get('set-cookie')!.split(';')[0];assert.notEqual(cookie,other);
     const action=(method:string,payload:any)=>fetch(base+'/action',{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({method,payload})});
     assert.equal((await action('parseMedia','http://127.0.0.1')).status,400);
+    assert.equal((await fetch(base+'/client-errors',{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({code:'minimax-unconfigured'})})).status,204);
     assert.equal((await action('cloneVoice',{refPath:'../../etc/passwd'})).status,400);
     assert.equal((await action('saveSettings',{})).status,400);
     assert.equal((await action('setMinimaxVoiceHidden',{id:'testvoice123',hidden:true})).status,400);
@@ -88,6 +89,7 @@ test('HTTP sessions isolate history/downloads; invalid actions never execute',as
     const operations=await(await fetch(adminBase+'/operations',{headers:adminHeaders})).json();
     assert.ok(operations.rows.some((row:any)=>row.operation==='parseMedia'&&row.status==='失败'));
     assert.ok(operations.rows.some((row:any)=>row.operation==='cloneVoice'&&row.status==='失败'));
+    assert.ok(operations.rows.some((row:any)=>row.operation==='/client-errors'&&row.status==='失败'&&row.error.includes('MiniMax')));
     assert.equal(JSON.stringify(operations).includes(cookie.split('=')[1]),false);
     const history=await(await fetch(adminBase+'/history',{headers:adminHeaders})).json();
     assert.equal(history.total,2);const record=history.rows.find((row:any)=>row.id==='own-record');
