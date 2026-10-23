@@ -9,7 +9,7 @@ import { PassThrough } from 'node:stream';
 import express from 'express';
 import createEngine from './wanchuang-engine.cjs';
 import {validateMediaUrl,validateRemote,safeFile} from './wanchuang-runtime';
-import { writeToolSettings } from './tool-settings';
+import { readToolSettings, registerToolSettings, writeToolSettings } from './tool-settings';
 
 test('media URL and local file boundaries',async()=>{
   assert.equal(validateMediaUrl('https://www.bilibili.com/video/BV1xx411c7mD'),'https://www.bilibili.com/video/BV1xx411c7mD');
@@ -54,7 +54,10 @@ test('HTTP sessions isolate history/downloads; invalid actions never execute',as
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'wanchuang-http-'));
   process.env.WANCHUANG_DATA_DIR=path.join(directory,'jobs');process.env.TOOL_SETTINGS_FILE=path.join(directory,'settings.enc');
   const {registerWanchuang}=await import('./wanchuang');
-  const app=express();app.use(express.json());registerWanchuang(app,(req,res,next)=>{if(req.headers.authorization==='test-admin')next();else res.status(401).end();});
+  const app=express();app.use(express.json());
+  const requireAdmin:express.RequestHandler=(req,res,next)=>{if(req.headers.authorization==='test-admin')next();else res.status(401).end();};
+  registerToolSettings(app,requireAdmin);
+  registerWanchuang(app,requireAdmin);
   const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
   const address=server.address() as any,base=`http://127.0.0.1:${address.port}/api/tools/wanchuang`;
   try {
@@ -108,9 +111,15 @@ test('HTTP sessions isolate history/downloads; invalid actions never execute',as
     const blocked=await action('generateVoice',{text:'测试',voiceId:'testvoice123'});assert.equal(blocked.status,400);assert.match((await blocked.json()).error,/禁用|隐藏/);
     assert.equal((await fetch(visibility,{method:'PUT',headers:adminHeaders,body:JSON.stringify({id:'testvoice123',hidden:false})})).status,200);
     assert.deepEqual((await(await fetch(base+'/state',{headers:{Cookie:cookie}})).json()).settings.minimax.hiddenVoices,[]);
-    const updated = (await import('./tool-settings')).readToolSettings();
-    updated.secrets.douyinCookie = JSON.stringify({ cookies: [{ name: 'sessionid', value: 'repaired-session', domain: '.douyin.com' }] });
-    writeToolSettings(updated);
+    const repairedSave = await fetch(adminBase+'/settings', {method:'PUT',headers:adminHeaders,body:JSON.stringify({
+      concurrency:2,retentionHours:6,iflytekAppId:'',clearSecrets:[],secrets:{douyinCookie:JSON.stringify({cookies:[
+        {name:'sessionid',value:'repaired-session',domain:'.douyin.com'},
+        {name:'sessionid',value:'foreign-session',domain:'.example.com'},
+        {name:'tracking',value:'x'.repeat(20000),domain:'.douyin.com'},
+      ]})},
+    })});
+    assert.equal(repairedSave.status,200);
+    assert.equal(readToolSettings().secrets.douyinCookie,'sessionid=repaired-session');
     for (const browserCookie of [cookie, other]) {
       const repaired = await (await fetch(base+'/state', { headers: { Cookie: browserCookie } })).json();
       const profile = repaired.settings.cookieProfiles.find((item:any) => item.platform === 'douyin');

@@ -69,10 +69,7 @@ jobs:
         run: |
           & "C:\Program Files\nodejs\npm.cmd" run setup:wanchuang
           if ($LASTEXITCODE -ne 0) {
-            # Runtime downloads may be blocked on the server. Keep the web/API update deployable;
-            # the service reports missing download dependencies until they are provisioned.
-            Write-Warning "WanChuang runtime provisioning failed; continuing with application deploy"
-            $global:LASTEXITCODE = 0
+            throw "WanChuang runtime provisioning failed; existing service has not been restarted"
           }
 
       - name: Build (frontend + server bundle)

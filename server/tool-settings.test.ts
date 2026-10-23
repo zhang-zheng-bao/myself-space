@@ -12,7 +12,7 @@ test('admin settings: permissions, encrypted persistence, masking and clearing',
   const previousSecret = process.env.TOOL_SETTINGS_SECRET;
   process.env.TOOL_SETTINGS_FILE = path.join(directory, 'config.enc');
   process.env.TOOL_SETTINGS_SECRET = 'test-only-secret-with-at-least-32-characters';
-  const app = express(); app.use(express.json());
+  const app = express(); app.use(express.json({ limit: '2mb' }));
   registerToolSettings(app, (req, res, next) => { if (req.headers.authorization !== 'test-admin') { res.sendStatus(401); return; } next(); });
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
@@ -53,7 +53,19 @@ test('admin settings: permissions, encrypted persistence, masking and clearing',
       const response = await save({ ...body, secrets: { douyinCookie: value } });
       assert.equal(response.status, 200, 'Existing supported formats must remain accepted');
       assert.equal((await response.json()).configured.douyinCookie, true);
+      assert.equal(readToolSettings().secrets.douyinCookie, value.startsWith('Cookie:') ? validCookie : 'sessionid=test-session');
     }
+    const largeExport = JSON.stringify([
+      { name: 'sessionid', value: 'cleaned-session', domain: '.douyin.com' },
+      { name: 'sessionid', value: 'foreign-session', domain: '.example.com' },
+      { name: 'tracking', value: 'x'.repeat(20000), domain: '.douyin.com' },
+    ]);
+    const cleaned = await save({ ...body, secrets: { douyinCookie: largeExport } });
+    assert.equal(cleaned.status, 200, 'Plugin exports must not be rejected by the old 16000-character limit');
+    assert.equal(readToolSettings().secrets.douyinCookie, 'sessionid=cleaned-session');
+    assert.doesNotMatch(await cleaned.text(), /cleaned-session|foreign-session/);
+    assert.equal((await save({ ...body, secrets: {} })).status, 200);
+    assert.equal(readToolSettings().secrets.douyinCookie, 'sessionid=cleaned-session', 'Unrelated updates preserve the cleaned Cookie');
   } finally {
     server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
     fs.unlinkSync(path.join(directory, 'config.enc')); fs.rmdirSync(directory);

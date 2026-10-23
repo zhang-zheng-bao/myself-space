@@ -48,7 +48,7 @@ export function registerToolSettings(app: Express, requireAdmin: RequestHandler)
     res.setHeader('Cache-Control', 'no-store');
     if (req.headers['sec-fetch-site'] === 'cross-site') { res.status(403).json({ error: '不允许跨站保存' }); return; }
     const b = req.body;
-    if (!b || !Number.isInteger(b.concurrency) || b.concurrency < 1 || b.concurrency > 3 || !Number.isInteger(b.retentionHours) || b.retentionHours < 1 || b.retentionHours > 24 || typeof b.iflytekAppId !== 'string' || !/^[a-zA-Z0-9_-]{0,100}$/.test(b.iflytekAppId) || !b.secrets || typeof b.secrets !== 'object' || fields.some(f => b.secrets[f] !== undefined && (typeof b.secrets[f] !== 'string' || b.secrets[f].length > 16000)) || !Array.isArray(b.clearSecrets) || b.clearSecrets.some((f: string) => !fields.includes(f))) {
+    if (!b || !Number.isInteger(b.concurrency) || b.concurrency < 1 || b.concurrency > 3 || !Number.isInteger(b.retentionHours) || b.retentionHours < 1 || b.retentionHours > 24 || typeof b.iflytekAppId !== 'string' || !/^[a-zA-Z0-9_-]{0,100}$/.test(b.iflytekAppId) || !b.secrets || typeof b.secrets !== 'object' || Array.isArray(b.secrets) || fields.some(f => b.secrets[f] !== undefined && (typeof b.secrets[f] !== 'string' || b.secrets[f].length > (f.endsWith('Cookie') ? 1024 * 1024 : 16000))) || !Array.isArray(b.clearSecrets) || b.clearSecrets.some((f: string) => !fields.includes(f))) {
       res.status(400).json({ error: '配置格式有误：并发 1–3，文件保留时间 1–24 小时。' }); return;
     }
     // Validate the complete update before touching encrypted settings. Use the
@@ -57,7 +57,10 @@ export function registerToolSettings(app: Express, requireAdmin: RequestHandler)
       const field = `${platform}Cookie`;
       const value = b.secrets[field]?.trim();
       if (!value || b.clearSecrets.includes(field)) continue;
-      try { normalizeCookieInput(value, platform); }
+      try {
+        const normalized = normalizeCookieInput(value, platform);
+        b.secrets[field] = normalized.header;
+      }
       catch {
         const label = { douyin: '抖音', bilibili: 'B站', xiaohongshu: '小红书' }[platform];
         res.status(400).json({ error: `${label} Cookie 格式无法识别，请粘贴 Cookie 请求头、JSON 数组或 cookies.txt 内容。此次修改未保存，原配置已保留。` });

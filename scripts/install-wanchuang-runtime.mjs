@@ -42,28 +42,27 @@ async function download(spec, target) {
     fs.unlinkSync(cache);
   }
   console.log(`Downloading ${path.basename(target)} (${spec.version})`);
-  let downloaded = false;
+  // curl uses Windows networking and emits transfer progress for large archives.
+  const nativeDownload = spawnSync('curl.exe', ['--fail', '--location', '--retry', '2',
+    '--connect-timeout', '20', '--max-time', '600', '--output', target, spec.url],
+    { stdio: 'inherit', timeout: 31 * 60_000, windowsHide: true });
+  let downloaded = !nativeDownload.error && nativeDownload.status === 0;
+  if (!downloaded) fs.rmSync(target, { force: true });
   let lastError;
   for (let attempt = 1; attempt <= 3 && !downloaded; attempt++) {
     try {
-      const response = await fetch(spec.url, { signal: AbortSignal.timeout(45_000) });
+      const response = await fetch(spec.url, { signal: AbortSignal.timeout(600_000) });
       if (!response.ok || !response.body) throw new Error(`Download failed: HTTP ${response.status}`);
       await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(target, { flags: 'wx' }));
       downloaded = true;
     } catch (error) {
       lastError = error;
+      console.warn(`Download attempt ${attempt} failed: ${error.cause?.code || error.message}`);
       try { fs.rmSync(target, { force: true }); } catch {}
       if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 2000));
     }
   }
-  if (!downloaded) {
-    // Some Windows hosts reset Node's TLS stream to GitHub; retry through the OS downloader.
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      '$ErrorActionPreference="Stop"; Invoke-WebRequest -Uri $env:WC_URL -OutFile $env:WC_TARGET -TimeoutSec 600'],
-      { env: { ...process.env, WC_URL: spec.url, WC_TARGET: target }, stdio: 'inherit', timeout: 60_000, windowsHide: true });
-    if (result.error || result.status !== 0) throw lastError || result.error || new Error('Download failed');
-    downloaded = true;
-  }
+  if (!downloaded) throw lastError || nativeDownload.error || new Error('Download failed');
   const verifiedHash = createHash('sha256');
   for await (const chunk of fs.createReadStream(target)) verifiedHash.update(chunk);
   if (verifiedHash.digest('hex') !== spec.sha256) throw new Error(`SHA256 mismatch: ${path.basename(target)}`);

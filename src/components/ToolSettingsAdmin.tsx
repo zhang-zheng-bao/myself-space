@@ -68,7 +68,7 @@ export default function ToolSettingsAdmin() {
             {group.id === 'iflytek' && <label className="block text-sm">App ID<input className={input} maxLength={100} pattern="[a-zA-Z0-9_-]*" value={config.iflytekAppId} onChange={e => setConfig({ ...config, iflytekAppId: e.target.value })} /></label>}
             {group.fields.map(([key, label]) => <div key={key}>
               <label className="block text-sm">{label}<span className="ml-2 text-xs text-zinc-400">{config.configured[key] ? '已配置' : '未配置'}</span>
-                {key.endsWith('Cookie') ? <textarea className={`${input} resize-y font-mono`} rows={4} autoComplete="off" spellCheck={false} maxLength={16000} disabled={clearSecrets.includes(key)} placeholder="粘贴 Cookie、插件 JSON 或 cookies.txt 内容；留空保留原值" value={secrets[key] || ''} style={{ WebkitTextSecurity: visibleCookies[key] ? 'none' : 'disc' } as CSSProperties} onChange={e => setSecrets(previous => ({ ...previous, [key]: e.target.value }))} />
+                {key.endsWith('Cookie') ? <textarea className={`${input} resize-y font-mono`} rows={4} autoComplete="off" spellCheck={false} maxLength={1024 * 1024} disabled={clearSecrets.includes(key)} placeholder="粘贴 Cookie、插件 JSON 或 cookies.txt 内容；保存时自动清洗，留空保留原值" value={secrets[key] || ''} style={{ WebkitTextSecurity: visibleCookies[key] ? 'none' : 'disc' } as CSSProperties} onChange={e => setSecrets(previous => ({ ...previous, [key]: e.target.value }))} />
                   : <input className={input} type="password" autoComplete="new-password" maxLength={16000} disabled={clearSecrets.includes(key)} placeholder="留空保留原值" value={secrets[key] || ''} onChange={e => setSecrets(previous => ({ ...previous, [key]: e.target.value }))} />}
               </label>
               {key.endsWith('Cookie') && <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-400">
@@ -76,11 +76,11 @@ export default function ToolSettingsAdmin() {
                   const file = e.target.files?.[0]; e.target.value = '';
                   if (!file) return;
                   try {
-                    if (file.size > 64000) throw new Error('Cookie 文件过大，请仅导出当前平台的 Cookie。');
+                    if (file.size > 1024 * 1024) throw new Error('Cookie 文件不能超过 1MB，请缩小导出范围。');
                     const value = (await file.text()).trim();
-                    if (!value || value.length > 16000) throw new Error('Cookie 内容须为 1–16000 字，请仅导出当前平台的 Cookie。');
+                    if (!value || value.length > 1024 * 1024) throw new Error('Cookie 文件为空或超过 1MB。');
                     setSecrets(previous => ({ ...previous, [key]: value }));
-                    setMessage(`${label}文件已读取，点击保存后校验并生效。`);
+                    setMessage(`${label}文件已读取；保存时将按平台过滤、去重并加密保存有效字段。`);
                   } catch (error) { setMessage(error instanceof Error ? error.message : '读取 Cookie 文件失败'); }
                 }} /></label>
                 <button type="button" onClick={() => setVisibleCookies(previous => ({ ...previous, [key]: !previous[key] }))}>{visibleCookies[key] ? '隐藏内容' : '显示内容'}</button>
