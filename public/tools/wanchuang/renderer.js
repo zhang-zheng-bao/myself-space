@@ -831,7 +831,7 @@ function renderSpeechJobs(jobs) {
     if (last?.status === '失败') {
       $('#speechTaskStatus').className = 'parse-status bad';
       $('#speechTaskStatus').textContent = '识别失败';
-      $('#speechTaskDetail').textContent = last.error || '请重试';
+      $('#speechTaskDetail').textContent = errorMessage(last.error || '请重试');
     } else if (last?.status === '已完成') {
       $('#speechTaskStatus').className = 'parse-status ok';
       $('#speechTaskStatus').textContent = '识别完成';

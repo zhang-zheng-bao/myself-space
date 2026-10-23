@@ -66,9 +66,11 @@ body = body.replace(/function iflytekRealtimeWebSocketUrl\(credentials\) \{[\s\S
   const shanghaiNow = new Date(Date.now() + 8 * 60 * 60 * 1000);
   const utc = shanghaiNow.toISOString().replace(/\\.\\d{3}Z$/, '+0800');
   const request = {accessKeyId:credentials.apiKey,appId:credentials.appId,audio_encode:'pcm_s16le',lang:'autodialect',samplerate:'16000',utc,uuid:crypto.randomUUID()};
-  const base = Object.keys(request).sort().map((key) => \`\${encodeURIComponent(key)}=\${encodeURIComponent(request[key])}\`).join('&');
+  const signed = ['accessKeyId','appId','lang','utc','uuid'];
+  const base = signed.map((key) => \`\${encodeURIComponent(key)}=\${encodeURIComponent(request[key])}\`).join('&');
+  const query = Object.keys(request).sort().map((key) => \`\${encodeURIComponent(key)}=\${encodeURIComponent(request[key])}\`).join('&');
   const signature = crypto.createHmac('sha1', credentials.apiSecret).update(base).digest('base64');
-  return \`wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1?\${base}&signature=\${encodeURIComponent(signature)}\`;
+  return \`wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1?\${query}&signature=\${encodeURIComponent(signature)}\`;
 }`);
 body = body
   .replace('let started = false;\n    let sentEnd = false;', "let started = false;\n    let sessionId = '';\n    let sentEnd = false;")
@@ -80,6 +82,7 @@ body = body
   .replace("const result = JSON.parse(payload.data);", "const result = typeof payload.data === 'string' ? JSON.parse(payload.data) : payload.data;")
   .replace("socket.send(Buffer.from('{\"end\": true}'));", "socket.send(JSON.stringify(sessionId ? { end: true, sessionId } : { end: true }));")
   .replace("new Error('讯飞实时语音转写连接超时')", "new Error('实时语音转写连接超时')");
+body = body.replace("socket.onerror = () => fail(new Error('无法连接实时语音转写服务'));", "socket.onerror = (error) => fail(new Error(`无法连接实时语音转写服务：${error?.message || '网络或服务授权异常'}`));\n    socket.on('unexpected-response', (_request, response) => { const status = response?.statusCode ? `HTTP ${response.statusCode}` : 'HTTP 握手被拒绝'; response?.resume?.(); fail(new Error(`实时语音转写服务拒绝连接：${status}。请确认已开通实时转写大模型服务，并使用该服务绑定的凭据。`)); });");
 body = body.replace("path.join(os.tmpdir(), `clipharbor-${id}.cookies.txt`)", "path.join(root, `clipharbor-${id}.cookies.txt`)")
   .replace("fs.writeFileSync(cookieFile, lines.join(os.EOL));", "fs.writeFileSync(cookieFile, lines.join(os.EOL), {mode:0o600});")
   .replace("const settled = await Promise.allSettled(urls.map(probeMedia));", "const settled = []; for (const url of urls) { try { settled.push({status:'fulfilled',value:await probeMedia(url)}); } catch(reason) { settled.push({status:'rejected',reason}); } }")

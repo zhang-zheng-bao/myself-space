@@ -12,13 +12,20 @@ const signa=crypto.createHmac('sha1',apiKey).update(digest).digest('base64');
 const date=new Date().toUTCString();
 const signature=crypto.createHmac('sha256',secret).update(`host: iat-api.xfyun.cn\ndate: ${date}\nGET /v2/iat HTTP/1.1`).digest('base64');
 const auth=Buffer.from(`api_key="${apiKey}", algorithm="hmac-sha256", headers="host date request-line", signature="${signature}"`).toString('base64');
-for(const [name,url] of [['realtime','wss://rtasr.xfyun.cn/v1/ws?'+new URLSearchParams({appid:appId,ts,signa,lang:'cn'})],['iat','wss://iat-api.xfyun.cn/v2/iat?'+new URLSearchParams({authorization:auth,date,host:'iat-api.xfyun.cn'})]]){
+const shanghaiNow=new Date(Date.now()+8*60*60*1000);
+const utc=shanghaiNow.toISOString().replace(/\.\d{3}Z$/,'+0800');
+const realtimeModelRequest={accessKeyId:apiKey,appId,audio_encode:'pcm_s16le',lang:'autodialect',samplerate:'16000',utc,uuid:crypto.randomUUID()};
+const realtimeModelBase=['accessKeyId','appId','lang','utc','uuid'].map(key=>`${encodeURIComponent(key)}=${encodeURIComponent(realtimeModelRequest[key as keyof typeof realtimeModelRequest])}`).join('&');
+const realtimeModelQuery=Object.keys(realtimeModelRequest).sort().map(key=>`${encodeURIComponent(key)}=${encodeURIComponent(realtimeModelRequest[key as keyof typeof realtimeModelRequest])}`).join('&');
+const realtimeModelSignature=crypto.createHmac('sha1',secret).update(realtimeModelBase).digest('base64');
+const realtimeModelUrl='wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1?'+realtimeModelQuery+'&signature='+encodeURIComponent(realtimeModelSignature);
+for(const [name,url] of [['realtime-model',realtimeModelUrl],['realtime-standard','wss://rtasr.xfyun.cn/v1/ws?'+new URLSearchParams({appid:appId,ts,signa,lang:'cn'})],['iat','wss://iat-api.xfyun.cn/v2/iat?'+new URLSearchParams({authorization:auth,date,host:'iat-api.xfyun.cn'})]] as const){
  await new Promise<void>(resolve=>{
   const ws=new WebSocket(url);const timer=setTimeout(()=>{console.log(name,'timeout');ws.terminate();resolve();},15000);
   const finish=()=>{clearTimeout(timer);ws.close();resolve();};
-  ws.on('open',()=>{if(name==='iat')ws.send(JSON.stringify({common:{app_id:appId},business:{language:'zh_cn',domain:'iat',accent:'mandarin'},data:{status:2,format:'audio/L16;rate=16000',encoding:'raw',audio:Buffer.alloc(3200).toString('base64')}}));});
-  ws.on('message',data=>{const p=JSON.parse(String(data));console.log(name,JSON.stringify({action:p.action,code:p.code,desc:p.desc,message:p.message}));finish();});
+  ws.on('open',()=>{console.log(name,'connected');if(name==='iat')ws.send(JSON.stringify({common:{app_id:appId},business:{language:'zh_cn',domain:'iat',accent:'mandarin'},data:{status:2,format:'audio/L16;rate=16000',encoding:'raw',audio:Buffer.alloc(3200).toString('base64')}}));});
+  ws.on('message',data=>{const p=JSON.parse(String(data));console.log(name,JSON.stringify({action:p.action,msg_type:p.msg_type,res_type:p.res_type,code:p.code,desc:p.desc,message:p.message,dataDesc:p.data?.desc}));finish();});
   ws.on('unexpected-response',(_req,res)=>{console.log(name,'HTTP',res.statusCode);res.resume();finish();});
-  ws.on('error',()=>{console.log(name,'connection error');finish();});
+  ws.on('error',error=>{console.log(name,'connection error',error.message);finish();});
  });
 }

@@ -688,9 +688,11 @@ function iflytekRealtimeWebSocketUrl(credentials) {
   const shanghaiNow = new Date(Date.now() + 8 * 60 * 60 * 1000);
   const utc = shanghaiNow.toISOString().replace(/\.\d{3}Z$/, '+0800');
   const request = {accessKeyId:credentials.apiKey,appId:credentials.appId,audio_encode:'pcm_s16le',lang:'autodialect',samplerate:'16000',utc,uuid:crypto.randomUUID()};
-  const base = Object.keys(request).sort().map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(request[key])}`).join('&');
+  const signed = ['accessKeyId','appId','lang','utc','uuid'];
+  const base = signed.map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(request[key])}`).join('&');
+  const query = Object.keys(request).sort().map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(request[key])}`).join('&');
   const signature = crypto.createHmac('sha1', credentials.apiSecret).update(base).digest('base64');
-  return `wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1?${base}&signature=${encodeURIComponent(signature)}`;
+  return `wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1?${query}&signature=${encodeURIComponent(signature)}`;
 }
 
 function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {}) {
@@ -725,7 +727,8 @@ function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {})
       cleanup();
       resolve(orderedSegments());
     };
-    socket.onerror = () => fail(new Error('无法连接实时语音转写服务'));
+    socket.onerror = (error) => fail(new Error(`无法连接实时语音转写服务：${error?.message || '网络或服务授权异常'}`));
+    socket.on('unexpected-response', (_request, response) => { const status = response?.statusCode ? `HTTP ${response.statusCode}` : 'HTTP 握手被拒绝'; response?.resume?.(); fail(new Error(`实时语音转写服务拒绝连接：${status}。请确认已开通实时转写大模型服务，并使用该服务绑定的凭据。`)); });
     socket.onclose = () => {
       if (settled) return;
       if (options.isCancelled?.()) {
