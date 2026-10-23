@@ -55,6 +55,10 @@ for (const node of ast.statements) {
 }
 let body = parts.join('\n\n').replace('let mainWindow;', 'let mainWindow = {webContents:{send:(name,data)=>onEvent?.(name,data)}};');
 body=body.replace('    configured,\n    models,','    configured,\n    cloneEnabled: readConfig().voiceCloneEnabled !== false,\n    models,');
+body=body.replace('await recognizeContinuousPcmWithIflytek(ffmpegProcess.stdout, credentials, {',"await require('./speech-stream.cjs')(ffmpegProcess.stdout, credentials, {")
+  .replace('    });\n    await Promise.all([ffmpegDone, sourceDone]);','    }, recognizePcmWithIflytek);\n    await Promise.all([ffmpegDone, sourceDone]);')
+  .replace('if (job.cancelRequested) cancelPipeline();','cancelPipeline();')
+  .replaceAll("status: '连续流式识别'", "status: '语音识别中'");
 body = body.replace("path.join(os.tmpdir(), `clipharbor-${id}.cookies.txt`)", "path.join(root, `clipharbor-${id}.cookies.txt`)")
   .replace("fs.writeFileSync(cookieFile, lines.join(os.EOL));", "fs.writeFileSync(cookieFile, lines.join(os.EOL), {mode:0o600});")
   .replace("const settled = await Promise.allSettled(urls.map(probeMedia));", "const settled = []; for (const url of urls) { try { settled.push({status:'fulfilled',value:await probeMedia(url)}); } catch(reason) { settled.push({status:'rejected',reason}); } }")

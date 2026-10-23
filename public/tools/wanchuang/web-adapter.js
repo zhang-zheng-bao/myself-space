@@ -6,7 +6,7 @@
   const status=(message,error=false)=>{
     document.getElementById('webStatus').textContent=message;
     if(error){
-      fetch(base+'/client-errors',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({view:document.body.dataset.view,code:message.includes('MiniMax 尚未配置')?'minimax-unconfigured':message.includes('20MB')?'audio-too-large':'operation-failed'})}).catch(()=>{});
+      fetch(base+'/client-errors',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({view:document.body.dataset.view,code:message.includes('语音生成尚未配置')?'minimax-unconfigured':message.includes('20MB')?'audio-too-large':'operation-failed'})}).catch(()=>{});
       let notice=document.getElementById('webErrorNotice');
       if(!notice){notice=document.createElement('div');notice.id='webErrorNotice';notice.className='web-notice';notice.setAttribute('role','alert');document.body.append(notice);}
       notice.textContent=message;notice.hidden=false;

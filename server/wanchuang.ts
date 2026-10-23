@@ -5,6 +5,7 @@ import multer from 'multer';
 import type { Express, Request, RequestHandler } from 'express';
 import { limited, makeRuntime, runtimeBinaries, safeFile, validateMediaUrl } from './wanchuang-runtime';
 import {recordOperation,operationHistory} from './wanchuang-audit';
+import {publicToolCopy} from './public-tool-copy';
 import { readToolSettings, writeToolSettings } from './tool-settings';
 
 const root=path.resolve(process.env.WANCHUANG_DATA_DIR || '.private/wanchuang-jobs');
@@ -26,7 +27,7 @@ function sessionId(req:Request) { return req.headers.cookie?.split(';').map(s=>s
 function scrub(error:unknown) {
   let message=error instanceof Error?error.message:'应用服务暂不可用';
   try {for(const secret of Object.values(readToolSettings().secrets)) if(secret)message=message.split(secret).join('[已隐藏]');}catch{}
-  return message.replace(/https?:\/\/\S+/g,'[平台地址]').replaceAll(root,'[任务目录]').slice(0,400);
+  return publicToolCopy(message.replace(/https?:\/\/\S+/g,'[平台地址]').replaceAll(root,'[任务目录]').slice(0,400));
 }
 function files(session:{directory:string;engine?:ReturnType<typeof makeRuntime>},kind:string,id:string,record?:any) {
   const state=record?null:session.engine!.snapshot();
@@ -41,6 +42,7 @@ function present(session:Session,value:any):any {
   for(const [key,item] of Object.entries(value)) {
     if(key==='resolved')continue;
     if(key==='error')out[key]=item?scrub(new Error(String(item))):'';
+    else if(key==='message' && typeof item==='string')out[key]=publicToolCopy(item);
     else if(key==='outputDir')out[key]='完成后可下载文件';
     else if(key==='outputPath' || key==='outputs')continue;
     else out[key]=present(session,item);
@@ -255,7 +257,7 @@ export function registerWanchuang(app:Express,requireAdmin:RequestHandler) {
         payload={voiceId:payload.voiceId,noise:!!payload.noise,refPath:safeFile(s.directory,path.join(s.directory,payload.refPath))};
       }
       const run=()=>s.engine.call(channels[method],payload);
-      if(method==='refreshMinimaxModels'){res.json(s.engine.snapshot().settings.minimax);return;}
+      if(method==='refreshMinimaxModels'){res.json(present(s,s.engine.snapshot().settings.minimax));return;}
       const result=await (['parseMedia','generateVoice','cloneVoice','refreshMinimaxModels'].includes(method)?limited(run):run());
       if(method==='cloneVoice'&&result.profile?.models)saveVoiceCatalog(result.profile.models);
       res.json(present(s,result));

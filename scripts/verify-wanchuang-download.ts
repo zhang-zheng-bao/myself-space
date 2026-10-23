@@ -6,7 +6,8 @@ import {makeRuntime,runtimeBinaries,validateMediaUrl} from '../server/wanchuang-
 const url=validateMediaUrl(process.argv[2]);
 const root=fs.mkdtempSync(path.resolve('.private/wanchuang-jobs/verify-'));
 const engine=makeRuntime(root);
-const jobs=await engine.call('jobs:add',{type:'download',mode:'video',items:[{url}]});
+const speech=process.argv.includes('--speech');
+const jobs=await engine.call('jobs:add',{type:speech?'speech':'download',mode:speech?'transcript':'video',items:[{url}]});
 const id=jobs[0].id;
 let last='';
 const deadline=Date.now()+5*60000;
@@ -18,10 +19,11 @@ while(Date.now()<deadline){
  if(job.status==='已完成'){
    for(const file of job.outputs){
      console.log('FILE',path.basename(file),fs.statSync(file).size);
+     if(speech){if(!fs.readFileSync(file,'utf8').trim())throw new Error('Empty transcript');continue;}
      const check=spawnSync(runtimeBinaries().ffmpeg,['-v','error','-i',file,'-t','2','-f','null','-'],{encoding:'utf8'});
      if(check.status!==0)throw new Error('Video decode failed: '+check.stderr);
    }
-   console.log('DOWNLOAD_AND_DECODE_OK');process.exit(0);
+   console.log(speech?'TRANSCRIPTION_OK':'DOWNLOAD_AND_DECODE_OK');process.exit(0);
  }
  await new Promise(resolve=>setTimeout(resolve,2000));
 }

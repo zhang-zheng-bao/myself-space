@@ -118,7 +118,7 @@
               <span class="field-hint">同时保存 TXT 文稿 / SRT 字幕</span>
               <div class="parse-actions">
                 <button type="button" class="quiet-button" id="clearSpeechTextButton"><i data-lucide="eraser"></i>清空结果</button>
-                <button class="primary-button" id="speechStartButton"><i data-lucide="mic"></i>开始识别</button>
+                <button class="primary-button" id="speechStartButton"><i data-lucide="file-text"></i>开始识别</button>
               </div>
             </div>
           </section>
@@ -312,7 +312,7 @@
               <button type="button" data-settings-section="general" class="settings-category active" aria-current="page"><i data-lucide="sliders-horizontal"></i>常规</button>
               <button type="button" data-settings-section="cookies" class="settings-category"><i data-lucide="key-round"></i>平台 Cookie</button>
               <button type="button" data-settings-section="speech" class="settings-category"><i data-lucide="mic"></i>语音服务</button>
-              <button type="button" data-settings-section="minimax" class="settings-category"><i data-lucide="audio-waveform"></i>MiniMax 语音</button>
+              <button type="button" data-settings-section="minimax" class="settings-category"><i data-lucide="audio-waveform"></i>语音生成</button>
               <button type="button" data-settings-section="voices" class="settings-category"><i data-lucide="sliders-horizontal"></i>音色管理</button>
               <button type="button" data-settings-section="history" class="settings-category"><i data-lucide="history"></i>历史记录</button>
             </nav>
@@ -348,8 +348,8 @@
             <div class="setting-title-row">
               <div>
                 <span class="section-kicker">语音服务</span>
-                <h2>讯飞实时语音转写</h2>
-                <p>填写讯飞开放平台凭证，并确保应用已开通“实时语音转写”。</p>
+                <h2>语音转写</h2>
+                <p>语音服务由网站管理员统一配置。</p>
               </div>
               <span id="speechBadge" class="status-badge">未配置</span>
             </div>
@@ -403,7 +403,7 @@
             <div class="setting-title-row">
               <div>
                 <span class="section-kicker">声音克隆与生成</span>
-                <h2>MiniMax 语音</h2>
+                <h2>语音生成</h2>
                 <p>API Key 使用 Windows 安全存储加密，不会发送到渲染页面。</p>
               </div>
               <span id="minimaxBadge" class="status-badge">未配置</span>
@@ -414,7 +414,7 @@
             </div>
             <div id="minimaxMeta" class="cookie-meta"></div>
             <div class="cookie-actions">
-              <button type="button" class="danger-link" id="clearMinimaxButton">清除 MiniMax 配置</button>
+              <button type="button" class="danger-link" id="clearMinimaxButton">清除语音生成配置</button>
               <div class="inline-actions">
                 <button type="button" class="quiet-button" id="refreshMinimaxButton"><i data-lucide="refresh-cw"></i>刷新账号音色</button>
                 <button type="button" class="quiet-button" id="saveMinimaxButton"><i data-lucide="shield-check"></i>保存并连接</button>

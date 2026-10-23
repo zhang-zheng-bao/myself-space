@@ -1020,8 +1020,8 @@ async function runSpeechRecognition(job) {
 
     const totalBytes = data.duration ? Number(data.duration) * SPEECH_BYTES_PER_SECOND : 0;
     let lastProgressPublished = 0;
-    updateJob(job, { status: '连续流式识别', progress: 5 });
-    const segments = await recognizeContinuousPcmWithIflytek(ffmpegProcess.stdout, credentials, {
+    updateJob(job, { status: '语音识别中', progress: 5 });
+    const segments = await require('./speech-stream.cjs')(ffmpegProcess.stdout, credentials, {
       isCancelled: () => job.cancelRequested,
       registerTask: (task) => {
         activeSpeechTasks.add(task);
@@ -1034,12 +1034,12 @@ async function runSpeechRecognition(job) {
         const progress = totalBytes
           ? Math.min(93, Math.round(5 + sentBytes / totalBytes * 88))
           : Math.min(90, 5 + Math.floor(sentBytes / SPEECH_BYTES_PER_SECOND / 10));
-        updateJob(job, { status: '连续流式识别', progress });
+        updateJob(job, { status: '语音识别中', progress });
       },
       onResult: (liveSegments) => updateJob(job, {
         transcriptText: liveSegments.map((segment) => segment.text).join('\n'),
       }),
-    });
+    }, recognizePcmWithIflytek);
     await Promise.all([ffmpegDone, sourceDone]);
     if (pipelineError) throw pipelineError;
     if (!segments.length) throw new Error('未识别到有效语音内容');
@@ -1060,7 +1060,7 @@ async function runSpeechRecognition(job) {
     updateJob(job, { progress: 99, outputs: [transcriptPath, subtitlePath], transcriptText });
     return [transcriptPath, subtitlePath];
   } finally {
-    if (job.cancelRequested) cancelPipeline();
+    cancelPipeline();
     if (cookieFile) fs.rmSync(cookieFile, { force: true });
   }
 }

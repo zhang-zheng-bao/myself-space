@@ -2,7 +2,7 @@ const $ = (selector) => document.querySelector(selector);
 let state;
 let settingsReturnView = 'download';
 function selectSettingsSection(section) {
-  const labels = { general: '常规', cookies: '平台 Cookie', speech: '语音服务', minimax: 'MiniMax 语音', voices: '音色管理', history: '历史记录' };
+  const labels = { general: '常规', cookies: '平台 Cookie', speech: '语音服务', minimax: '语音生成', voices: '音色管理', history: '历史记录' };
   if (!labels[section]) return;
   document.querySelectorAll('[data-settings-panel]').forEach(panel => { panel.hidden = panel.dataset.settingsPanel !== section; });
   document.querySelectorAll('[data-settings-section]').forEach(button => {
@@ -109,13 +109,14 @@ function formatDate(value) {
 
 function errorMessage(error) {
   return String(error?.message || error || '操作失败')
-    .replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/i, '');
+    .replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/i, '')
+    .replace(/(?:科大)?讯飞|iflytek/gi,'语音识别服务').replace(/mini?max/gi,'语音生成服务');
 }
 
 function friendlyVoiceError(message) {
   const value = String(message || '');
-  if (/speech 2\.8 don'?t support whisper/i.test(value)) return 'Speech 2.8 不支持耳语；点击重试会自动切换兼容模型';
-  if (/speech 2\.8 don'?t support fluent/i.test(value)) return 'Speech 2.8 不支持流畅模式；点击重试会自动切换兼容模型';
+  if (/speech 2\.8 don'?t support whisper/i.test(value)) return '当前语音模型不支持耳语；点击重试会自动切换兼容模型';
+  if (/speech 2\.8 don'?t support fluent/i.test(value)) return '当前语音模型不支持流畅模式；点击重试会自动切换兼容模型';
   return value;
 }
 
@@ -329,8 +330,8 @@ function renderTools() {
     <span class="tool-pill ${state.tools.ytDlp ? 'ok' : 'bad'}">yt-dlp</span>
     <span class="tool-pill ${state.tools.ffmpeg ? 'ok' : 'bad'}">FFmpeg</span>
     <span class="tool-pill ${state.tools.browser ? 'ok' : 'bad'}">浏览器解析</span>
-    <span class="tool-pill ${state.settings.speech?.configured ? 'ok' : 'bad'}">讯飞 API</span>
-    <span class="tool-pill ${state.settings.minimax?.configured ? 'ok' : 'bad'}">MiniMax API</span>`;
+    <span class="tool-pill ${state.settings.speech?.configured ? 'ok' : 'bad'}">语音转写</span>
+    <span class="tool-pill ${state.settings.minimax?.configured ? 'ok' : 'bad'}">语音生成</span>`;
 }
 
 function updatePreviewSummary() {
@@ -573,7 +574,7 @@ function renderMinimaxMeta() {
   $('#minimaxApiKey').value = '';
   $('#minimaxBadge').textContent = minimax.status || '未配置';
   $('#minimaxBadge').className = `status-badge${['有效', '已配置'].includes(minimax.status) ? ' ok' : ''}`;
-  $('#minimaxConnectionBadge').textContent = minimax.configured ? 'MiniMax 已连接' : 'MiniMax 未连接';
+  $('#minimaxConnectionBadge').textContent = minimax.configured ? '语音服务已连接' : '语音服务未连接';
   $('#minimaxConnectionBadge').className = `status-badge${minimax.configured ? ' ok' : ''}`;
   $('#refreshMinimaxButton').disabled = !minimax.configured;
   $('#refreshVoiceModels').disabled = !minimax.configured;
@@ -582,7 +583,7 @@ function renderMinimaxMeta() {
     : '连接后可直接读取账号中的克隆音色、生成音色与系统音色。';
   renderVoicePicker();
   renderVoiceManagement();
-  $('#cloneConnectionBadge').textContent = minimax.configured ? 'MiniMax 已连接' : '未连接';
+  $('#cloneConnectionBadge').textContent = minimax.configured ? '语音服务已连接' : '未连接';
   $('#cloneConnectionBadge').className = `status-badge${minimax.configured ? ' ok' : ''}`;
   renderCloneFlow();
 }
@@ -639,7 +640,7 @@ function renderVoiceManagement() {
   if (!filtered.length) {
     const empty = document.createElement('p');
     empty.className = 'cookie-meta';
-    empty.textContent = !models.length ? '请先在 MiniMax 语音中连接账号并刷新音色。' : manageVoicesCategory === 'hidden' ? '没有匹配的隐藏音色。' : '没有匹配的音色。';
+    empty.textContent = !models.length ? '暂无音色，请联系管理员同步音色。' : manageVoicesCategory === 'hidden' ? '没有匹配的隐藏音色。' : '没有匹配的音色。';
     list.append(empty);
   }
 }
@@ -1027,7 +1028,8 @@ $('#speechStartButton').addEventListener('click', async () => {
     return;
   }
   if (!state.settings.speech?.configured) {
-    $('#settingsMessage').textContent = '请先配置讯飞语音识别凭证';
+    $('#speechTaskStatus').className='parse-status bad';
+    $('#speechTaskStatus').textContent='语音转写尚未配置，请联系管理员';
     setActiveView('settings');
     selectSettingsSection('speech');
     return;
@@ -1198,7 +1200,7 @@ $('#saveSpeechButton').addEventListener('click', async () => {
   try {
     $('#speechBadge').textContent = '检查中';
     $('#speechBadge').className = 'status-badge checking';
-    $('#settingsMessage').textContent = '正在连接讯飞验证...';
+    $('#settingsMessage').textContent = '正在验证语音转写服务...';
     state.settings.speech = await window.clipHarbor.saveSpeechConfig(payload);
     renderSpeechMeta();
     renderTools();
@@ -1218,7 +1220,7 @@ $('#validateSpeechButton').addEventListener('click', async () => {
     state.settings.speech = await window.clipHarbor.validateSpeechConfig();
     renderSpeechMeta();
     renderTools();
-    $('#settingsMessage').textContent = '讯飞语音识别连接正常';
+    $('#settingsMessage').textContent = '语音转写服务连接正常';
   } catch (error) {
     state.settings.speech = (await window.clipHarbor.getState()).settings.speech;
     renderSpeechMeta();
@@ -1237,7 +1239,7 @@ async function refreshMinimaxVoiceModels(showSettingsMessage = false) {
   const target = showSettingsMessage ? $('#settingsMessage') : $('#voiceGenerateStatus');
   try {
     target.className = showSettingsMessage ? 'settings-message' : 'parse-status';
-    target.textContent = '正在读取 MiniMax 账号音色…';
+    target.textContent = '正在读取账号音色…';
     state.settings.minimax = await window.clipHarbor.refreshMinimaxModels();
     renderMinimaxMeta();
     renderTools();
@@ -1250,7 +1252,7 @@ async function refreshMinimaxVoiceModels(showSettingsMessage = false) {
 
 $('#saveMinimaxButton').addEventListener('click', async () => {
   const payload = { apiKey: $('#minimaxApiKey').value.trim() };
-  if (!payload.apiKey) return void ($('#settingsMessage').textContent = '请输入 MiniMax API Key');
+  if (!payload.apiKey) return void ($('#settingsMessage').textContent = '请输入语音生成服务凭证');
   try {
     $('#minimaxBadge').textContent = '连接中';
     $('#minimaxBadge').className = 'status-badge checking';
@@ -1258,7 +1260,7 @@ $('#saveMinimaxButton').addEventListener('click', async () => {
     state.settings.minimax = await window.clipHarbor.saveMinimaxConfig(payload);
     renderMinimaxMeta();
     renderTools();
-    $('#settingsMessage').textContent = `MiniMax 配置已加密保存 · 读取到 ${state.settings.minimax.accountModelCount} 个自定义音色`;
+    $('#settingsMessage').textContent = `语音生成配置已加密保存 · 读取到 ${state.settings.minimax.accountModelCount} 个自定义音色`;
   } catch (error) {
     renderMinimaxMeta();
     $('#settingsMessage').textContent = errorMessage(error);
@@ -1271,7 +1273,7 @@ $('#clearMinimaxButton').addEventListener('click', async () => {
   state.settings.minimax = await window.clipHarbor.clearMinimaxConfig();
   renderMinimaxMeta();
   renderTools();
-  $('#settingsMessage').textContent = 'MiniMax 配置已清除';
+  $('#settingsMessage').textContent = '语音生成配置已清除';
 });
 
 $('#voiceText').addEventListener('input', () => { $('#voiceCharCount').textContent = $('#voiceText').value.length; });
@@ -1351,7 +1353,7 @@ $('#cloneVoiceButton').addEventListener('click', async () => {
   if(state.settings.minimax?.cloneEnabled===false){window.dispatchEvent(new CustomEvent('wanchuang-error',{detail:'管理员已关闭音色克隆'}));return;}
   if (!state.settings.minimax?.configured) {
     $('#voiceCloneStatus').className = 'parse-status bad';
-    $('#voiceCloneStatus').textContent = 'MiniMax 尚未配置，请联系管理员在后台配置 API Key';
+    $('#voiceCloneStatus').textContent = '语音生成尚未配置，请联系管理员';
     window.dispatchEvent(new CustomEvent('wanchuang-error',{detail:$('#voiceCloneStatus').textContent}));
     return;
   }
@@ -1387,7 +1389,8 @@ $('#generateVoiceButton').addEventListener('click', async () => {
   if (!state.settings.minimax?.configured) {
     setActiveView('settings');
     selectSettingsSection('minimax');
-    $('#settingsMessage').textContent = '请先连接 MiniMax 账号';
+    $('#voiceGenerateStatus').className='parse-status bad';
+    $('#voiceGenerateStatus').textContent='语音生成尚未配置，请联系管理员';
     return;
   }
   const button = $('#generateVoiceButton');
