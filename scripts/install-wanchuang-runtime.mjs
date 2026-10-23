@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
-import { Readable, Transform } from 'node:stream';
+import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { spawnSync } from 'node:child_process';
 
@@ -42,12 +42,31 @@ async function download(spec, target) {
     fs.unlinkSync(cache);
   }
   console.log(`Downloading ${path.basename(target)} (${spec.version})`);
-  const response = await fetch(spec.url, { signal: AbortSignal.timeout(10 * 60_000) });
-  if (!response.ok || !response.body) throw new Error(`Download failed: HTTP ${response.status}`);
-  const hash = createHash('sha256');
-  const hashing = new Transform({ transform(chunk, encoding, callback) { hash.update(chunk); callback(null, chunk); } });
-  await pipeline(Readable.fromWeb(response.body), hashing, fs.createWriteStream(target, { flags: 'wx' }));
-  if (hash.digest('hex') !== spec.sha256) throw new Error(`SHA256 mismatch: ${path.basename(target)}`);
+  let downloaded = false;
+  let lastError;
+  for (let attempt = 1; attempt <= 3 && !downloaded; attempt++) {
+    try {
+      const response = await fetch(spec.url, { signal: AbortSignal.timeout(10 * 60_000) });
+      if (!response.ok || !response.body) throw new Error(`Download failed: HTTP ${response.status}`);
+      await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(target, { flags: 'wx' }));
+      downloaded = true;
+    } catch (error) {
+      lastError = error;
+      try { fs.rmSync(target, { force: true }); } catch {}
+      if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+    }
+  }
+  if (!downloaded) {
+    // Some Windows hosts reset Node's TLS stream to GitHub; retry through the OS downloader.
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      '$ErrorActionPreference="Stop"; Invoke-WebRequest -Uri $env:WC_URL -OutFile $env:WC_TARGET -TimeoutSec 600'],
+      { env: { ...process.env, WC_URL: spec.url, WC_TARGET: target }, stdio: 'inherit', timeout: 11 * 60_000, windowsHide: true });
+    if (result.error || result.status !== 0) throw lastError || result.error || new Error('Download failed');
+    downloaded = true;
+  }
+  const verifiedHash = createHash('sha256');
+  for await (const chunk of fs.createReadStream(target)) verifiedHash.update(chunk);
+  if (verifiedHash.digest('hex') !== spec.sha256) throw new Error(`SHA256 mismatch: ${path.basename(target)}`);
   fs.mkdirSync(path.dirname(cache), { recursive: true });
   fs.copyFileSync(target, cache);
 }
