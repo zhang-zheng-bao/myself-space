@@ -1,5 +1,11 @@
-import React, { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { ChangeEvent, createContext, useContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import "./admin-theme.css";
+import AppSettingsAdmin from "./components/AppSettingsAdmin";
+import { portfolioChanges, rebasePortfolioDraft } from './portfolio-changes';
+import ImageCoverPicker, { type CoverPosition } from './components/ImageCoverPicker';
+import ContentAnalytics, { analyticsCatalog, VisitorEngagement } from "./components/ContentAnalytics";
+import VisitNotifications from "./components/VisitNotifications";
 import { isInstrumental, setInstrumental } from "./musicMetadata";
 import {
   Activity,
@@ -36,8 +42,11 @@ import {
   MonitorSmartphone,
   MousePointerClick,
   Music,
+  Play,
   Plus,
+  Presentation,
   RefreshCw,
+  StickyNote,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -46,7 +55,9 @@ import {
   X,
   ZoomIn,
 } from "lucide-react";
-import { Experience, GalleryItem, HomeStatCopy, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, AnalyticsCount, AnalyticsRange, AnalyticsSummaryPayload, AnalyticsVisitorsPayload, AssistantConversationMessage, AssistantConversationSummary, AssistantKeywordPayload, TrafficType, VisitRecord, VisitorRecord, Work, WorkLink, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder, sectionMeta } from "./types";
+import SlidePlayer from "./components/SlidePlayer";
+import { defaultCaseWorks } from "./caseStudies";
+import { Experience, GalleryItem, HomeStatCopy, ImagePost, MusicTrack, Poem, PortfolioData, SlideDeck, ResumeProfile, SectionKey, TreasureItem, AnalyticsCount, AnalyticsRange, AnalyticsSummaryPayload, AnalyticsVisitorsPayload, AssistantConversationMessage, AssistantConversationSummary, AssistantKeywordPayload, TrafficType, VisitRecord, VisitorRecord, Work, WorkLink, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder, sectionMeta } from "./types";
 
 const emptyWork: Work = {
   id: "",
@@ -88,6 +99,27 @@ const emptyPoem: Poem = {
   text: "",
   note: "",
 };
+
+const emptyPost: ImagePost = {
+  id: "",
+  title: "",
+  text: "",
+  images: [],
+  tags: [],
+  date: "",
+};
+
+const emptySlideDeck: SlideDeck = {
+  id: "",
+  title: "",
+  description: "",
+  fileUrl: "",
+  fileName: "",
+  cover: "",
+  date: "",
+};
+
+const pptxAccept = ".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
 const emptyMusicTrack: MusicTrack = {
   id: "",
@@ -430,6 +462,33 @@ function cloneData(data: PortfolioData): PortfolioData {
 }
 
 /**
+ * 比较用的字符串归一：把 COS 签名地址收敛成「路径」，丢掉 ?authorization=… 那段。
+ *
+ * 读一次签名一次，同一张图每次拿到的签名都不一样（Expires + 签名都在 query 里）。
+ * 不收敛的话，「刚保存完」的草稿和刚返回的服务端数据会被判成不同 —— 状态条会一直
+ * 挂着「有改动还没保存」，恰好是我们要修掉的那种假提示。路径相同就是同一张图。
+ */
+function comparableString(value: string) {
+  return /^https?:\/\//i.test(value) ? value.split("?")[0] : value;
+}
+
+/** 稳定序列化：键名排序，忽略 undefined，字符串过一层 comparableString。 */
+function stableStringify(value: unknown): string {
+  if (value === undefined) return "u";
+  if (value === null || typeof value !== "object") {
+    return typeof value === "string" ? JSON.stringify(comparableString(value)) : JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().filter((key) => record[key] !== undefined).map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(",")}}`;
+}
+
+/** 两份站点数据是不是「同一份」。只用于判断草稿里还剩多少没保存，不参与落库。 */
+function sameData(a: unknown, b: unknown) {
+  return stableStringify(a) === stableStringify(b);
+}
+
+/**
  * 就地修改 pageCopy 的一个小工具。默认值先铺底，再叠上磁盘上的真实数据，最后应用本次改动，
  * 这样页面上任何一处改 pageCopy 都不会把其它键（包括新增的 aiWorks / resumeProfiles）冲掉。
  */
@@ -464,9 +523,12 @@ function setSectionCopy(draft: PortfolioData, key: SectionKey, value: string) {
     case "resume": editPageCopy(draft, { resume: value }); return;
     case "works": editPageCopy(draft, { works: value }); return;
     case "ai": editPageCopy(draft, { aiZone: value }); return;
+    case "cases": editPageCopy(draft, { cases: value }); return;
     case "prospects": editPageCopy(draft, { gallery: value }); return;
     case "treasures": editPageCopy(draft, { treasures: value }); return;
     case "poems": editPageCopy(draft, { poems: value }); return;
+    case "posts": editPageCopy(draft, { posts: value }); return;
+    case "slides": editPageCopy(draft, { slides: value }); return;
     case "contact": editPageCopy(draft, { contact: value }); return;
     default: return;
   }
@@ -478,9 +540,12 @@ function sectionCopyValue(pageCopy: PortfolioData["profile"]["pageCopy"], key: S
     case "resume": return pageCopy?.resume;
     case "works": return pageCopy?.works;
     case "ai": return pageCopy?.aiZone;
+    case "cases": return pageCopy?.cases;
     case "prospects": return pageCopy?.gallery;
     case "treasures": return pageCopy?.treasures;
     case "poems": return pageCopy?.poems;
+    case "posts": return pageCopy?.posts;
+    case "slides": return pageCopy?.slides;
     case "contact": return pageCopy?.contact;
     default: return undefined;
   }
@@ -546,15 +611,13 @@ function useFileDrop(onFile: (file: File) => void, onActiveChange: (active: bool
   }, []);
 }
 
-async function compressImageForUpload(file: File) {
-  const compressibleTypes = ["image/jpeg", "image/png", "image/webp"];
-  if (!compressibleTypes.includes(file.type)) return file;
-
+async function createImagePreview(file: File, position: CoverPosition) {
   const bitmap = await createImageBitmap(file);
-  const maxEdge = 1600;
-  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
-  const width = Math.max(1, Math.round(bitmap.width * scale));
-  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const cropWidth = Math.min(bitmap.width, bitmap.height * 16 / 9) / Math.max(1, position.zoom || 1);
+  const cropHeight = cropWidth * 9 / 16;
+  const scale = Math.min(1, 640 / cropWidth);
+  const width = Math.max(1, Math.round(cropWidth * scale));
+  const height = Math.max(1, Math.round(cropHeight * scale));
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -564,16 +627,16 @@ async function compressImageForUpload(file: File) {
     return file;
   }
 
-  context.drawImage(bitmap, 0, 0, width, height);
+  context.drawImage(bitmap, (bitmap.width-cropWidth)*position.x, (bitmap.height-cropHeight)*position.y, cropWidth, cropHeight, 0, 0, width, height);
   bitmap.close();
 
   const blob = await new Promise<Blob | null>((resolve) => {
     canvas.toBlob(resolve, "image/webp", 0.82);
   });
 
-  if (!blob || blob.size >= file.size) return file;
+  if (!blob) return file;
   const cleanName = file.name.replace(/\.[^.]+$/, "");
-  return new File([blob], `${cleanName}.webp`, { type: "image/webp", lastModified: Date.now() });
+  return new File([blob], `${cleanName}-preview.webp`, { type: "image/webp", lastModified: Date.now() });
 }
 
 function normalize(data: PortfolioData): PortfolioData {
@@ -582,7 +645,7 @@ function normalize(data: PortfolioData): PortfolioData {
     profile: {
       ...(data.profile || { name: "", avatar: "", tagline: "", intro: "", quote: "", resumePdfUrl: "" }),
       musicAutoplay: Boolean(data.profile?.musicAutoplay),
-      pageCopy: { ...defaultPageCopy, ...(data.profile?.pageCopy || {}) },
+      pageCopy: { ...defaultPageCopy, ...(data.profile?.pageCopy || {}), caseWorks: data.profile?.pageCopy?.caseWorks ?? structuredClone(defaultCaseWorks) },
     },
     prospects: data.prospects || { title: "", content: "", points: [] },
     contact: data.contact || { wechat: "", qq: "", email: "", phone: "", github: "" },
@@ -808,7 +871,7 @@ function LyricTimelineEditor({
   if (!hasTimeline) {
     return (
       <div className="adm-note text-xs leading-5 text-zinc-500">
-        保存这首音乐后会自动生成逐字时间轴，随后可在这里手动微调。
+        点击“生成歌词时间轴”后可在这里微调，普通保存不会启动识别。
       </div>
     );
   }
@@ -919,7 +982,7 @@ function Section({
 }) {
   return (
     <section className={nested ? "adm-panel" : "adm-card"}>
-      <div className={nested ? "px-4 pb-0 pt-3.5 md:px-5" : "border-b border-zinc-800/60 px-4 py-3 md:px-5"}>
+      <div className={nested ? "adm-section-heading px-4 pb-0 pt-3.5 md:px-5" : "adm-section-heading px-4 pb-0 pt-5 md:px-5"}>
         {/*
          * 有 action 时用两栏：左栏标题+说明竖排，右栏按钮。
          * `items-start` 让按钮跟标题的第一行对齐，而不是跟整块（含说明）垂直居中 ——
@@ -930,13 +993,13 @@ function Section({
             <h2
               className={
                 nested
-                  ? "text-xs font-semibold tracking-[0.12em] text-zinc-300"
-                  : "text-sm font-semibold tracking-wide text-white"
+                  ? "text-sm font-semibold text-zinc-100"
+                  : "text-lg font-semibold text-zinc-100"
               }
             >
               {title}
             </h2>
-            {description && <p className="mt-1 text-xs leading-5 text-zinc-400">{description}</p>}
+            {description && <p className="mt-2 text-sm leading-6 text-zinc-400">{description}</p>}
           </div>
           {action && <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{action}</div>}
         </div>
@@ -956,6 +1019,16 @@ function Section({
  * 播报「switch on/off」都是原生行为；焦点圈画在视觉轨道上（peer-focus-visible）；
  * 状态不只靠颜色，右边始终有「已开启 / 已关闭」文字。
  */
+function ProfileGroup({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+  return <details className="group rounded-xl border border-zinc-700 bg-zinc-950/40">
+    <summary className="flex min-h-16 cursor-pointer list-none items-center gap-3 rounded-xl px-4 py-3 focus-visible:outline-emerald-400 [&::-webkit-details-marker]:hidden">
+      <span aria-hidden="true" className="text-zinc-400 transition-transform group-open:rotate-90">›</span>
+      <span><strong className="block text-sm font-medium text-zinc-100">{title}</strong><span className="mt-1 block text-xs text-zinc-400">{description}</span></span>
+    </summary>
+    <div className="space-y-4 border-t border-zinc-800 p-4">{children}</div>
+  </details>;
+}
+
 function VisibilitySwitch({
   name,
   hint,
@@ -975,7 +1048,7 @@ function VisibilitySwitch({
 }) {
   const label = `在网站前台展示${name}`;
   const toggle = (
-    <label className="inline-flex shrink-0 cursor-pointer items-center gap-3 rounded-lg px-1 py-2.5">
+    <label className="relative inline-flex shrink-0 cursor-pointer items-center gap-3 rounded-lg px-1 py-2.5">
       <span className={`text-sm ${checked ? "text-emerald-300" : "text-zinc-500"}`}>
         {checked ? "已开启" : "已关闭"}
       </span>
@@ -1028,14 +1101,10 @@ function VisibilitySwitch({
         <div className="min-w-[220px] flex-1">
           <p className="text-sm text-zinc-200">{label}</p>
           <p className="mt-1 text-xs leading-5 text-zinc-500">{hint}</p>
+          {!checked && <p className="mt-1 text-[11px] leading-4 text-amber-300/90">访客看不到此内容；数据与素材都保留，随时可以重新打开。</p>}
         </div>
         {toggle}
       </div>
-      {!checked && (
-        <p className="adm-note adm-note-warn text-xs leading-5 text-amber-200">
-          当前{name}在前台处于隐藏状态，访客看不到它。后台数据与素材都会保留，随时可以重新打开。
-        </p>
-      )}
     </>
   );
 }
@@ -1642,6 +1711,7 @@ function ClearableField({ label, value, onChange, placeholder }: {
  * 它是新的一层表面（fixed），弹窗面板是这一层唯一的那个框；内部只用
  * .adm-panel / .adm-note / .adm-row（无整圈描边），不构成框套框。
  */
+const UploadFeedback = createContext<{progress:{fileName:string;percent:number}|null;status:string}>({progress:null,status:''});
 function EditorModal({
   title,
   onClose,
@@ -1661,9 +1731,10 @@ function EditorModal({
   size?: "sm" | "md" | "lg";
   children: React.ReactNode;
 }) {
+  const feedback = useContext(UploadFeedback);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape" && !document.querySelector('dialog[open]')) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -1702,13 +1773,16 @@ function EditorModal({
          * 右上角再放一个「关闭」纯属重复。底部的取消按钮和保存按钮成对摆放，
          * 位置固定，比右上角更好找。
          */}
+        {(feedback.progress || feedback.status) && <div className="border-b border-zinc-800 px-4 py-2 text-xs text-zinc-300" role="status">
+          {feedback.progress ? <><span>{feedback.progress.fileName} · {feedback.progress.percent}% · {feedback.status}</span><div role="progressbar" aria-label="文件上传进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={feedback.progress.percent} className="mt-2 h-1 overflow-hidden rounded bg-zinc-800"><div className="h-full bg-emerald-300 transition-[width]" style={{width:`${feedback.progress.percent}%`}}/></div></> : feedback.status}
+        </div>}
         <div className="adm-modal-scroll min-h-0 flex-1 px-4 py-4">{children}</div>
 
         <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-800/70 px-4 py-3">
           {/*
-           * 顺序：调用方给的动作（保存全部 / 迁移…）在前，「取消」在最后 ——
+           * 顺序：调用方给的动作（保存 / 保存全部 / 迁移…）在前，「取消」在最后 ——
            * 宝要求「取消应该在保存右边」。整条仍是 justify-end 右对齐，
-           * 所以视觉上最右那颗永远是「取消」，最显眼的「保存全部」紧挨它左边。
+           * 所以视觉上最右那颗永远是「取消」，最显眼的那颗保存按钮紧挨它左边。
            */}
           {footer}
           <button
@@ -1841,6 +1915,7 @@ function WorkListEditor({
   migrate,
   renderSaveButton,
   itemNoun,
+  webpage = false,
   reorder,
   onStatus,
 }: {
@@ -1859,7 +1934,7 @@ function WorkListEditor({
   /** 绑给 <input type=file> 的 change 处理器（读 event.target.files）。 */
   upload: (event: ChangeEvent<HTMLInputElement>, onUrl: (url: string, file: File) => void | Promise<void>) => void;
   /** 直接上传一个 File（拖拽走这条）。真正的实现是后台的 uploadMediaFile。 */
-  uploadFile: (file: File, onUrl: (url: string, file: File) => void | Promise<void>) => Promise<void>;
+  uploadFile: (file: File, onUrl: (url: string, file: File) => void | Promise<void>) => Promise<boolean>;
   deleteMedia: (urls: string[]) => Promise<boolean>;
   update: (mutator: (draft: PortfolioData) => void) => void;
   updateAndSave: (mutator: (draft: PortfolioData) => void) => Promise<void>;
@@ -1881,6 +1956,7 @@ function WorkListEditor({
   renderSaveButton: () => React.ReactNode;
   /** 弹窗标题与按钮文案里的名词，作品媒体是「作品」，AI 专区是「AI 作品」。 */
   itemNoun?: string;
+  webpage?: boolean;
   /**
    * 拖动排序：给一个「把 from 挪到 to」的执行器。
    * 不传就整个拖动能力关闭（行的左侧不会出现手柄）——
@@ -2362,6 +2438,7 @@ function WorkListEditor({
                   />
                 </div>
                 <Field label="简介" value={work.description} onChange={(value) => update((draft) => { readItems(draft)[index].description = value; })} textarea />
+                {webpage && <Field label="案例网页地址" value={work.pageUrl || ""} onChange={(value) => update((draft) => { readItems(draft)[index].pageUrl = value; })} placeholder="/cases/案例名称/index.html 或 https://…" />}
               </section>
 
               <section className="adm-panel space-y-4 p-3">
@@ -2373,7 +2450,7 @@ function WorkListEditor({
                   actions={
                     <label className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-600">
                       <ImagePlus size={12} /> 上传图片
-                      <input className="hidden" type="file" accept="image/*" onChange={(event) => upload(event, (url) => updateAndSave((draft) => { readItems(draft)[index].images = [...(readItems(draft)[index].images || []), url]; }))} />
+                      <input className="sr-only" type="file" accept="image/*" multiple onChange={(event) => upload(event, (url) => update((draft) => { readItems(draft)[index].images = [...(readItems(draft)[index].images || []), url]; }))} />
                     </label>
                   }
                 />
@@ -2659,6 +2736,60 @@ function PoemSummary({ item, index, active, onEdit, onDelete }: {
           onClick={(event) => { event.stopPropagation(); onDelete(); }}
           className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-400 transition-colors duration-200 hover:border-red-500 hover:text-red-300"
         >
+          <Trash2 size={13} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** 把数组第 from 项挪到 to（摘出来再插进去），越界时原样返回副本。 */
+function moveItem<T>(list: T[], from: number, to: number): T[] {
+  const next = [...list];
+  if (from < 0 || to < 0 || from >= next.length || to >= next.length || from === to) return next;
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+/** 「图文分享」「演示文稿」共用的列表摘要行：缩略图 + 标题 + 一句摘要 + 上下移 / 编辑 / 删除。 */
+function ListSummaryRow({ thumb, title, meta, preview, active, onEdit, onDelete, onMove, canMoveUp, canMoveDown }: {
+  thumb?: string;
+  title: string;
+  meta: string;
+  preview?: string;
+  active: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+  onMove: (delta: number) => void;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+}) {
+  const firstLine = (preview || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || "";
+  const stop = (fn: () => void) => (event: React.MouseEvent) => { event.stopPropagation(); fn(); };
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onEdit}
+      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onEdit(); } }}
+      className="grid w-full cursor-pointer grid-cols-[56px_1fr] gap-3 p-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-400/40 md:grid-cols-[56px_1fr_auto] md:items-center"
+    >
+      <div className="h-14 w-14 overflow-hidden rounded-lg bg-white/[0.04]">
+        {thumb ? <img src={thumb} alt="" className="h-full w-full object-cover" /> : null}
+      </div>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="truncate text-sm font-semibold text-white">{title}</span>
+          <span className="rounded bg-white/[0.07] px-1.5 py-0.5 text-[10px] text-zinc-400">{meta}</span>
+        </div>
+        <p className="mt-0.5 truncate text-xs text-zinc-400">{firstLine || "（还没有文字）"}</p>
+      </div>
+      <div className="col-span-2 flex shrink-0 items-center gap-1.5 justify-self-start md:col-span-1 md:justify-self-end">
+        <button type="button" aria-label="上移" disabled={!canMoveUp} onClick={stop(() => onMove(-1))} className="rounded-lg border border-zinc-800 p-1.5 text-zinc-300 hover:border-zinc-600 disabled:opacity-40"><ArrowUp size={13} /></button>
+        <button type="button" aria-label="下移" disabled={!canMoveDown} onClick={stop(() => onMove(1))} className="rounded-lg border border-zinc-800 p-1.5 text-zinc-300 hover:border-zinc-600 disabled:opacity-40"><ArrowDown size={13} /></button>
+        <span className="rounded-lg bg-white/[0.07] px-2.5 py-1 text-xs text-zinc-300">{active ? "编辑中…" : "编辑"}</span>
+        <button type="button" aria-label={"删除「" + title + "」"} onClick={stop(onDelete)} className="rounded-lg border border-zinc-800 px-2 py-1 text-xs text-zinc-400 transition-colors duration-200 hover:border-red-500 hover:text-red-300">
           <Trash2 size={13} />
         </button>
       </div>
@@ -3071,9 +3202,25 @@ export default function AdminApp() {
   const [showPassword, setShowPassword] = useState(false);
   const [loggingIn, setLoggingIn] = useState(false);
   const [data, setData] = useState<PortfolioData>(normalize(emptyPortfolioData));
+  const draftRef = useRef(data);
+  draftRef.current = data;
+  /**
+   * 「上一次保存成功」的那一份数据，按条目保存的基准。
+   *
+   * 从这份快照出发计算字段差异，只把当前这一处的变化提交。快照之外、草稿里多出来的
+   * 改动（别的栏目还没保存的东西）就不会被顺带写进数据库。
+   */
+  const savedRef = useRef<PortfolioData>(normalize(emptyPortfolioData));
   const [status, setStatus] = useState("");
   const [uploadProgress, setUploadProgress] = useState<{ fileName: string; percent: number } | null>(null);
+  const [coverPicker, setCoverPicker] = useState<{ file: File; resolve: (position: CoverPosition) => void } | null>(null);
+  const [postImagesBusy, setPostImagesBusy] = useState(false);
+  const [slideUploadBusy, setSlideUploadBusy] = useState(false);
+  const slideUploadBusyRef = useRef(false);
+  const postImagesBusyRef = useRef(false);
+  const uploadClearTimer = useRef<number | undefined>(undefined);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [loading, setLoading] = useState(true);
   // 有没有「改了但还没保存」的内容。任何走 update() 的编辑都会点亮它，save() 成功才熄灭。
   // 用途有两个：底部状态条常驻提示、以及在用户关页面时拦一下（长表单最容易白填）。
@@ -3083,10 +3230,14 @@ export default function AdminApp() {
   const [expandedExperienceId, setExpandedExperienceId] = useState<string | null>(null);
   const [expandedWorkId, setExpandedWorkId] = useState<string | null>(null);
   const [expandedAiWorkId, setExpandedAiWorkId] = useState<string | null>(null);
+  const [expandedCaseId, setExpandedCaseId] = useState<string | null>(null);
   const [expandedResumeId, setExpandedResumeId] = useState<string | null>(null);
   const [expandedGalleryId, setExpandedGalleryId] = useState<string | null>(null);
   const [expandedTreasureId, setExpandedTreasureId] = useState<string | null>(null);
   const [expandedPoemId, setExpandedPoemId] = useState<string | null>(null);
+  const [expandedPostId, setExpandedPostId] = useState<string | null>(null);
+  const [expandedSlideId, setExpandedSlideId] = useState<string | null>(null);
+  const [previewDeck, setPreviewDeck] = useState<SlideDeck | null>(null);
   const [expandedMusicId, setExpandedMusicId] = useState<string | null>(null);
   /**
    * 音乐模块的批量操作状态。
@@ -3141,6 +3292,8 @@ export default function AdminApp() {
   const galleryModalIndex = indexByRowKey(data.gallery || [], expandedGalleryId);
   const treasureModalIndex = indexByRowKey(data.treasures || [], expandedTreasureId);
   const poemModalIndex = indexByRowKey(data.profile.pageCopy?.poemList || [], expandedPoemId);
+  const postModalIndex = indexByRowKey(data.profile.pageCopy?.postList || [], expandedPostId);
+  const slideModalIndex = indexByRowKey(data.profile.pageCopy?.slideList || [], expandedSlideId);
   const musicModalIndex = indexByRowKey(data.musicTracks || [], expandedMusicId);
 
   const [expandedFloatingId, setExpandedFloatingId] = useState("");
@@ -3156,10 +3309,12 @@ export default function AdminApp() {
   // 概览（卡片 / 趋势 / 分布 / 点击排行）和访客列表是两个接口：翻页、搜索只重拉列表。
   const [analytics, setAnalytics] = useState<AnalyticsSummaryPayload | null>(null);
   const [visitorPage, setVisitorPage] = useState<AnalyticsVisitorsPayload | null>(null);
-  const [analyticsRange, setAnalyticsRange] = useState<AnalyticsRange>("7d");
+  const [analyticsRange, setAnalyticsRange] = useState<AnalyticsRange>("today");
+  const [analyticsRefresh, setAnalyticsRefresh] = useState(0);
+  const contentCatalog = useMemo(() => analyticsCatalog(data), [data]);
   // 默认只看真人：爬虫和本机预览浏览器是大头，混在一起数字没有意义。
   const [analyticsHumanOnly, setAnalyticsHumanOnly] = useState(true);
-  const [analyticsView, setAnalyticsView] = useState<"overview" | "visitors" | "chats" | "clicks">("overview");
+  const [analyticsView, setAnalyticsView] = useState<"overview" | "visitors" | "chats" | "clicks" | "page" | "work" | "video">("overview");
   const [visitorQuery, setVisitorQuery] = useState("");
   const [visitorQueryDraft, setVisitorQueryDraft] = useState("");
   const [visitorPageNo, setVisitorPageNo] = useState(1);
@@ -3194,6 +3349,7 @@ export default function AdminApp() {
   }
 
   async function loadVisits() {
+    setAnalyticsRefresh(value => value + 1);
     setVisitsLoading(true);
     setVisitsError("");
     try {
@@ -3366,24 +3522,26 @@ export default function AdminApp() {
     void loadAssistantKeywords();
   }, [active, analyticsView, analyticsRange, analyticsHumanOnly]);
 
-  // 侧栏导航。图标和文字都给（只用图标会牺牲可发现性），顺序按「先看结构、再看内容、
-  // 最后是设置」排：站点资料 + 模块管理是站点的结构层；中间是各栏目的内容；
-  // 弹幕设置是装饰性的；「站点检测」是纯运维的访问记录，与站点内容无关，单独放最后。
+  // 站点检测紧挨站点资料，放在模块管理前。
   const nav = useMemo(
     () => [
       { key: "profile", label: "站点资料", icon: UserRound },
+      { key: "tracking", label: "站点检测", icon: Activity },
       { key: "modules", label: "模块管理", icon: LayoutList },
+      { key: "toolSettings", label: "应用配置", icon: LayoutGrid },
       { key: "resume", label: "个人简历", icon: FileText },
       { key: "experiences", label: "我的经历", icon: Briefcase },
       { key: "works", label: "作品媒体", icon: LayoutGrid },
       { key: "ai", label: "AI专区", icon: Sparkles },
+      { key: "cases", label: "案例分析", icon: FileText },
       { key: "gallery", label: "应用技能", icon: Images },
       { key: "treasures", label: "我的珍藏", icon: Gem },
       { key: "poems", label: "诗与惆怅", icon: Feather },
+      { key: "posts", label: "图文分享", icon: StickyNote },
+      { key: "slides", label: "演示文稿", icon: Presentation },
       { key: "music", label: "音乐播放", icon: Music },
       { key: "contact", label: "联系方式", icon: AtSign },
       { key: "floating", label: "弹幕设置", icon: MessagesSquare },
-      { key: "tracking", label: "站点检测", icon: Activity },
     ],
     [],
   );
@@ -3399,7 +3557,7 @@ export default function AdminApp() {
   // 实际的栏目顺序。normalizeSectionOrder 会把残缺 / 过期 / 重复的 sectionOrder
   // 补成一份完整名单，所以这里永远是 7 项、且不含未知键。
   const moduleOrder = useMemo(
-    () => normalizeSectionOrder(data.profile.pageCopy?.sectionOrder),
+    () => normalizeSectionOrder(data.profile.pageCopy?.sectionOrder, data.profile.pageCopy?.caseOrderConfigured),
     [data.profile.pageCopy],
   );
 
@@ -3413,16 +3571,19 @@ export default function AdminApp() {
       case "resume": return resumeProfiles.length;
       case "works": return (data.works || []).length;
       case "ai": return (data.profile.pageCopy?.aiWorks || []).length;
+      case "cases": return (data.profile.pageCopy?.caseWorks ?? defaultCaseWorks).length;
       case "prospects": return (data.gallery || []).length;
       case "treasures": return (data.treasures || []).length;
       case "poems": return (data.profile.pageCopy?.poemList || []).length;
+      case "posts": return (data.profile.pageCopy?.postList || []).length;
+      case "slides": return (data.profile.pageCopy?.slideList || []).length;
       default: return null;
     }
   }
 
   /** 上移 / 下移一格。写回的是**一整份**顺序数组，前台只认这一份。 */
   function moveModule(key: SectionKey, delta: number) {
-    const order = normalizeSectionOrder(data.profile.pageCopy?.sectionOrder);
+    const order = normalizeSectionOrder(data.profile.pageCopy?.sectionOrder, data.profile.pageCopy?.caseOrderConfigured);
     const from = order.indexOf(key);
     const to = from + delta;
     if (from < 0 || to < 0 || to >= order.length) return;
@@ -3434,7 +3595,7 @@ export default function AdminApp() {
     // 用户没有任何理由再去找一个「保存」来确认这一步。
     // 底栏还在的时候它靠草稿机制兜着，底栏一撤（宝：不需要底栏了），
     // 这里再走 update() 就会变成「点了箭头、数字变了、刷新之后顺序回去」的静默丢数据。
-    void mutateAndSave((draft) => { editPageCopy(draft, { sectionOrder: next }); }, undefined, { collapse: false });
+    void mutateAndSave((draft) => { editPageCopy(draft, { sectionOrder: next, caseOrderConfigured: true }); }, undefined, { collapse: false });
   }
 
   /**
@@ -3477,7 +3638,9 @@ export default function AdminApp() {
         setSupabaseConfigured(Boolean(session.supabaseConfigured));
         setMaxUploadSizeMb(Number(session.maxUploadSizeMb || 50));
         setStorageProvider(session.storageProvider || "supabase");
-        setData(normalize(portfolio));
+        const loaded = normalize(portfolio);
+        savedRef.current = loaded;
+        setData(loaded);
       })
       .catch(() => setStatus("初始化失败，请检查服务"))
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -3538,24 +3701,40 @@ export default function AdminApp() {
     setAuthenticated(false);
   }
 
+  /**
+   * 提交相对已保存快照的差异。成功返回服务端最新数据，失败返回 null 并提示。
+   * 保存的两种粒度（整份 / 按条目）都走这里，免得请求细节写两遍走样。
+   */
+  async function putPortfolio(nextData: PortfolioData): Promise<PortfolioData | null> {
+    const changes = portfolioChanges(savedRef.current, nextData);
+    if (!changes.length) return savedRef.current;
+    const res = await fetch("/api/admin/portfolio", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ changes }),
+      signal: AbortSignal.timeout(30000),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setStatus(json.error || "保存失败");
+      return null;
+    }
+    return normalize(json.data);
+  }
+
   async function save(nextData = data, options: { collapse?: boolean } = {}) {
+    if (savingRef.current) { setStatus('正在保存，请稍候再操作。'); return false; }
+    savingRef.current = true;
     const { collapse = true } = options;
     setSaving(true);
     setStatus("");
     try {
-      const res = await fetch("/api/admin/portfolio", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(nextData),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setStatus(json.error || "保存失败");
-        return false;
-      }
-      const savedData = normalize(json.data);
-      setData(savedData);
-      setDirty(false);
+      const savedData = await putPortfolio(nextData);
+      if (!savedData) return false;
+      savedRef.current = savedData;
+      const remainingDraft = rebasePortfolioDraft(savedData, nextData, draftRef.current);
+      setData(remainingDraft);
+      setDirty(portfolioChanges(savedData, remainingDraft).length > 0);
       setStatus("已保存到数据库。");
       const referencedAudioUrls = new Set((savedData.musicTracks || []).map((track) => track.audioUrl).filter(Boolean));
       const replacedAudioUrls = [...pendingMusicAudioDeletesRef.current.values()].filter((url) => !referencedAudioUrls.has(url));
@@ -3563,7 +3742,7 @@ export default function AdminApp() {
         pendingMusicAudioDeletesRef.current.clear();
       } else {
         try {
-          if (await deleteMedia(replacedAudioUrls, false)) pendingMusicAudioDeletesRef.current.clear();
+          void deleteMedia(replacedAudioUrls, false).then(ok => { if (ok) for (const [key,url] of pendingMusicAudioDeletesRef.current) if(replacedAudioUrls.includes(url))pendingMusicAudioDeletesRef.current.delete(key); }).catch(()=>{});
         } catch {
           setStatus("数据已保存，但旧音频文件清理失败；下次保存时会重试。");
         }
@@ -3579,12 +3758,62 @@ export default function AdminApp() {
       }
       return true;
     } catch (error: any) {
-      setStatus(error.message || "保存失败，请检查服务");
+      setStatus(error.name === 'TimeoutError' ? '保存确认超时，请刷新核对结果后再操作，避免重复提交。' : error.message || "保存失败，请检查服务");
       return false;
     } finally {
       setSaving(false);
+      savingRef.current = false;
     }
   }
+
+  /**
+   * 按条目保存：只提交「这一处」。
+   *
+   * 以上一次保存成功的快照为基准，由 scoped 回调把当前这一处从草稿里叠上去，再计算差异。
+   * 草稿里其它栏目还没保存的改动**不在基准里**，因此不会被顺带写进数据库；
+   * 它们继续留在草稿里，状态条照旧提示「有改动还没保存」。
+   *
+   * 保存后编辑器不关：按条目改东西经常要来回调，关掉再开纯属添乱。
+   */
+  async function saveScoped(
+    scoped: (base: PortfolioData, draft: PortfolioData) => void,
+    options: { draft?: PortfolioData; onSuccess?: () => void } = {},
+  ) {
+    if (savingRef.current) { setStatus('正在保存，请稍候再操作。'); return false; }
+    savingRef.current = true;
+    setSaving(true);
+    setStatus("");
+    try {
+      // draft 默认取当前草稿；调用方刚在同一个 tick 里改过草稿（比如补完歌词）时可以显式传进来 ——
+      // setData 要到下一轮渲染才生效，闭包里的 data 还是旧的。
+      const draft = options.draft ?? data;
+      const base = cloneData(savedRef.current);
+      scoped(base, draft);
+      const savedData = await putPortfolio(normalize(base));
+      if (!savedData) return false;
+      savedRef.current = savedData;
+      // 这一处已经提交，但草稿里别的栏目可能还有没保存的改动 —— 重新比一遍才准。
+      const remainingDraft = rebasePortfolioDraft(savedData, normalize(base), draftRef.current);
+      setData(remainingDraft);
+      setDirty(portfolioChanges(savedData, remainingDraft).length > 0);
+      setStatus("已保存。");
+      options.onSuccess?.();
+      return true;
+    } catch (error: any) {
+      setStatus(error.name === 'TimeoutError' ? '保存确认超时，请刷新核对结果后再操作，避免重复提交。' : error.message || "保存失败，请检查服务");
+      return false;
+    } finally {
+      setSaving(false);
+      savingRef.current = false;
+    }
+  }
+
+  /**
+   * 按条目保存时最常用的一种：把「某一整个列表」从草稿搬进基准。
+   * 传进去的 read / write 就是各栏目读自己那份列表的方式。
+   */
+  const scopedList = <T,>(read: (d: PortfolioData) => T[] | undefined, write: (d: PortfolioData, value: T[]) => void) =>
+    (base: PortfolioData, draft: PortfolioData) => write(base, read(draft) || []);
 
   async function updateAndSave(mutator: (draft: PortfolioData) => void) {
     const draft = cloneData(data);
@@ -3628,18 +3857,23 @@ export default function AdminApp() {
    * 「作品媒体」和「AI 专区」之间互相迁移（双向）。
    *
    * 两边的作品结构（Work）本来就是一个类型，所以迁移只是「从这头摘掉、往那头追加」，
-   * 一次 PUT 落库、要么都成要么都不成（mutateAndSave 失败会整体回滚）。
+   * 一次差异请求提交两个栏目；多表写入不是数据库事务，失败后应核对服务器状态。
    *
    * 三条刻意的设计：
    *  1. **绝不删素材**。图片 / 视频 / 附件的 COS 地址是同一批，只是换了个栏目归属，
    *     所以这里不走 removeAndSave（那个会在删行之后顺手删掉媒体文件）。
-   *  2. **换 id**。新 id 保证不会和「对面栏目里已有的条目」撞 key。
+   *  2. 保留作品 id，让跨栏目迁移后的历史统计仍归属于同一件作品。
    *  3. **分类原样带过去**。两个栏目的分类词表不一样（例如「账号运营」在 AI 专区里没有对应项），
    *     硬改会偷偷篡改用户填的内容。SelectField 遇到不认识的分类会显示成「xxx（当前）」，
    *     用户迁移后在目标栏目里自己改一下即可。
    */
   async function migrateWork(work: Work, index: number, direction: "to-ai" | "to-works") {
-    const moved: Work = { ...work, id: uid(direction === "to-ai" ? "aiwork" : "work") };
+    const moved: Work = { ...work, id: work.id || uid("work") };
+    const target = direction === "to-ai" ? data.profile.pageCopy?.aiWorks || [] : data.works || [];
+    if (target.some(item => item.id === moved.id)) {
+      setStatus("目标栏目已有相同编号的作品，请先检查重复内容。");
+      return false;
+    }
     const targetLabel = direction === "to-ai" ? "AI 专区" : "作品媒体";
     const drop = (list: Work[]) => list.filter((_, i) => i !== index);
 
@@ -3665,6 +3899,127 @@ export default function AdminApp() {
     );
   }
 
+  /**
+   * 图文多图上传。保留原图，另外生成列表预览，复用大小上限与进度提示。
+   * 每传完一张就按 id 追加 —— 用 id 而不是下标定位，上传途中列表被拖动排序也不会写错条目。
+   */
+  async function uploadPostImages(event: ChangeEvent<HTMLInputElement>, postId: string) {
+    const files = Array.from(event.target.files ?? []) as File[];
+    event.target.value = "";
+    if(postImagesBusyRef.current || !files.length)return;
+    postImagesBusyRef.current=true;setPostImagesBusy(true);
+    const failed: string[]=[];
+    try {
+    for (const file of files) {
+      if(file.size>maxUploadSizeMb*1024*1024){failed.push(file.name);continue;}
+      const current = draftRef.current.profile.pageCopy?.postList?.find(item=>item.id===postId);
+      const needsCover = !current?.coverUrl && !current?.images?.length;
+      // Choose the independent cover immediately; no network round trip before interaction.
+      const position = needsCover ? await new Promise<CoverPosition>(resolve=>setCoverPicker({file,resolve})) : null;
+      const uploaded = await uploadMediaFile(file, async (url) => {
+        update((draft) => {
+          const target = (draft.profile.pageCopy?.postList || []).find((item) => item.id === postId);
+          if (target) target.images = [...(target.images || []), url];
+        });
+        if(position) try {
+          const preview = await createImagePreview(file, position);
+          if (preview !== file) await uploadMediaFile(preview, previewUrl => {
+            update(draft => {
+              const target = draft.profile.pageCopy?.postList?.find(item => item.id === postId);
+              if (target) target.coverUrl = previewUrl;
+            });
+          });
+        } catch { setStatus('原图已上传，但封面生成失败，可单独上传封面后保存。'); }
+      });
+      if(!uploaded)failed.push(file.name);
+    }
+    if(failed.length)setStatus(`部分图片未上传：${failed.join('、')}。请检查文件大小和网络后重试，其他已上传图片已保留。`);
+    } catch(error:any) {setStatus(error?.message || '图片处理失败，请重试。');}
+    finally {postImagesBusyRef.current=false;setPostImagesBusy(false);}
+  }
+
+  async function uploadPostCover(event: ChangeEvent<HTMLInputElement>, postId: string) {
+    const file=event.target.files?.[0];event.target.value='';
+    if(!file||postImagesBusyRef.current)return;
+    postImagesBusyRef.current=true;setPostImagesBusy(true);
+    try {
+      const position=await new Promise<CoverPosition>(resolve=>setCoverPicker({file,resolve}));
+      const cover=await createImagePreview(file,position);
+      await uploadMediaFile(cover,url=>update(draft=>{const post=draft.profile.pageCopy?.postList?.find(p=>p.id===postId);if(post)post.coverUrl=url;}));
+    } catch(error:any) {setStatus(error?.message || '封面处理失败，请换一张图片重试。');}
+    finally {postImagesBusyRef.current=false;setPostImagesBusy(false);}
+  }
+
+  /**
+   * 演示文稿上传。一个入口同时接 PDF 与 PPTX，按扩展名分别落到 pdfUrl / fileUrl：
+   * - PDF 是前台演示用的（排版完全还原）。没有封面时，顺手把第一页渲染成封面一起传上去。
+   * - PPTX 是给访客「下载原文件」用的；只有它、没有 PDF 时前台才退回现场解析。
+   */
+  async function uploadSlideFile(event: ChangeEvent<HTMLInputElement>, deckId: string) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const kind = /\.pdf$/i.test(file.name) ? "pdf" : /\.pptx$/i.test(file.name) ? "pptx" : null;
+    if (!kind) {
+      setStatus("请选择 .pdf 或 .pptx 文件（旧版 .ppt 请先用 PowerPoint / WPS 另存）。");
+      return;
+    }
+    if(slideUploadBusyRef.current)return;
+    slideUploadBusyRef.current=true;setSlideUploadBusy(true);
+    try {
+    const deck = (data.profile.pageCopy?.slideList || []).find((item) => item.id === deckId);
+    const hadCover = Boolean(deck?.cover);
+    let uploaded = false;
+    await uploadMediaFile(file, (url) => {
+      uploaded = true;
+      update((draft) => {
+        const target = (draft.profile.pageCopy?.slideList || []).find((item) => item.id === deckId);
+        if (!target) return;
+        if (kind === "pdf") {target.pdfUrl = url;target.pdfFileName=file.name;}
+        else { target.fileUrl = url; target.fileName = file.name; }
+        if (!target.title) target.title = file.name.replace(/\.(pdf|pptx)$/i, "");
+      });
+    });
+    if (uploaded && !hadCover) await generateSlideCover(file, deckId);
+    else if(uploaded)setStatus(`${file.name} 已上传，点击「确认保存」发布。`);
+    } finally {slideUploadBusyRef.current=false;setSlideUploadBusy(false);}
+  }
+
+  /** 用 PDF 第一页生成封面。失败不影响 PDF 本身，只提示一句、前台显示占位。 */
+  async function generateSlideCover(file: File, deckId: string) {
+    try {
+      window.clearTimeout(uploadClearTimer.current);setUploadProgress(null);
+      setStatus("文件已上传，正在用第一页生成封面…");
+      const { slideFirstPageCover } = await import("./slide-cover");
+      let timer=0;
+      const cover = await Promise.race([slideFirstPageCover(file),new Promise<never>((_,reject)=>{timer=window.setTimeout(()=>reject(new Error('首页生成超时，可点击重新生成')),25000);})]).finally(()=>window.clearTimeout(timer));
+      let coverUploaded=false;
+      await uploadMediaFile(cover, (url) => {
+        coverUploaded=true;
+        update((draft) => {
+          const target = (draft.profile.pageCopy?.slideList || []).find((item) => item.id === deckId);
+          if (target) target.cover = url;
+        });
+      });
+      if(coverUploaded)setStatus('文件与首页封面已就绪，点击「确认保存」发布。');
+    } catch (error: any) {
+      setStatus(`文件已上传，但首页封面生成失败：${error?.message || "未知错误"}。可重新生成或手动上传封面。`);
+    }
+  }
+
+  async function regenerateSlideCover(deck: SlideDeck) {
+    if(slideUploadBusyRef.current)return;
+    slideUploadBusyRef.current=true;setSlideUploadBusy(true);setStatus('正在读取文件首页…');
+    try {
+      const url=deck.pdfUrl||deck.fileUrl;
+      const response=await fetch(`/api/media/slides?url=${encodeURIComponent(url || '')}`,{signal:AbortSignal.timeout(30000)});
+      if(!response.ok)throw new Error('读取演示文件失败');
+      const file=new File([await response.blob()],deck.pdfUrl?'presentation.pdf':'presentation.pptx');
+      await generateSlideCover(file,deck.id);
+    }catch(error:any){setStatus(error?.message||'生成封面失败');}
+    finally{slideUploadBusyRef.current=false;setSlideUploadBusy(false);}
+  }
+
   async function uploadMusicAudio(file: File, trackId: string) {
     if (!file.type.startsWith("audio/") && !/\.(mp3|wav|flac|m4a|aac|ogg|opus|wma|aiff)$/i.test(file.name)) {
       setStatus("请选择音频文件。");
@@ -3686,10 +4041,9 @@ export default function AdminApp() {
   }
 
   async function upload(event: ChangeEvent<HTMLInputElement>, onUrl: (url: string, file: File) => void | Promise<void>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    await uploadMediaFile(file, onUrl);
+    const files = Array.from(event.target.files || []) as File[];
     event.target.value = "";
+    for(const file of files)await uploadMediaFile(file, onUrl);
   }
 
   /**
@@ -3698,27 +4052,17 @@ export default function AdminApp() {
    * 调用方负责清空 input.value。
    */
   async function uploadMediaFile(file: File, onUrl: (url: string, file: File) => void | Promise<void>) {
+    window.clearTimeout(uploadClearTimer.current);
     const maxBytes = maxUploadSizeMb * 1024 * 1024;
-    // 压缩可能换掉文件名（jpg → webp），所以另起一个变量，file 留着算压缩率。
-    let uploadFile = file;
-
-    if (file.type.startsWith("image/")) {
-      setStatus("正在压缩图片...");
-      try {
-        uploadFile = await compressImageForUpload(file);
-      } catch {
-        uploadFile = file;
-      }
-    }
+    // Preserve uploaded originals; lightweight previews are generated separately.
+    const uploadFile = file;
 
     if (uploadFile.size > maxBytes) {
       setStatus(`文件超过 ${maxUploadSizeMb}MB 上传上限，请压缩后再试，或调整 MAX_UPLOAD_SIZE_MB。`);
-      return;
+      return false;
     }
 
-    const savedSize = file.size - uploadFile.size;
-    const savedText = savedSize > 0 ? `，已压缩 ${Math.round((savedSize / file.size) * 100)}%` : "";
-    setStatus(`正在上传媒体${savedText}...`);
+    setStatus('正在准备上传原文件…');
     setUploadProgress({ fileName: uploadFile.name, percent: 0 });
 
     if (storageProvider === "tencent-cos") {
@@ -3731,9 +4075,11 @@ export default function AdminApp() {
             contentType: uploadFile.type || "application/octet-stream",
             size: uploadFile.size,
           }),
+          signal: AbortSignal.timeout(20000),
         });
         const token = await tokenRes.json().catch(() => ({}));
         if (!tokenRes.ok || !token.uploadUrl) throw new Error(token.error || "创建上传签名失败");
+        setStatus('正在上传原文件…');
 
         await new Promise<void>((resolve, reject) => {
           const xhr = new XMLHttpRequest();
@@ -3756,13 +4102,13 @@ export default function AdminApp() {
 
         await onUrl(token.signedUrl || token.url, file);
         setUploadProgress({ fileName: uploadFile.name, percent: 100 });
-        setStatus("媒体已上传。");
-        window.setTimeout(() => setUploadProgress(null), 1000);
-        return;
+        setStatus("文件已上传，请保存当前修改。");
+        uploadClearTimer.current=window.setTimeout(() => setUploadProgress(null), 1000);
+        return true;
       } catch (error: any) {
         setStatus(error.message || "腾讯云直传失败");
         setUploadProgress(null);
-        return;
+        return false;
       }
     }
 
@@ -3800,19 +4146,20 @@ export default function AdminApp() {
     } catch (error: any) {
       setStatus(error.message || "上传失败");
       setUploadProgress(null);
-      return;
+      return false;
     }
 
     if (!json.url) {
       setStatus(json.error || "上传失败");
       setUploadProgress(null);
-      return;
+      return false;
     }
 
     await onUrl(json.url, file);
     setUploadProgress({ fileName: uploadFile.name, percent: 100 });
-    setStatus("媒体已上传。");
-    window.setTimeout(() => setUploadProgress(null), 1000);
+    setStatus("文件已上传，请保存当前修改。");
+    uploadClearTimer.current=window.setTimeout(() => setUploadProgress(null), 1000);
+    return true;
   }
 
   async function deleteMedia(urls: string[], announceSuccess = true) {
@@ -3840,7 +4187,7 @@ export default function AdminApp() {
     if (!file) return;
     const text = await file.text();
     onText(stripLyricTimeline(text));
-    setStatus("字幕文本已导入。保存这首音乐时会自动获取腾讯云时间轴。");
+    setStatus("字幕文本已导入，可直接保存；需要逐字同步时请点击“生成歌词时间轴”。");
     event.target.value = "";
   }
 
@@ -3878,25 +4225,27 @@ export default function AdminApp() {
     }
   }
 
-  async function saveMusicTrack(index: number) {
+  async function saveMusicTrack(index: number, generateTimeline = false) {
     const draft = cloneData(data);
     const track = draft.musicTracks?.[index];
     if (!track) {
       await save();
       return;
     }
+    const scoped = scopedList((d) => d.musicTracks, (d, v) => { d.musicTracks = v; });
 
     const plainLyrics = stripLyricTimeline(track.lyrics);
-    if (!isInstrumental(track.lyrics) && track.audioUrl && plainLyrics && !hasEnhancedLyricTimeline(track.lyrics)) {
+    if (generateTimeline && !isInstrumental(track.lyrics) && track.audioUrl && plainLyrics) {
       const lyrics = await requestLyricsWithAsr(track, index, plainLyrics);
       if (!lyrics) return;
       track.lyrics = lyrics;
-      setData(normalize(draft));
-      await save(normalize(draft));
+      const next = normalize(draft);
+      setData(next);
+      await saveScoped(scoped, { draft: next });
       return;
     }
 
-    await save(draft);
+    await saveScoped(scoped, { draft: normalize(draft) });
   }
 
   /* ------------------------------------------------------ 音乐：排序与批量操作 */
@@ -4052,21 +4401,36 @@ export default function AdminApp() {
     setTreasureBulkBusy(false);
   }
 
-  const SaveCurrentButton = ({ label = "保存全部" }: { label?: string }) => (
-    <button
+  /**
+   * 保存按钮。
+   *
+   * - 不传 scoped：整份保存，按钮写「保存全部」。页面级表单（站点资料 / 联系方式 /
+   *   弹幕设置…）用它 —— 那些页面本来就是一份设置，整份提交才说得通。
+   * - 传 scoped：按条目保存，按钮写「保存」。列表里的单条编辑器用它，只提交这一条
+   *   （所在的列表），别的栏目没保存的改动继续留在草稿里。
+   */
+  const SaveCurrentButton = ({ label = "保存全部", scoped }: {
+    label?: string;
+    scoped?: (base: PortfolioData, draft: PortfolioData) => void;
+  }) => {
+    const candidate = cloneData(savedRef.current);
+    if (scoped) scoped(candidate, data);
+    const changed = portfolioChanges(savedRef.current, scoped ? candidate : data).length > 0;
+    if (!changed && !slideUploadBusy && !postImagesBusy && !(uploadProgress && uploadProgress.percent<100)) return null;
+    return <div className="adm-save-actions"><span>{saving ? '正在保存' : '未保存'}</span><button
       type="button"
-      onClick={() => { void save(); }}
-      disabled={saving}
-      className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-300 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-200 disabled:opacity-60"
+      onClick={() => { void (scoped ? saveScoped(scoped) : save()); }}
+      disabled={saving || postImagesBusy || slideUploadBusy || Boolean(uploadProgress && uploadProgress.percent < 100)}
+      className="adm-save-button"
     >
       {/*
        * 不带图标（宝：保存不需要又 ICON）。整排按钮里只有它一个挂着图标会很跳，
        * 而且「保存」这两个字已经说完了全部意思。
        * 转圈的 Loader2 保留 —— 那是保存中的状态反馈，不是装饰。
        */}
-      {saving ? <Loader2 className="animate-spin" size={14} /> : null} {label}
-    </button>
-  );
+      {saving ? <Loader2 className="animate-spin" size={14} /> : null} {saving ? '保存中…' : label}
+    </button></div>;
+  };
 
   if (loading) {
     return (
@@ -4171,7 +4535,8 @@ export default function AdminApp() {
      * → 宽度恒定。再加 scrollbar-gutter: stable 把右栏滚动槽也常驻，
      * 切栏目时连右栏内部都不会横跳。两层保险。
      */
-    <main className="flex h-dvh flex-col overflow-hidden bg-[#09090b] text-zinc-100">
+    <UploadFeedback.Provider value={{progress:uploadProgress,status}}><main className="admin-theme flex h-dvh flex-col overflow-hidden bg-[#09090b] text-zinc-100">
+      {coverPicker && <ImageCoverPicker file={coverPicker.file} onSelect={position=>{coverPicker.resolve(position);setCoverPicker(null);}}/>}
       <header className="z-30 shrink-0 border-b border-zinc-900 bg-zinc-950/90 px-3 py-2.5 backdrop-blur md:px-5">
         <div className="mx-auto flex max-w-[1600px] flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
@@ -4224,7 +4589,7 @@ export default function AdminApp() {
                 </p>
               ) : dirty ? (
                 <p className="flex items-center gap-1.5 text-xs text-amber-300/90">
-                  <Info size={14} className="shrink-0" /> 有改动还没保存，打开对应条目点「保存全部」。
+                  <Info size={14} className="shrink-0" /> 有改动还没保存，打开对应条目点「保存」。
                 </p>
               ) : null}
             </div>
@@ -4290,6 +4655,7 @@ export default function AdminApp() {
          */}
         <div className="admin-scroll min-h-0 flex-1 overflow-y-auto px-3 py-3 md:px-5 md:py-4">
           <div className="mx-auto w-full max-w-4xl space-y-3.5">
+            {active === "toolSettings" && <AppSettingsAdmin />}
             {active === "modules" && (
               <>
                 <Section
@@ -4297,7 +4663,7 @@ export default function AdminApp() {
                   description="前台导航里的每一个栏目都在这里。开关决定访客能不能看到它，箭头调整它们在前台的先后，「页首文案」改该栏目标题下面那句诗。新增内容请到各栏目自己的抬头。"
                 >
                   <p className="adm-note adm-note-info text-xs leading-5 text-emerald-200">
-                    顺序和开关都是改完即保存；「页首文案」在弹窗里点「保存全部」。
+                    顺序和开关都是改完即保存；「页首文案」在弹窗里点「保存全部」（它改的是整页的说明文字）。
                   </p>
 
                   <div className="space-y-3">
@@ -4406,6 +4772,7 @@ export default function AdminApp() {
 
             {active === "profile" && (
               <Section title="站点资料" description="站点的基本信息：名称、头像、简介、签名。">
+                <ProfileGroup title="基本信息与头像" description="名称、头像地址与图片上传">
                 <div className="grid gap-3 md:grid-cols-2">
                   <Field label="名称" value={data.profile.name} onChange={(value) => update((draft) => { draft.profile.name = value; })} />
                   <Field label="头像 URL" value={data.profile.avatar} onChange={(value) => update((draft) => { draft.profile.avatar = value; })} />
@@ -4422,6 +4789,8 @@ export default function AdminApp() {
                     字段是 `hideAvatar` 而不是 `avatarVisible`，勾选状态与字段同向，
                     省掉一次 `!value` 反转 —— 那种地方最容易写反，前台会跟开关相反。
                     改完即保存（与「模块管理」的开关一致），不用等「保存全部」。 */}
+                </ProfileGroup>
+                <ProfileGroup title="首页展示" description="头像与入场动画的显示开关，修改后立即保存">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                   <VisibilitySwitch
                     name="首页头像"
@@ -4452,13 +4821,13 @@ export default function AdminApp() {
                     }}
                   />
                 </div>
+                </ProfileGroup>
+                <ProfileGroup title="介绍与签名" description="一句话标签、自我介绍和诗句签名">
                 <Field label="一句话标签" value={data.profile.tagline} onChange={(value) => update((draft) => { draft.profile.tagline = value; })} textarea />
                 <Field label="自我介绍" value={data.profile.intro} onChange={(value) => update((draft) => { draft.profile.intro = value; })} textarea />
-                <div className="space-y-3 border-t border-zinc-800/80 pt-4">
-                  <div>
-                    <h3 className="text-sm font-medium text-zinc-100">首页数据标签</h3>
-                    <p className="mt-1 text-xs leading-5 text-zinc-500">编辑前台“关于我”下方的作品、播放和 AI 技能数据。</p>
-                  </div>
+                <Field label="诗句/签名" value={data.profile.quote} onChange={(value) => update((draft) => { draft.profile.quote = value; })} textarea />
+                </ProfileGroup>
+                <ProfileGroup title="首页数据标签" description="“关于我”下方的作品、播放和 AI 技能数据">
                   <div className="grid gap-4 md:grid-cols-3">
                     {(["works", "plays", "ai"] as const).map((key) => {
                       const stat = { ...defaultHomeStats[key], ...data.profile.pageCopy?.homeStats?.[key] };
@@ -4473,8 +4842,7 @@ export default function AdminApp() {
                       );
                     })}
                   </div>
-                </div>
-                <Field label="诗句/签名" value={data.profile.quote} onChange={(value) => update((draft) => { draft.profile.quote = value; })} textarea />
+                </ProfileGroup>
                 <SaveCurrentButton label="保存全部" />
               </Section>
             )}
@@ -4580,7 +4948,7 @@ export default function AdminApp() {
                     <EditorModal
                       title={profile.position?.trim() || "未命名岗位"}
                       onClose={() => setExpandedResumeId(null)}
-                      footer={<SaveCurrentButton label="保存全部" />}
+                      footer={<SaveCurrentButton label="保存" scoped={scopedList((d) => d.profile.pageCopy?.resumeProfiles, (d, v) => { d.profile.pageCopy!.resumeProfiles = v; })} />}
                     >
                       <section className="adm-panel space-y-3 p-3">
                         <div className="grid gap-3 md:grid-cols-2">
@@ -4683,7 +5051,7 @@ export default function AdminApp() {
                             <span className="px-1 font-mono">{index + 1} / {total}</span>
                             <button type="button" disabled={index === total - 1} onClick={() => goTo(index + 1)} className="rounded-md border border-zinc-800 px-2 py-1 text-zinc-300 hover:border-zinc-600 disabled:opacity-40">下一条</button>
                           </div>
-                          <SaveCurrentButton label="保存全部" />
+                          <SaveCurrentButton label="保存" scoped={scopedList((d) => d.experiences, (d, v) => { d.experiences = v; })} />
                         </>
                       }
                     >
@@ -4763,7 +5131,7 @@ export default function AdminApp() {
                     run: (work, index) => migrateWork(work, index, "to-ai"),
                   }}
                   onStatus={setStatus}
-                  renderSaveButton={() => <SaveCurrentButton label="保存全部" />}
+                  renderSaveButton={() => <SaveCurrentButton label="保存" scoped={scopedList((d) => d.works, (d, v) => { d.works = v; })} />}
                 />
               </>
             )}
@@ -4801,9 +5169,39 @@ export default function AdminApp() {
                     run: (work, index) => migrateWork(work, index, "to-works"),
                   }}
                   onStatus={setStatus}
-                  renderSaveButton={() => <SaveCurrentButton label="保存全部" />}
+                  renderSaveButton={() => <SaveCurrentButton label="保存" scoped={scopedList((d) => d.profile.pageCopy?.aiWorks, (d, v) => { d.profile.pageCopy!.aiWorks = v; })} />}
                 />
               </>
+            )}
+
+            {active === "cases" && (
+              <WorkListEditor
+                items={data.profile.pageCopy?.caseWorks ?? defaultCaseWorks}
+                title="案例分析"
+                hint="与作品一样管理标题、分类与封面；封面可稍后上传。填写案例网页地址后，访客点击卡片直接打开网页。"
+                addLabel="新增案例"
+                itemNoun="案例"
+                webpage
+                emptyDraft={{ ...emptyWork, category: "视频案例", pageUrl: "" }}
+                categoryOptions={[{ value: "视频案例", label: "视频案例" }, { value: "设计案例", label: "设计案例" }, { value: "其他案例", label: "其他案例" }]}
+                readItems={(draft) => draft.profile.pageCopy?.caseWorks ?? defaultCaseWorks}
+                writeItems={(draft, items) => { editPageCopy(draft, { caseWorks: items }); }}
+                expandedId={expandedCaseId}
+                setExpandedId={setExpandedCaseId}
+                update={update}
+                updateAndSave={updateAndSave}
+                upload={upload}
+                uploadFile={uploadMediaFile}
+                deleteMedia={deleteMedia}
+                addDraft={addDraft}
+                removeAndSave={removeAndSave}
+                reorder={(from, to) => reorderWorks(
+                  (draft) => draft.profile.pageCopy?.caseWorks ?? defaultCaseWorks,
+                  (draft, items) => { editPageCopy(draft, { caseWorks: items }); }, from, to,
+                )}
+                onStatus={setStatus}
+                renderSaveButton={() => <SaveCurrentButton label="保存" scoped={scopedList((d) => d.profile.pageCopy?.caseWorks ?? defaultCaseWorks, (d, v) => { editPageCopy(d, { caseWorks: v }); })} />}
+              />
             )}
 
             {active === "gallery" && (
@@ -5007,7 +5405,7 @@ export default function AdminApp() {
                       title={item.title?.trim() || "未命名截图"}
                       onClose={() => setExpandedGalleryId(null)}
                       footer={
-                        <SaveCurrentButton label="保存全部" />
+                        <SaveCurrentButton label="保存" scoped={scopedList((d) => d.gallery, (d, v) => { d.gallery = v; })} />
                       }
                     >
                       <section className="adm-panel space-y-3 p-3">
@@ -5525,7 +5923,7 @@ export default function AdminApp() {
                       title={"珍藏 " + (index + 1)}
                       onClose={() => setExpandedTreasureId(null)}
                       footer={
-                        <SaveCurrentButton label="保存全部" />
+                        <SaveCurrentButton label="保存" scoped={scopedList((d) => d.treasures, (d, v) => { d.treasures = v; })} />
                       }
                     >
                       <section className="adm-panel space-y-3 p-3">
@@ -5605,7 +6003,7 @@ export default function AdminApp() {
                     <EditorModal
                       title={"诗 " + (index + 1)}
                       onClose={() => setExpandedPoemId(null)}
-                      footer={<SaveCurrentButton label="保存全部" />}
+                      footer={<SaveCurrentButton label="保存" scoped={scopedList((d) => d.profile.pageCopy?.poemList, (d, v) => { d.profile.pageCopy!.poemList = v; })} />}
                     >
                       <section className="adm-panel space-y-3 p-3">
                         <Field label="题目（可留空）" value={item.title} onChange={(value) => update((draft) => { draft.profile.pageCopy!.poemList![index].title = value; })} />
@@ -5656,6 +6054,230 @@ export default function AdminApp() {
                     </EditorModal>
                   );
                 })()}
+              </>
+            )}
+
+            {active === "posts" && (
+              <>
+                <Section
+                  title="图文分享"
+                  description="前台按这里的顺序上下滑切换，每条的图片按顺序左右翻页（第一张是封面）。页首文案在「模块管理」里。"
+                  action={
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = uid("post");
+                        addDraft(
+                          (draft) => { draft.profile.pageCopy!.postList = [...(draft.profile.pageCopy!.postList || []), { ...emptyPost, id }]; },
+                          () => setExpandedPostId(id),
+                        );
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-zinc-300 hover:border-zinc-600"
+                    >
+                      <Plus size={15} /> 新增图文
+                    </button>
+                  }
+                >
+                  <p className="text-sm leading-5 text-zinc-400">共 {(data.profile.pageCopy?.postList || []).length} 条。</p>
+                </Section>
+                {(data.profile.pageCopy?.postList || []).map((item: ImagePost, index: number) => {
+                  const key = rowKey(item.id, index);
+                  const isActive = expandedPostId === key;
+                  return (
+                    <EditorRow key={key} expanded={isActive}>
+                      <ListSummaryRow
+                        thumb={item.coverUrl || item.previews?.find(p => p.source.split('?')[0] === item.images?.[0]?.split('?')[0])?.url || item.images?.[0]}
+                        title={item.title || "图文 " + (index + 1)}
+                        meta={`${(item.images || []).length} 张图`}
+                        preview={item.text}
+                        active={isActive}
+                        onEdit={() => setExpandedPostId(key)}
+                        canMoveUp={index > 0}
+                        canMoveDown={index < (data.profile.pageCopy?.postList || []).length - 1}
+                        onMove={(delta) => void mutateAndSave((draft) => { draft.profile.pageCopy!.postList = moveItem(draft.profile.pageCopy!.postList || [], index, index + delta); }, undefined, { collapse: false })}
+                        onDelete={() => {
+                          void removeAndSave(
+                            (draft) => { draft.profile.pageCopy!.postList = (draft.profile.pageCopy!.postList || []).filter((_, i) => i !== index); },
+                            [...(item.images || []), ...(item.previews || []).map(p => p.url), item.coverUrl || ''],
+                            () => setExpandedPostId(null),
+                          );
+                        }}
+                      />
+                    </EditorRow>
+                  );
+                })}
+
+                {postModalIndex >= 0 && (() => {
+                  const item = (data.profile.pageCopy?.postList || [])[postModalIndex];
+                  const index = postModalIndex;
+                  const images = item.images || [];
+                  const setImages = (next: string[]) => update((draft) => { const target = draft.profile.pageCopy!.postList![index]; target.images = next; target.previews = target.previews?.filter(p => next.some(url => url.split('?')[0] === p.source.split('?')[0])); });
+                  return (
+                    <EditorModal title={"图文 " + (index + 1)} size="lg" onClose={() => setExpandedPostId(null)} footer={<SaveCurrentButton label="保存" scoped={scopedList((d) => d.profile.pageCopy?.postList, (d, v) => { d.profile.pageCopy!.postList = v; })} />}>
+                      <section className="adm-panel space-y-3 p-3">
+                        <Field label="标题" value={item.title} onChange={(value) => update((draft) => { draft.profile.pageCopy!.postList![index].title = value; })} />
+                        <Field label="正文（换行分段）" value={item.text} textarea rows={6} onChange={(value) => update((draft) => { draft.profile.pageCopy!.postList![index].text = value; })} />
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <Field label="标签（逗号分隔）" value={(item.tags || []).join("，")} hint="前台显示为 #标签" onChange={(value) => update((draft) => { draft.profile.pageCopy!.postList![index].tags = value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean); })} />
+                          <Field label="日期（可留空）" value={item.date || ""} placeholder="例如 2026-10" onChange={(value) => update((draft) => { draft.profile.pageCopy!.postList![index].date = value; })} />
+                        </div>
+                      </section>
+                      <section className="adm-panel mt-3 p-3">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs text-zinc-400">独立封面 · 16:9 · 默认取第一张正文图片</p>
+                          <div className="flex items-center gap-2">
+                            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300">
+                              <ImagePlus size={15}/> 上传 / 更换封面
+                              <input aria-label="上传独立封面" className="sr-only" type="file" accept="image/*" disabled={postImagesBusy} onChange={event=>void uploadPostCover(event,item.id)}/>
+                            </label>
+                            {item.coverUrl && <button type="button" className="text-xs text-zinc-400" disabled={postImagesBusy} onClick={()=>update(draft=>{draft.profile.pageCopy!.postList![index].coverUrl='';})}>恢复默认</button>}
+                          </div>
+                        </div>
+                        {(item.coverUrl||images[0]) && <img src={item.coverUrl || item.previews?.find(p=>p.source.split('?')[0]===images[0]?.split('?')[0])?.url || images[0]} alt="独立列表封面" className="aspect-video w-64 max-w-full rounded-lg object-cover"/>}
+                      </section>
+                      <section className="adm-panel mt-3 p-3">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs text-zinc-400">正文图片 · {images.length} 张 · 保留原图尺寸与比例</p>
+                          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-zinc-600">
+                            <ImagePlus size={15} /> {postImagesBusy ? '正在处理图片…' : '上传图片（可多选）'}
+                            <input className="sr-only" type="file" accept="image/*" multiple disabled={postImagesBusy} onChange={(event) => void uploadPostImages(event, item.id)} />
+                          </label>
+                        </div>
+                        {images.length > 0 ? (
+                          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                            {images.map((url, i) => (
+                              <div key={`${url}-${i}`} className="group relative self-start overflow-hidden rounded-lg bg-black">
+                                <img src={url} alt={`第 ${i + 1} 张`} className="h-auto w-full" />
+                                <div className="absolute inset-x-0 bottom-0 flex justify-between gap-1 bg-black/70 p-1">
+                                  <button type="button" aria-label="前移" disabled={i === 0} onClick={() => setImages(moveItem(images, i, i - 1))} className="rounded p-1 text-zinc-200 hover:bg-white/10 disabled:opacity-30"><ArrowUp size={13} className="-rotate-90" /></button>
+                                  <button type="button" aria-label="删除这张" onClick={() => { setImages(images.filter((_, j) => j !== i)); void deleteMedia([url, ...(item.previews || []).filter(p => p.source.split('?')[0] === url.split('?')[0]).map(p => p.url)], false); }} className="rounded p-1 text-zinc-200 hover:bg-red-500/30 hover:text-red-200"><Trash2 size={13} /></button>
+                                  <button type="button" aria-label="后移" disabled={i === images.length - 1} onClick={() => setImages(moveItem(images, i, i + 1))} className="rounded p-1 text-zinc-200 hover:bg-white/10 disabled:opacity-30"><ArrowUp size={13} className="rotate-90" /></button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="rounded-lg border border-dashed border-zinc-800 px-3 py-6 text-center text-xs text-zinc-500">支持横图、多图和长图。列表使用独立预览，点开后查看完整原图。</p>
+                        )}
+                      </section>
+                    </EditorModal>
+                  );
+                })()}
+              </>
+            )}
+
+            {active === "slides" && (
+              <>
+                <Section
+                  title="演示文稿"
+                  description="推荐上传 PDF（在 PowerPoint / WPS 里「另存为 PDF」）：排版完全还原、翻页快。可再附上 .pptx 供访客下载原文件。没传封面时自动用 PDF 第一页。"
+                  action={
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = uid("slides");
+                        addDraft(
+                          (draft) => { draft.profile.pageCopy!.slideList = [...(draft.profile.pageCopy!.slideList || []), { ...emptySlideDeck, id }]; },
+                          () => setExpandedSlideId(id),
+                        );
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-sm text-zinc-300 hover:border-zinc-600"
+                    >
+                      <Plus size={15} /> 新增演示
+                    </button>
+                  }
+                >
+                  <p className="text-sm leading-5 text-zinc-400">共 {(data.profile.pageCopy?.slideList || []).length} 份。没有上传文件的条目前台不显示。</p>
+                </Section>
+                {(data.profile.pageCopy?.slideList || []).map((item: SlideDeck, index: number) => {
+                  const key = rowKey(item.id, index);
+                  const isActive = expandedSlideId === key;
+                  return (
+                    <EditorRow key={key} expanded={isActive}>
+                      <ListSummaryRow
+                        thumb={item.cover}
+                        title={item.title || "演示 " + (index + 1)}
+                        meta={item.pdfUrl ? (item.fileUrl ? "PDF + PPTX" : "PDF") : item.fileUrl ? "仅 PPTX（建议补 PDF）" : "未上传文件"}
+                        preview={item.description}
+                        active={isActive}
+                        onEdit={() => setExpandedSlideId(key)}
+                        canMoveUp={index > 0}
+                        canMoveDown={index < (data.profile.pageCopy?.slideList || []).length - 1}
+                        onMove={(delta) => void mutateAndSave((draft) => { draft.profile.pageCopy!.slideList = moveItem(draft.profile.pageCopy!.slideList || [], index, index + delta); }, undefined, { collapse: false })}
+                        onDelete={() => {
+                          void removeAndSave(
+                            (draft) => { draft.profile.pageCopy!.slideList = (draft.profile.pageCopy!.slideList || []).filter((_, i) => i !== index); },
+                            [item.fileUrl, item.pdfUrl || "", item.cover || ""],
+                            () => setExpandedSlideId(null),
+                          );
+                        }}
+                      />
+                    </EditorRow>
+                  );
+                })}
+
+                {slideModalIndex >= 0 && (() => {
+                  const item = (data.profile.pageCopy?.slideList || [])[slideModalIndex];
+                  const index = slideModalIndex;
+                  return (
+                    <EditorModal title={"演示 " + (index + 1)} onClose={() => setExpandedSlideId(null)} footer={<SaveCurrentButton label="确认保存" scoped={scopedList((d) => d.profile.pageCopy?.slideList, (d, v) => { d.profile.pageCopy!.slideList = v; })} />}>
+                      <section className="adm-panel space-y-3 p-3">
+                        <Field label="标题" value={item.title} onChange={(value) => update((draft) => { draft.profile.pageCopy!.slideList![index].title = value; })} />
+                        <Field label="简介（可留空）" value={item.description || ""} textarea onChange={(value) => update((draft) => { draft.profile.pageCopy!.slideList![index].description = value; })} />
+                        <Field label="日期（可留空）" value={item.date || ""} placeholder="例如 2026-10" onChange={(value) => update((draft) => { draft.profile.pageCopy!.slideList![index].date = value; })} />
+                      </section>
+                      <section className="adm-panel mt-3 space-y-3 p-3">
+                        <div className="adm-deck-files">
+                        <div className="adm-deck-file">
+                        <div className="adm-deck-file-heading"><FileText size={18}/><strong>PDF 演示文件</strong><span>{item.pdfUrl?'已上传':'推荐'}</span></div>
+                        <p className="adm-deck-file-name">{item.pdfUrl ? (item.pdfFileName || 'PDF 文件已就绪') : '用于在线演示，保留原始排版'}</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-emerald-500/40 px-2.5 py-2 text-xs text-emerald-200 hover:border-emerald-400">
+                            <FileText size={15} /> {item.pdfUrl ? "替换 PDF" : "上传 PDF"}
+                            <input aria-label="上传PDF文件" className="sr-only" type="file" accept=".pdf,application/pdf" disabled={slideUploadBusy} onChange={(event) => void uploadSlideFile(event, item.id)} />
+                          </label>
+                        </div>
+                        </div>
+                        <div className="adm-deck-file">
+                        <div className="adm-deck-file-heading"><FileText size={18}/><strong>PPTX 原文件</strong><span>{item.fileUrl?'已上传':'可选'}</span></div>
+                        <p className="adm-deck-file-name" title={item.fileName}>{item.fileName || (item.fileUrl?'PPTX 文件已就绪':'供访客下载，也可在线预览')}</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-2 text-xs text-zinc-300 hover:border-zinc-600">
+                            <FileText size={15} /> {item.fileUrl ? "替换 .pptx" : "上传 .pptx"}
+                            <input className="sr-only" type="file" accept={pptxAccept} disabled={slideUploadBusy} onChange={(event) => void uploadSlideFile(event, item.id)} />
+                          </label>
+                        </div>
+                        </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          {item.pdfUrl || item.fileUrl ? (
+                            <button type="button" onClick={() => setPreviewDeck(item)} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 px-2.5 py-2 text-xs text-emerald-300 hover:border-emerald-400">
+                              <Play size={14} /> 预览演示
+                            </button>
+                          ) : null}
+                          {!item.pdfUrl && item.fileUrl ? (
+                            <span className="text-xs leading-5 text-zinc-500">已支持 PPTX 预览；上传 PDF 可获得更稳定的排版。</span>
+                          ) : null}
+                        </div>
+                      </section>
+                      <section className="adm-panel mt-3 space-y-3 p-3">
+                        <p className="text-sm font-medium text-zinc-300">演示封面</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-2 text-xs text-zinc-300 hover:border-zinc-600">
+                            <ImagePlus size={15} /> 上传封面
+                            <input className="hidden" type="file" accept="image/*" onChange={(event) => upload(event, (url) => {
+                              update((draft) => { draft.profile.pageCopy!.slideList![index].cover = url; });
+                            })} />
+                          </label>
+                          {(item.pdfUrl||item.fileUrl) && <button type="button" disabled={slideUploadBusy} onClick={()=>void regenerateSlideCover(item)} className="rounded-lg border border-zinc-800 px-2.5 py-2 text-xs text-zinc-300 disabled:opacity-50">{slideUploadBusy?'正在处理…':'使用文稿首页'}</button>}
+                          {!item.cover && <span className="text-xs text-zinc-500">上传文稿后自动生成首页封面，也可单独上传。</span>}
+                        </div>
+                        {item.cover ? <img src={item.cover} alt="封面预览" className="aspect-video w-80 max-w-full rounded-lg bg-black object-contain" /> : <div className="flex aspect-video w-80 max-w-full items-center justify-center rounded-lg bg-zinc-950 text-xs text-zinc-500">{slideUploadBusy?'正在准备首页封面…':'暂无封面'}</div>}
+                      </section>
+                    </EditorModal>
+                  );
+                })()}
+                {previewDeck ? <SlidePlayer deck={previewDeck} onClose={() => setPreviewDeck(null)} /> : null}
               </>
             )}
 
@@ -5900,19 +6522,7 @@ export default function AdminApp() {
                     <EditorModal
                       title={track.title?.trim() || "未命名音乐"}
                       onClose={() => setExpandedMusicId(null)}
-                      footer={
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => { void saveMusicTrack(index); }}
-                            disabled={saving || asrLoadingTrackId === (track.id || String(index))}
-                            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-300 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-200 disabled:opacity-60"
-                          >
-                            {(saving || asrLoadingTrackId === (track.id || String(index))) ? <Loader2 className="animate-spin" size={14} /> : null}
-                            保存全部
-                          </button>
-                        </>
-                      }
+                      footer={<SaveCurrentButton scoped={scopedList(d=>d.musicTracks,(d,v)=>{d.musicTracks=v;})}/>}
                     >
                       <div className="adm-panel p-3">
                         <div className="grid gap-3 md:grid-cols-2">
@@ -5930,9 +6540,10 @@ export default function AdminApp() {
                             value={stripLyricTimeline(track.lyrics)}
                             onChange={(value) => update((draft) => { draft.musicTracks![index].lyrics = applyPlainLyricsToTimeline(track.lyrics, value); })}
                             textarea
-                            placeholder={"在这里填写纯歌词，方便断句。\n保存这首音乐时，会自动从腾讯云获取时间轴并套用到这份文本。"}
+                            placeholder={"填写歌词后可直接保存。需要同步播放时，单独生成歌词时间轴。"}
                           />
-                          <div className="mt-2 flex justify-end">
+                          <div className="mt-2 flex justify-end gap-2">
+                            <button type="button" disabled={saving || Boolean(asrLoadingTrackId) || !track.audioUrl || !stripLyricTimeline(track.lyrics)} onClick={()=>void saveMusicTrack(index, true)} className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 disabled:opacity-50">{asrLoadingTrackId ? '正在生成…' : '生成歌词时间轴'}</button>
                             <button
                               type="button"
                               onClick={() => setVisibleLyricTimelineTrackId(visibleLyricTimelineTrackId === (track.id || String(index)) ? "" : (track.id || String(index)))}
@@ -6030,7 +6641,7 @@ export default function AdminApp() {
             {active === "tracking" && (
               <Section
                 title="站点检测"
-                description="访客每次打开网站都会记一条：IP 与归属地、设备、浏览器、停留时长和按钮点击。爬虫、扫描器直接不记录；本机和内网访问会记下来但默认隐藏。"
+                description="看清访客逛过哪些页面、读过哪些作品、实际看了多久视频。内容自动接入统计；删除作品后，历史浏览和观看数据仍然保留。"
               >
                 {visitsError && (
                   <p className="adm-note adm-note-warn text-xs leading-5 text-amber-200" role="alert">{visitsError}</p>
@@ -6099,7 +6710,7 @@ export default function AdminApp() {
                   {visitsConfirm === "all" ? (
                     <>
                       <span className="text-xs leading-5 text-amber-200">
-                        确定清空全部访问记录（包括隐藏的爬虫和本机记录）？备注与屏蔽标记也会一起删掉，且无法恢复。
+                        确定清空访问概览、点击与聊天记录？备注与屏蔽标记也会删除。独立保存的页面、作品和视频浏览历史会保留。
                       </span>
                       <button
                         type="button"
@@ -6164,8 +6775,8 @@ export default function AdminApp() {
                         </p>
                       )}
 
-                      <div className="flex gap-1 border-b border-zinc-800" role="tablist" aria-label="站点检测视图">
-                        {([["overview", "概览"], ["visitors", `访客${visitorPage ? ` · ${visitorPage.total}` : ""}`], ["chats", "聊天会话"], ["clicks", "行为"]] as const).map(([key, label]) => (
+                      <div className="flex flex-wrap gap-1 border-b border-zinc-800" role="tablist" aria-label="站点检测视图">
+                        {([["overview", "概览"], ["page", "页面分析"], ["work", "作品分析"], ["video", "视频分析"], ["visitors", `访客${visitorPage ? ` · ${visitorPage.total}` : ""}`], ["chats", "聊天会话"], ["clicks", "点击行为"]] as const).map(([key, label]) => (
                           <button
                             key={key}
                             type="button"
@@ -6178,6 +6789,10 @@ export default function AdminApp() {
                           </button>
                         ))}
                       </div>
+
+                      {(analyticsView === "page" || analyticsView === "work" || analyticsView === "video") && (
+                        <ContentAnalytics key={`${analyticsView}:${analyticsRange}:${analyticsHumanOnly}`} kind={analyticsView} range={analyticsRange} humanOnly={analyticsHumanOnly} refresh={analyticsRefresh} catalog={contentCatalog} />
+                      )}
 
                       {analyticsView === "overview" && (
                         <div className="space-y-3">
@@ -6251,7 +6866,7 @@ export default function AdminApp() {
                         <input
                           value={visitorQueryDraft}
                           onChange={(event) => setVisitorQueryDraft(event.target.value)}
-                          placeholder="搜索备注、IP、城市或访客 ID"
+                          placeholder="搜索访客名称、IP、城市或访客 ID"
                           aria-label="搜索访客"
                           className={`${inputBaseClass} min-h-9 min-w-[220px] flex-1 px-3 py-1.5 text-sm`}
                         />
@@ -6314,6 +6929,7 @@ export default function AdminApp() {
                               </div>
                               <span className="text-xs text-zinc-400 md:text-right" title={formatVisitTime(visitor.last_seen)}>
                                 {formatVisitAgo(visitor.last_seen)}
+                                <span className="ml-3 text-zinc-300">查看 / 重命名</span>
                               </span>
                             </button>
 
@@ -6322,29 +6938,35 @@ export default function AdminApp() {
                                 title={visitor.label || "访客 " + shortVisitorKey(visitor.visitor_key)}
                                 onClose={() => { setVisitsExpandedKey(null); setVisitsConfirm(null); setVisitorVisits(null); }}
                                 footer={
+                                  <>
                                   <p className="mr-auto text-[11px] leading-5 text-zinc-500">
-                                    备注与屏蔽标记即时保存；删除不可恢复，所以要点两次。
+                                    名称仅用于后台识别，不影响访问记录；清空名称可恢复默认显示。
                                   </p>
+                                  {visitsLabelDraft.trim() !== (visitor.label || "") && (
+                                    <div className="adm-save-actions">
+                                      <span>{busy ? "正在保存" : "未保存"}</span>
+                                      <button type="button" className="adm-save-button" disabled={busy}
+                                        onClick={() => { void patchVisitor(visitor.visitor_key, { label: visitsLabelDraft.trim() }); }}>
+                                        {busy && <Loader2 className="animate-spin" size={14} />}保存名称
+                                      </button>
+                                    </div>
+                                  )}
+                                  </>
                                 }
                               >
                                 <div className="flex flex-wrap items-end gap-2">
                                   <label className="grid min-w-[200px] flex-1 gap-1.5">
-                                    <span className="text-xs font-medium text-zinc-400">备注名（只改后台显示，方便认出自己人）</span>
+                                    <span className="text-xs font-medium text-zinc-400">访客名称</span>
                                     <input
+                                      aria-label="访客名称"
+                                      maxLength={60}
+                                      disabled={busy}
                                       value={visitsLabelDraft}
                                       onChange={(event) => setVisitsLabelDraft(event.target.value)}
                                       placeholder="例如：我自己 / 客户张三 / 疑似爬虫"
                                       className={`${inputBaseClass} min-h-10 px-3 py-2`}
                                     />
                                   </label>
-                                  <button
-                                    type="button"
-                                    onClick={() => { void patchVisitor(visitor.visitor_key, { label: visitsLabelDraft.trim() }); }}
-                                    disabled={busy}
-                                    className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-emerald-300 px-3 text-sm font-semibold text-zinc-950 transition-colors duration-200 hover:bg-emerald-200 disabled:opacity-60"
-                                  >
-                                    {busy ? <Loader2 className="animate-spin" size={14} /> : null} 保存备注
-                                  </button>
                                   <button
                                     type="button"
                                     onClick={() => { void patchVisitor(visitor.visitor_key, { blocked: !visitor.blocked }); }}
@@ -6384,6 +7006,8 @@ export default function AdminApp() {
                                 <p className="font-mono text-[10px] leading-5 text-zinc-600">
                                   {visitor.visitor_key} · 首次 {formatVisitTime(visitor.first_seen)} · 最近 {formatVisitTime(visitor.last_seen)}
                                 </p>
+
+                                <VisitorEngagement visitorKey={visitor.visitor_key} range={analyticsRange} humanOnly={analyticsHumanOnly} refresh={analyticsRefresh} data={data} />
 
                                 <div className="space-y-2">
                                   <p className="text-xs font-semibold text-zinc-300">
@@ -6596,6 +7220,10 @@ export default function AdminApp() {
         </div>
       </div>
 
-    </main>
+      <VisitNotifications onView={(key) => {
+        setActive("tracking"); setAnalyticsView("visitors"); setAnalyticsRange("all");
+        setVisitorQuery(key); setVisitorQueryDraft(key); setVisitorPageNo(1);
+      }} />
+    </main></UploadFeedback.Provider>
   );
 }

@@ -1,4 +1,9 @@
 import "dotenv/config";
+import { registerToolSettings } from "./server/tool-settings";
+import { registerWanchuang } from "./server/wanchuang";
+import { registerEngagementAnalytics } from "./server/engagement-analytics";
+import { contentIdentity } from "./src/analytics-model";
+import { mergePortfolioChanges } from './src/portfolio-changes';
 import crypto from "crypto";
 import express, { NextFunction, Request, Response } from "express";
 import fs from "fs";
@@ -84,6 +89,7 @@ function getSupabase(): SupabaseClient | null {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
   return createClient(url, key, {
+    global: { fetch: (input, init) => fetch(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000) }) },
     auth: { persistSession: false, autoRefreshToken: false },
     realtime: { transport: WebSocket as any },
   });
@@ -829,6 +835,21 @@ function createCosObjectPath(originalName: string) {
   return `portfolio/${safeFileName}`;
 }
 
+/**
+ * 给 COS 桶刷一条 CORS 规则，让浏览器能直连签名地址取媒体（少走一次服务器转发）。
+ *
+ * 三个坑，全是实测踩出来的（`putBucketCors` 的参数名和 SDK 的 TS 类型对不上，写错了
+ * 只会返回一句 Invalid Param，而这里又是 try/catch 吞掉的，所以能一直悄悄地不生效）：
+ *   1. 字段名必须是**复数**：AllowedOrigins / AllowedMethods / AllowedHeaders /
+ *      ExposeHeaders。SDK 的 .d.ts 写的是单数，照着类型写 COS 不认。
+ *   2. AllowedMethods 里**不能有 OPTIONS**：它不是 COS 认可的方法取值（预检请求照样会被应答，
+ *      不需要列在这里）。
+ *   3. ExposeHeaders 是**必填**，不能省。
+ *
+ * ExposeHeaders 里那条 Content-Range 是关键：跨域响应只有「安全列表」里的头会交给 JS，
+ * Content-Range 不在其中，而不暴露它，pdf.js 读不到总长度就做不了分块加载，
+ * 几 MB 的演示文稿只能整份下完再解析 —— 打开要好几秒。
+ */
 async function ensureCosCors(cos: COS | null) {
   if (!cos || !process.env.TENCENT_COS_BUCKET || !process.env.TENCENT_COS_REGION) return;
   try {
@@ -838,10 +859,10 @@ async function ensureCosCors(cos: COS | null) {
       CORSRules: [
         {
           ID: "portfolio-admin-direct-upload",
-          AllowedOrigin: ["*"],
-          AllowedMethod: ["GET", "PUT", "POST", "HEAD", "OPTIONS"],
-          AllowedHeader: ["*"],
-          ExposeHeader: ["ETag", "Location"],
+          AllowedOrigins: ["*"],
+          AllowedMethods: ["GET", "PUT", "POST", "HEAD"],
+          AllowedHeaders: ["*"],
+          ExposeHeaders: ["ETag", "Location", "Content-Range", "Accept-Ranges", "Content-Length"],
           MaxAgeSeconds: "3600",
         },
       ],
@@ -926,18 +947,47 @@ function normalizePageCopy(pageCopy: JsonRecord | undefined, transform: (url?: s
   if (Array.isArray(copy.poemList)) {
     copy.poemList = copy.poemList.map((item) => (
       item && typeof item === "object"
-        ? { ...(item as JsonRecord), imageUrl: transform(String((item as JsonRecord).imageUrl || "")) }
+        ? { ...(item as JsonRecord), id: item.id || contentIdentity("poems", item).replace(/^poems:/, ""), imageUrl: transform(String((item as JsonRecord).imageUrl || "")) }
+        : item
+    ));
+  }
+
+  // 图文与演示文稿：同属 pageCopy 内的媒体载体，规则与 poemList / aiWorks 相同。
+  if (Array.isArray(copy.postList)) {
+    copy.postList = copy.postList.map((item) => {
+      if (!item || typeof item !== "object") return item;
+      const post = item as JsonRecord;
+      return {
+        ...post,
+        coverUrl: transform(String(post.coverUrl || "")),
+        previews: Array.isArray(post.previews) ? post.previews.filter((preview: any) => preview && typeof preview.source === 'string' && typeof preview.url === 'string').map((preview: any) => ({ source: transform(preview.source), url: transform(preview.url) })) : [],
+        images: Array.isArray(post.images) ? post.images.map((url) => transform(String(url || ""))).filter(Boolean) : [],
+      };
+    });
+  }
+  if (Array.isArray(copy.slideList)) {
+    copy.slideList = copy.slideList.map((item) => (
+      item && typeof item === "object"
+        ? {
+            ...(item as JsonRecord),
+            fileUrl: transform(String((item as JsonRecord).fileUrl || "")),
+            pdfUrl: transform(String((item as JsonRecord).pdfUrl || "")),
+            cover: transform(String((item as JsonRecord).cover || "")),
+          }
         : item
     ));
   }
 
   // AI 专区作品，字段结构与作品一致，媒体地址的转换方式也照抄作品那条路径。
-  if (Array.isArray(copy.aiWorks)) {
-    copy.aiWorks = copy.aiWorks.map((item) => {
+  for (const collection of ["aiWorks", "caseWorks"] as const) {
+  if (Array.isArray(copy[collection])) {
+    copy[collection] = copy[collection].map((item) => {
       if (!item || typeof item !== "object") return item;
       const work = item as JsonRecord;
       return {
         ...work,
+        id: work.id || contentIdentity(collection === "caseWorks" ? "cases" : "ai", work).replace(/^work:/, ""),
+        ...(collection === "caseWorks" ? { pageUrl: transform(String(work.pageUrl || "")) } : {}),
         images: Array.isArray(work.images) ? work.images.map((url) => transform(String(url || ""))) : [],
         videoUrl: transform(String(work.videoUrl || "")),
         links: Array.isArray(work.links)
@@ -951,6 +1001,7 @@ function normalizePageCopy(pageCopy: JsonRecord | undefined, transform: (url?: s
     });
   }
 
+  }
   return copy;
 }
 
@@ -991,16 +1042,27 @@ async function deleteCosObject(cos: COS, key: string) {
 }
 
 async function getCosObjectBuffer(cos: COS, key: string) {
-  return new Promise<Buffer>((resolve, reject) => {
+  return (await getCosObjectRange(cos, key, "")).body;
+}
+
+/**
+ * 按 Range 取对象。range 为空就是整份。
+ *
+ * 演示文稿必须支持 Range：pdf.js 只按需取几十 KB 就能画出第一页，而整份取回
+ * 几 MB 再解析，用户要盯着加载页干等。回传的 statusCode / headers 原样给路由用。
+ */
+async function getCosObjectRange(cos: COS, key: string, range: string) {
+  return new Promise<{ statusCode: number; headers: Record<string, string>; body: Buffer }>((resolve, reject) => {
     cos.getObject(
       {
         Bucket: process.env.TENCENT_COS_BUCKET!,
         Region: process.env.TENCENT_COS_REGION!,
         Key: key,
-      },
-      (err, data) => {
+        ...(range ? { Range: range } : {}),
+      } as any,
+      (err: any, data: any) => {
         if (err) reject(err);
-        else resolve(data.Body);
+        else resolve({ statusCode: data.statusCode || 200, headers: data.headers || {}, body: data.Body });
       },
     );
   });
@@ -1243,11 +1305,6 @@ async function replaceList(
     .map((row) => row.id)
     .filter((id) => !incomingIds.includes(id));
 
-  if (idsToDelete.length > 0) {
-    const deleted = await supabase.from(table).delete().in("id", idsToDelete);
-    if (deleted.error) throw deleted.error;
-  }
-
   if (rows.length > 0) {
     const saved = await supabase.from(table).upsert(rows, { onConflict: "id" });
     if (saved.error) {
@@ -1257,20 +1314,26 @@ async function replaceList(
         const retryRows = rows.map(({ badge_text, ...row }) => row);
         const retry = await supabase.from(table).upsert(retryRows, { onConflict: "id" });
         if (retry.error) throw retry.error;
+        if (idsToDelete.length > 0) { const deleted = await supabase.from(table).delete().in('id', idsToDelete); if (deleted.error) throw deleted.error; }
         return;
       }
       throw saved.error;
     }
   }
+  if (idsToDelete.length > 0) {
+    const deleted = await supabase.from(table).delete().in('id', idsToDelete);
+    if (deleted.error) throw deleted.error;
+  }
 }
 
-async function savePortfolioData(supabase: SupabaseClient | null, data: JsonRecord) {
+async function savePortfolioData(supabase: SupabaseClient | null, data: JsonRecord, sections?: Set<string>) {
   if (!supabase) {
     throw new Error("Supabase 未配置，已取消本地 JSON 兜底保存。");
   }
 
   const { resumePdfUrl, resume_pdf_url, pageCopy, page_copy, musicAutoplay, music_autoplay, ...profileFields } = data.profile || {};
   const cleanPageCopy = normalizePageCopy(pageCopy || page_copy || {}, stripCosSignature);
+  if (!sections || sections.has('profile')) {
   const profile = await supabase.from("portfolio_profile").upsert({
     id: "main",
     ...profileFields,
@@ -1280,12 +1343,17 @@ async function savePortfolioData(supabase: SupabaseClient | null, data: JsonReco
     page_copy: cleanPageCopy,
   });
   if (profile.error) throw profile.error;
+  }
 
+  if (!sections || sections.has('prospects')) {
   const prospects = await supabase.from("portfolio_prospects").upsert({ id: "main", ...data.prospects });
   if (prospects.error) throw prospects.error;
+  }
 
+  if (!sections || sections.has('contact')) {
   const contact = await supabase.from("portfolio_contact").upsert({ id: "main", ...(data.contact || {}) });
   if (contact.error) throw contact.error;
+  }
 
   const experiences = (data.experiences || []).map((row: JsonRecord, index: number) => ({
     ...row,
@@ -1332,17 +1400,18 @@ async function savePortfolioData(supabase: SupabaseClient | null, data: JsonReco
     sort_order: index,
   }));
 
-  await replaceList(supabase, "portfolio_experiences", experiences.map((row) => row.id), experiences);
-  await replaceList(supabase, "portfolio_works", works.map((row) => row.id), works);
-  await replaceList(supabase, "portfolio_gallery", gallery.map((row) => row.id), gallery);
-  await replaceList(supabase, "portfolio_treasures", treasures.map((row) => row.id), treasures);
-  await replaceList(supabase, "portfolio_music_tracks", musicTracks.map((row) => row.id), musicTracks);
+  if (!sections || sections.has('experiences')) await replaceList(supabase, "portfolio_experiences", experiences.map((row) => row.id), experiences);
+  if (!sections || sections.has('works')) await replaceList(supabase, "portfolio_works", works.map((row) => row.id), works);
+  if (!sections || sections.has('gallery')) await replaceList(supabase, "portfolio_gallery", gallery.map((row) => row.id), gallery);
+  if (!sections || sections.has('treasures')) await replaceList(supabase, "portfolio_treasures", treasures.map((row) => row.id), treasures);
+  if (!sections || sections.has('musicTracks')) await replaceList(supabase, "portfolio_music_tracks", musicTracks.map((row) => row.id), musicTracks);
 
   return fetchPortfolioData(supabase);
 }
 
 async function startServer() {
   const app = express();
+  app.get(["/tools/wanchuang", "/tools/wanchuang/"], (_req, res) => res.redirect("/tools/wanchuang/index.html"));
   const supabase = getSupabase();
   const cos = getCosClient();
   await ensureCosCors(cos);
@@ -1352,6 +1421,8 @@ async function startServer() {
   app.set("trust proxy", 1);
 
   app.use(express.json({ limit: "60mb" }));
+  registerToolSettings(app, requireAdmin);
+  registerWanchuang(app, requireAdmin);
   app.use(express.urlencoded({ limit: "60mb", extended: true }));
   app.use((_req, res, next) => {
     res.charset = "utf-8";
@@ -1392,6 +1463,20 @@ async function startServer() {
    *   - txt/md 等文本 → 直读
    *   - 其余（doc/xls/xlsx/ppt/zip/rar…）→ 明确回「不支持在线预览」，前台引导下载
    */
+  app.get('/api/media/image-download', async (req, res) => {
+    try {
+      const key = getCosObjectKey(String(req.query.url || ''));
+      const ext = key.toLowerCase().match(/\.(png|jpe?g|webp|gif|avif)$/)?.[1];
+      if (!cos || !key.startsWith('portfolio/') || !ext) return res.status(404).json({ error: '图片不存在' });
+      const bytes = await getCosObjectBuffer(cos, key);
+      res.setHeader('Content-Type', `image/${ext === 'jpg' ? 'jpeg' : ext}`);
+      res.setHeader('Content-Disposition', `attachment; filename="image.${ext}"`);
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      res.send(bytes);
+    } catch { res.status(502).json({ error: '下载失败，请稍后重试' }); }
+  });
+
   app.get("/api/media/attachment-preview", async (req, res) => {
     const fail = (code: number, message: string) => {
       res.status(code);
@@ -1473,6 +1558,38 @@ async function startServer() {
     }
   });
 
+  /**
+   * 演示文稿原始字节的同源代理，支持 Range。
+   *
+   * 两条用途：
+   *  1. 前端优先直连 COS 的签名地址（少一跳、更快）；签名过期或 CORS 出问题时退到这里。
+   *     这条路上取对象用的是服务器自己的密钥，所以签名过期也照样能取到。
+   *  2. pdf.js 在同源这条路上做分块加载，只取需要的那几十 KB。
+   * 只放行 portfolio/ 前缀下的 .pdf / .pptx，避免变成任意对象下载口。
+   */
+  app.get("/api/media/slides", async (req, res) => {
+    try {
+      const key = getCosObjectKey(String(req.query.url || ""));
+      const ext = key.toLowerCase().match(/\.(pdf|pptx)$/)?.[1];
+      if (!cos || !key.startsWith("portfolio/") || !ext) {
+        return res.status(404).send("Slides not found");
+      }
+      const range = String(req.headers.range || "");
+      const { statusCode, headers, body } = await getCosObjectRange(cos, key, range);
+      // 只回传白名单头部：COS 的 x-cos-* 内部信息没必要透给浏览器。
+      for (const name of ["content-range", "content-length", "etag", "last-modified"]) {
+        const value = headers[name];
+        if (value) res.setHeader(name, String(value));
+      }
+      res.setHeader("Content-Type", ext === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+      res.setHeader("Accept-Ranges", "bytes");
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.status(statusCode).send(body);
+    } catch (err: any) {
+      res.status(500).send(err.message || "Slides fetch failed");
+    }
+  });
+
   app.post("/api/admin/login", (req, res) => {
     const configuredPhone = process.env.ADMIN_PHONE;
     const configuredPassword = process.env.ADMIN_PASSWORD;
@@ -1506,6 +1623,18 @@ async function startServer() {
       storageProvider: cos ? "tencent-cos" : "supabase",
       maxUploadSizeMb: effectiveUploadSizeMb,
     });
+  });
+
+  let portfolioSaveQueue: Promise<unknown> = Promise.resolve();
+  app.patch('/api/admin/portfolio', requireAdmin, async (req, res) => {
+    const task = portfolioSaveQueue.then(async () => {
+      const current = await fetchPortfolioData(supabase);
+      const { next, sections } = mergePortfolioChanges(current, req.body?.changes);
+      return sections.size ? savePortfolioData(supabase, next, sections) : current;
+    });
+    portfolioSaveQueue = task.catch(() => {});
+    try { res.json({ success: true, data: await task }); }
+    catch (error: any) { res.status(error.status || 500).json({ error: error.message || '保存失败，请核对已保存内容后重试。' }); }
   });
 
   app.put("/api/admin/portfolio", requireAdmin, async (req, res) => {
@@ -2232,6 +2361,14 @@ async function startServer() {
         return res.status(403).json({ error: "invalid tracking context" });
       }
 
+      if (Number.isFinite(body.totalDwellMs) && body.totalDwellMs >= 0) {
+        const { error } = await supabase.rpc("sync_portfolio_dwell", {
+          p_visit_id: visitIdNum, p_visitor_key: visitorKey, p_total_ms: Math.round(body.totalDwellMs),
+        });
+        if (!error) return res.json({ ok: true });
+        if (!missingSchema(error.message)) return res.status(500).json({ ok: false, reason: "dwell-failed" });
+      }
+
       // 新版 schema 用数据库函数在一个事务里原子累加，避免心跳与离开上报并发覆盖。
       const { error: rpcError } = await supabase.rpc("increment_portfolio_dwell", {
         p_visit_id: visitIdNum,
@@ -2282,7 +2419,7 @@ async function startServer() {
   const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
 
   function analyticsQuery(req: Request) {
-    const range = ANALYTICS_RANGES.has(String(req.query.range)) ? String(req.query.range) : "7d";
+    const range = ANALYTICS_RANGES.has(String(req.query.range)) ? String(req.query.range) : "today";
     const humanOnly = req.query.humanOnly !== "0";
     let since: string | null = null;
     if (range === "today") {
@@ -2295,6 +2432,12 @@ async function startServer() {
     }
     return { range, humanOnly, since, bucket: range === "today" ? "hour" : "day" };
   }
+
+  registerEngagementAnalytics(app, {
+    supabase, requireAdmin, validToken: validTrackingToken, range: analyticsQuery,
+    allowed: (req) => !isAutomatedUserAgent(String(req.headers["user-agent"] || "")) && trackAllowed(clientIp(req)),
+    classify: classifyTraffic,
+  });
 
   /** 旧 schema 兜底：按访问行推出每位访客的类型（human > local > bot，与 SQL 回填规则一致）。 */
   async function legacyVisitRows(since: string | null) {
@@ -2749,6 +2892,7 @@ async function startServer() {
   });
 
   if (process.env.NODE_ENV !== "production") {
+    app.get("/analytics.js", (_req, res) => res.redirect(307, "/src/analytics-entry.ts"));
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

@@ -1,4 +1,6 @@
 /** Privacy-conscious first-party analytics for visits, engaged time, and UI actions. */
+import { observeEngagement } from "./engagement-tracker";
+import type { EngagementSnapshot } from "./analytics-model";
 
 const VISITOR_KEY_STORAGE = "myspace_visitor_key";
 const HEARTBEAT_MS = 15_000;
@@ -167,6 +169,9 @@ export function startVisitTracking(): () => void {
   let dwellFlushInFlight = false;
   let visitSettled = false;
   let trackingDisabled = false;
+  const engagementQueue = new Map<string, EngagementSnapshot>();
+  let engagementFlushInFlight = false;
+  let engagementDisabled = false;
 
   const visibleNow = () => visibleAccumMs + (visibleSince ? Date.now() - visibleSince : 0);
   const beacon = (url: string, body: unknown) => {
@@ -177,6 +182,41 @@ export function startVisitTracking(): () => void {
     } catch {
       return false;
     }
+  };
+
+  // Cumulative snapshots share a span ID. Retrying or receiving them out of order
+  // cannot inflate duration; the database keeps each counter's maximum.
+  const engagement = observeEngagement((snapshot) => {
+    if (trackingDisabled || engagementDisabled) return;
+    engagementQueue.set(snapshot.id, snapshot);
+    if (engagementQueue.size > 500) engagementQueue.delete(engagementQueue.keys().next().value!);
+  });
+  const flushEngagement = (useBeacon = false) => {
+    engagement.flush();
+    if (!visitSettled || trackingDisabled || engagementDisabled || !engagementQueue.size) return;
+    if (engagementFlushInFlight && !useBeacon) return;
+    const entries = [...engagementQueue.values()].slice(0, 24);
+    const body = { visitId, visitorKey, sessionId, trackingToken, entries };
+    const acknowledge = () => {
+      for (const entry of entries) {
+        if (engagementQueue.get(entry.id) === entry) engagementQueue.delete(entry.id);
+      }
+    };
+    if (useBeacon) {
+      if (beacon("/api/track/engagement", body)) acknowledge();
+      return;
+    }
+    engagementFlushInFlight = true;
+    void fetch("/api/track/engagement", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), keepalive: true,
+    }).then(async (response) => {
+      if (!response.ok) throw new Error("engagement upload failed");
+      const json = await response.json();
+      if (json.reason === "engagement-not-configured") {
+        engagementDisabled = true;
+        engagementQueue.clear();
+      } else if (json.ok) acknowledge();
+    }).catch(() => {}).finally(() => { engagementFlushInFlight = false; });
   };
 
   const flushEvents = (useBeacon = false) => {
@@ -208,11 +248,11 @@ export function startVisitTracking(): () => void {
   };
 
   const flushDwell = (useBeacon = false) => {
-    if (visitId == null || dwellFlushInFlight) return;
+    if (visitId == null || (dwellFlushInFlight && !useBeacon)) return;
     const total = visibleNow();
     const delta = total - reportedMs;
     if (delta < 1000) return;
-    const body = { visitId, visitorKey, sessionId, trackingToken, dwellMs: Math.round(delta) };
+    const body = { visitId, visitorKey, sessionId, trackingToken, dwellMs: Math.round(delta), totalDwellMs: Math.round(total) };
     if (useBeacon) {
       if (beacon("/api/track/dwell", body)) reportedMs = total;
       return;
@@ -224,8 +264,10 @@ export function startVisitTracking(): () => void {
       body: JSON.stringify(body),
       keepalive: true,
     })
-      .then((response) => {
+      .then(async (response) => {
         if (!response.ok) throw new Error("dwell upload failed");
+        const json = await response.json();
+        if (!json.ok) throw new Error("dwell was not recorded");
         reportedMs = Math.max(reportedMs, total);
       })
       .catch(() => {})
@@ -263,6 +305,7 @@ export function startVisitTracking(): () => void {
       }
       visitSettled = true;
       flushEvents();
+      flushEngagement();
     })
     .catch(() => {
       trackingDisabled = true;
@@ -284,6 +327,7 @@ export function startVisitTracking(): () => void {
       }
       flushDwell(true);
       flushEvents(true);
+      flushEngagement(true);
     } else if (!visibleSince) {
       visibleSince = Date.now();
     }
@@ -291,6 +335,7 @@ export function startVisitTracking(): () => void {
   const onPageHide = () => {
     flushDwell(true);
     flushEvents(true);
+    flushEngagement(true);
   };
 
   document.addEventListener("click", onClick, true);
@@ -298,6 +343,7 @@ export function startVisitTracking(): () => void {
   window.addEventListener("pagehide", onPageHide);
   window.setInterval(() => flushDwell(), HEARTBEAT_MS);
   window.setInterval(() => flushEvents(), EVENT_FLUSH_MS);
+  window.setInterval(() => flushEngagement(), HEARTBEAT_MS);
 
   // The tracker intentionally lives for the page lifetime; see StrictMode note above.
   return () => {};

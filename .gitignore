@@ -1,4 +1,5 @@
 node_modules/
+.private/
 build/
 dist/
 LZGO1/

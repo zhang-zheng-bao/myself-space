@@ -16,10 +16,25 @@ export interface Profile {
     resume?: string;
     works?: string;
     aiZone?: string;
+    toolbox?: string;
+    cases?: string;
     gallery?: string;
     treasures?: string;
     poems?: string;
+    posts?: string;
+    slides?: string;
     contact?: string;
+    /**
+     * 「图文」栏目的内容：一条 = 一组图 + 一段文字，前台按小红书式竖滑卡片流展示。
+     * 和 poemList / aiWorks 一样存在 pageCopy 这个 JSON 列里，不另开表。
+     * 图片地址必须经过服务端 normalizePageCopy 的签名 / 脱签名通道。
+     */
+    postList?: ImagePost[];
+    /**
+     * 「演示文稿」栏目的内容：一条 = 一个 .pptx 文件，前台在浏览器里解析并演示播放。
+     * 文件地址与封面同样要过 normalizePageCopy。
+     */
+    slideList?: SlideDeck[];
     /**
      * 旧版的两份固定简历。保留是为了兼容线上已有数据；新数据请用 resumeProfiles。
      *
@@ -49,6 +64,7 @@ export interface Profile {
      * 存在 pageCopy 这个 JSON 列里，避免为它新开一张 Supabase 表。
      */
     aiWorks?: Work[];
+    caseWorks?: Work[];
     /**
      * 「诗与惆怅」栏目的诗。和 aiWorks 一样存在 pageCopy 这个 JSON 列里，不另开表 ——
      * 诗只有文字、没有媒体要签名，塞进 JSON 最省事，也省掉用户手工执行一次建表 SQL。
@@ -79,6 +95,7 @@ export interface Profile {
      * 丢栏目 —— 顶多顺序不完美。后台每次移动都会写一份完整数组。
      */
     sectionOrder?: string[];
+    caseOrderConfigured?: boolean;
     /**
      * 每个前台栏目是否展示，形如 { works: false }。
      *
@@ -130,12 +147,16 @@ export const defaultHomeStats = {
  * 而 `App.tsx` 里它是默认参数值（`description = defaultPageCopy.gallery`），需要窄类型。
  */
 export const defaultPageCopy = {
+  toolbox: "把灵感做成工具，让创作少一点繁琐，多一点可能。",
+  cases: "拆解优秀案例，记录画面、叙事与 Prompt 的设计思路。",
   resume: "“纸上得来终觉浅，绝知此事要躬行。”一页履历，照见实践。",
   works: "“文章合为时而著，歌诗合为事而作。”作品因想法而生。",
   aiZone: "“苟日新，日日新，又日新。”与 AI 共作，另辟一片试验田。",
   gallery: "“操千曲而后晓声，观千剑而后识器。”所学皆可施展。",
   treasures: "“此情可待成追忆，只是当时已惘然。”珍藏美好，岁月留香。",
   poems: "“文章本天成，妙手偶得之。”偶得的句子，记在这里。",
+  posts: "“读万卷书，行万里路。”一图一记，分享所见所想。",
+  slides: "“工欲善其事，必先利其器。”把思考整理成一页页演示。",
   contact: "“海内存知己，天涯若比邻。”愿在此处相逢。",
 } satisfies NonNullable<Profile["pageCopy"]>;
 
@@ -147,10 +168,13 @@ export const defaultPageCopy = {
  * 这里读，就不会出现「后台加了一个模块、前台不认识」的情况。
  * ------------------------------------------------------------------------ */
 
-export type SectionKey = "intro" | "resume" | "works" | "ai" | "prospects" | "treasures" | "poems" | "contact";
+export type SectionKey = "intro" | "resume" | "works" | "cases" | "ai" | "toolbox" | "prospects" | "posts" | "slides" | "treasures" | "poems" | "contact";
 
-/** 栏目 key 的固有顺序（sectionOrder 缺省时就用它）。 */
-export const sectionKeys: SectionKey[] = ["intro", "resume", "works", "ai", "prospects", "treasures", "poems", "contact"];
+/**
+ * 栏目 key 的固有顺序（sectionOrder 缺省时就用它）。
+ * 新栏目必须加在这里，否则 normalizeSectionOrder 会把它当未知 key 过滤掉。
+ */
+export const sectionKeys: SectionKey[] = ["intro", "resume", "works", "ai", "cases", "toolbox", "prospects", "posts", "slides", "treasures", "poems", "contact"];
 
 export interface SectionMeta {
   key: SectionKey;
@@ -161,7 +185,7 @@ export interface SectionMeta {
   /** 对应 pageCopy 里的「页首诗句 / 说明」字段；没有就代表这个栏目不吃文案。 */
   copyKey?: keyof typeof defaultPageCopy;
   /** 有值 = 这个模块能「新增条目」，后台那一行会出现新增按钮。 */
-  content?: "resume" | "work" | "aiWork" | "gallery" | "treasure" | "poem";
+  content?: "resume" | "work" | "aiWork" | "gallery" | "treasure" | "poem" | "post" | "slide";
   /**
    * 旧版的独立开关键。改开关时两边一起写，老数据照样读得懂；
    * 将来数据都迁移过一轮后可以再删。
@@ -172,11 +196,15 @@ export interface SectionMeta {
 }
 
 export const sectionCatalog: SectionMeta[] = [
+  { key: "cases", label: "案例分析", sub: "CASE STUDIES", copyKey: "cases", hint: "视频分镜、资产与提示词分析，点击打开完整案例。" },
+  { key: "toolbox", label: "工具箱", sub: "TOOLBOX", copyKey: "toolbox", hint: "自研应用的统一入口，点击卡片探索工具。" },
   { key: "intro", label: "自我介绍", sub: "BIOGRAPHY", hint: "首屏：头像、一句话签名、闲言碎语，以及个人经历时间线。" },
   { key: "resume", label: "个人简历", sub: "CURRICULUM", copyKey: "resume", content: "resume", hint: "按岗位分标签展示简历 PDF；前台按后台顺序生成选项卡。" },
   { key: "works", label: "作品展示", sub: "PORTFOLIO", copyKey: "works", content: "work", hint: "主要作品列表，按分类筛选，点击弹出详情。" },
   { key: "ai", label: "AI专区", sub: "AI ZONE", copyKey: "aiZone", content: "aiWork", legacyVisibleKey: "aiZoneVisible", hint: "与 AI 共作的作品，渲染方式与「作品展示」一致。" },
   { key: "prospects", label: "应用技能", sub: "SKILLS", copyKey: "gallery", content: "gallery", hint: "成果截图墙，点击放大看细节。" },
+  { key: "posts", label: "图文分享", sub: "NOTES", copyKey: "posts", content: "post", hint: "小红书式图文：一条多图 + 一段文字，上下滑切换、卡内左右翻图。" },
+  { key: "slides", label: "演示文稿", sub: "SLIDES", copyKey: "slides", content: "slide", hint: "上传 .pptx，前台在浏览器里直接演示播放（翻页、全屏、自动播放）。" },
   { key: "treasures", label: "我的珍藏", sub: "TREASURES", copyKey: "treasures", content: "treasure", legacyVisibleKey: "treasuresVisible", hint: "一些舍不得删的图。" },
   { key: "poems", label: "诗与惆怅", sub: "POEMS", copyKey: "poems", content: "poem", hint: "自己写下的诗与断句，按后台顺序铺成一首一张卡。" },
   { key: "contact", label: "联系方式", sub: "CONTACT", copyKey: "contact", hint: "微信 / QQ / 邮箱 / GitHub，留空的条目不显示。" },
@@ -193,7 +221,7 @@ export function sectionMeta(key: string): SectionMeta | undefined {
  * 任何异常都只能影响顺序，绝不能把栏目弄丢 —— 所以最后一定把没提到的 key
  * 按固有顺序补在尾部。
  */
-export function normalizeSectionOrder(order?: string[]): SectionKey[] {
+export function normalizeSectionOrder(order?: string[], caseOrderConfigured = false): SectionKey[] {
   const seen = new Set<string>();
   const out: SectionKey[] = [];
   for (const raw of Array.isArray(order) ? order : []) {
@@ -203,6 +231,11 @@ export function normalizeSectionOrder(order?: string[]): SectionKey[] {
     out.push(key as SectionKey);
   }
   for (const key of sectionKeys) if (!seen.has(key)) out.push(key);
+  // Migrate the original position before AI, and place newly introduced cases after AI.
+  if (!caseOrderConfigured) {
+    out.splice(out.indexOf("cases"), 1);
+    out.splice(out.indexOf("ai") + 1, 0, "cases");
+  }
   return out;
 }
 
@@ -257,6 +290,8 @@ export interface ResumeProfile {
 }
 
 export interface Work {
+  /** Case study destination; covers use the same images field as other works. */
+  pageUrl?: string;
   id: string;
   category: "operation" | "app" | "prototype" | "video" | "poetry" | string;
   title: string;
@@ -309,6 +344,42 @@ export interface Poem {
   imageUrl?: string;
   /** 落款：写下的时间、地点、或给谁的。留空则不显示。 */
   note?: string;
+}
+
+/** 一条图文：多张图 + 标题 + 正文，前台一条占一张竖卡。 */
+export interface ImagePost {
+  /** 独立列表封面，不进入正文图集。缺省时使用第一张图片。 */
+  coverUrl?: string;
+  previews?: { source: string; url: string }[];
+  id: string;
+  title: string;
+  /** 正文。换行 = 分段。 */
+  text: string;
+  /** 正文原图，顺序与原始比例保持不变。 */
+  images: string[];
+  tags?: string[];
+  /** 自由文本的日期，例如「2026-10」，留空不显示。 */
+  date?: string;
+}
+
+/** 一份演示文稿。 */
+export interface SlideDeck {
+  pdfFileName?: string;
+  id: string;
+  title: string;
+  description?: string;
+  /** 原始 .pptx 文件地址，用于「下载原文件」；可以留空（只传了 PDF）。 */
+  fileUrl: string;
+  /**
+   * 演示用的 PDF。前台播放器有它就用它（排版完全还原、翻页快），没有才退回现场解析 pptx。
+   * 由作者在 PowerPoint / WPS 里「另存为 PDF」后上传。
+   */
+  pdfUrl?: string;
+  /** 原始文件名，用于下载时的文件名展示。 */
+  fileName?: string;
+  /** 列表卡片的封面图；留空时前台显示占位。 */
+  cover?: string;
+  date?: string;
 }
 
 export interface FloatingSentencesConfig {

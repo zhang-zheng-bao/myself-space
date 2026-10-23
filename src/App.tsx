@@ -5,6 +5,7 @@ import {
   BarChart3,
   Bot,
   BriefcaseBusiness,
+  ChevronDown,
   Compass,
   Download,
   ExternalLink,
@@ -33,17 +34,27 @@ import { isInstrumental } from "./musicMetadata";
 import TimelineArc from "./components/TimelineArc";
 import EntranceCinematic from "./components/EntranceCinematic";
 import ShibaAssistant from "./components/ShibaAssistant";
+import PostFeed, { ImageReader } from "./components/PostFeed";
+import { defaultCaseWorks, casePageUrl } from "./caseStudies";
+import MobileViewingNotice from "./components/MobileViewingNotice";
+import SlidePlayer from "./components/SlidePlayer";
+import Toolbox from "./components/Toolbox";
 import { startVisitTracking } from "./tracking";
-import { FloatingSentencesConfig, GalleryItem, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, TreasureItem, Work, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder } from "./types";
+import { contentIdentity, videoIdentity } from "./analytics-model";
+import { FloatingSentencesConfig, GalleryItem, ImagePost, MusicTrack, Poem, PortfolioData, ResumeProfile, SectionKey, SlideDeck, TreasureItem, Work, defaultHomeStats, defaultPageCopy, isSectionVisible, normalizeSectionOrder } from "./types";
 
-type TabKey = "intro" | "resume" | "works" | "ai" | "prospects" | "treasures" | "poems" | "contact";
+type TabKey = SectionKey;
 
 const navItems: { key: TabKey; label: string; sub: string }[] = [
+  { key: "toolbox", label: "工具箱", sub: "TOOLBOX" },
   { key: "intro", label: "自我介绍", sub: "BIOGRAPHY" },
   { key: "resume", label: "个人简历", sub: "CURRICULUM" },
   { key: "works", label: "作品展示", sub: "PORTFOLIO" },
+  { key: "cases", label: "案例分析", sub: "CASE STUDIES" },
   { key: "ai", label: "AI专区", sub: "AI ZONE" },
   { key: "prospects", label: "应用技能", sub: "SKILLS" },
+  { key: "posts", label: "图文分享", sub: "NOTES" },
+  { key: "slides", label: "演示文稿", sub: "SLIDES" },
   { key: "treasures", label: "我的珍藏", sub: "TREASURES" },
   { key: "poems", label: "诗与惆怅", sub: "POEMS" },
   { key: "contact", label: "联系方式", sub: "CONTACT" },
@@ -1202,7 +1213,7 @@ function AttachmentPreviewModal({
   );
 }
 
-function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
+function WorkModal({ work, onClose, namespace = "works" }: { work: Work; onClose: () => void; namespace?: string }) {
   const [imageIndex, setImageIndex] = useState(0);
   const [zoomed, setZoomed] = useState(false);
   // 原地预览的那份附件（存 meta 而不是 id —— 老数据不一定有 id）。
@@ -1210,7 +1221,7 @@ function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
   const images = work.images || [];
   const currentImage = images[imageIndex];
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6">
+    <div data-analytics-kind="work" data-analytics-key={contentIdentity(namespace, work)} data-analytics-title={work.title} className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6">
       <button className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={onClose} aria-label="关闭详情" />
       <div className="relative flex max-h-[90vh] w-full max-w-4xl flex-col overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl md:flex-row">
         <button onClick={onClose} className="absolute right-4 top-4 z-10 rounded-full border border-zinc-800 bg-zinc-900/80 p-2 text-zinc-300 hover:text-white" aria-label="关闭"><X size={16} /></button>
@@ -1218,7 +1229,7 @@ function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
           {work.videoUrl ? (
             <div className="space-y-4 p-4 md:p-6">
               <span className="block font-mono text-[10px] uppercase tracking-widest text-emerald-300/80">在线放映 / VIDEO PLAYER</span>
-              <video src={work.videoUrl} poster={currentImage} controls playsInline className="max-h-[70vh] w-full rounded-lg border border-zinc-850 bg-black object-contain" />
+              <video data-analytics-key={videoIdentity(namespace, work)} data-analytics-title={work.title} src={work.videoUrl} poster={currentImage} controls playsInline className="max-h-[70vh] w-full rounded-lg border border-zinc-850 bg-black object-contain" />
               {images.length > 0 && (
                 <div className="grid grid-cols-4 gap-2">
                   {images.map((image, idx) => (
@@ -1322,16 +1333,7 @@ function WorkModal({ work, onClose }: { work: Work; onClose: () => void }) {
 }
 
 function GalleryModal({ item, onClose }: { item: GalleryItem; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6">
-      <button className="absolute inset-0 bg-black/92 backdrop-blur-md" onClick={onClose} aria-label="关闭图片" />
-      <div className="relative max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl">
-        <button onClick={onClose} className="absolute right-4 top-4 z-10 rounded-full border border-zinc-800 bg-zinc-950/80 p-2 text-zinc-300 hover:text-white" aria-label="关闭"><X size={16} /></button>
-        <div className="max-h-[76vh] overflow-auto bg-black p-3"><img src={item.imageUrl} alt={zhText(item.title)} className="mx-auto max-h-none max-w-full rounded-lg object-contain" referrerPolicy="no-referrer" /></div>
-        <div className="border-t border-zinc-900 p-5"><span className="rounded border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[11px] text-emerald-300">{item.category}</span><h3 className="mt-3 font-serif text-2xl text-white">{zhText(item.title)}</h3><p className="mt-2 line-clamp-2 text-sm leading-7 text-zinc-300">{zhText(item.description)}</p></div>
-      </div>
-    </div>
-  );
+  return <ImageReader post={{id:item.id,title:zhText(item.title),text:[item.category,zhText(item.description)].filter(Boolean).join(' · '),images:[item.imageUrl]}} analyticsKey={contentIdentity("gallery",item)} onClose={onClose}/>;
 }
 
 /**
@@ -1410,15 +1412,27 @@ function FilterRail({
   onAll: () => void;
   items: { key: string; label: string; active: boolean; onSelect: () => void }[];
 }) {
+  const [mobileOpen, setMobileOpen] = useState(false);
   return (
-    <div className="flex max-w-full gap-1.5 rounded-xl border border-zinc-900 bg-zinc-950/80 p-1.5">
+    <div className="flex max-w-full flex-wrap items-center gap-1.5 rounded-xl border border-zinc-900 bg-zinc-950/80 p-1.5">
       <button
+        type="button"
+        className="flex w-full items-center justify-between rounded border border-transparent px-2.5 py-1.5 text-left text-[11px] font-medium tracking-wide text-zinc-300 md:hidden"
+        onClick={() => setMobileOpen((open) => !open)}
+        aria-expanded={mobileOpen}
+        aria-controls="module-category-options"
+      >
+        <span>模块分类</span>
+        <ChevronDown size={14} className={`transition-transform ${mobileOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+      </button>
+      <button
+        type="button"
         onClick={onAll}
         className={`shrink-0 whitespace-nowrap rounded border px-2.5 py-1.5 text-[11px] font-medium tracking-wide ${allActive ? "border-zinc-700 bg-zinc-900 text-white" : "border-transparent text-zinc-300 hover:text-white"}`}
       >
         全部
       </button>
-      <div className="flex min-w-0 flex-1 flex-nowrap gap-1.5 overflow-hidden">
+      <div id="module-category-options" className={`${mobileOpen ? "flex" : "hidden"} min-w-0 flex-1 flex-nowrap gap-1.5 overflow-hidden md:flex`}>
         {items.map((item) => (
           <button
             key={item.key}
@@ -1656,7 +1670,7 @@ function WorksPane({
               onClick={() => onSelect(work)}
               className="work-card group flex h-full cursor-pointer flex-col overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/60 transition-all duration-500 hover:border-zinc-700 hover:bg-zinc-950"
             >
-              <div className="work-card__media relative aspect-[1.92/1] overflow-hidden bg-zinc-950/60 shadow-inner">
+              <div className="work-card__media relative aspect-video overflow-hidden bg-zinc-950/60 shadow-inner">
                    {work.images?.[0] ? (
                      <img src={work.images[0]} alt={zhText(work.title)} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" referrerPolicy="no-referrer" />
                    ) : (
@@ -1890,7 +1904,7 @@ function TreasurePane({
 
 function TreasureModal({ item, onClose }: { item: TreasureItem; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6">
+    <div data-analytics-kind="work" data-analytics-key={contentIdentity("treasures", item)} data-analytics-title="珍藏图片" className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6">
       <button className="absolute inset-0 bg-black/92 backdrop-blur-md" onClick={onClose} aria-label="关闭图片" />
       <div className="relative max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl">
         <button onClick={onClose} className="absolute right-4 top-4 z-10 rounded-full border border-zinc-800 bg-zinc-950/80 p-2 text-zinc-300 hover:text-white" aria-label="关闭"><X size={16} /></button>
@@ -1912,7 +1926,7 @@ function TreasureModal({ item, onClose }: { item: TreasureItem; onClose: () => v
  */
 function poemToWork(poem: Poem, index: number): Work {
   return {
-    id: poem.id || `poem-${index}`,
+    id: poem.id || contentIdentity("poems", poem).replace("poems:", ""),
     category: "poetry",
     title: poem.title || "",
     description: poem.text || "",
@@ -2109,7 +2123,7 @@ function PoemPreviewModal({ poem, skin, onClose }: { poem: Poem; skin: PoemSlipS
   }, [onClose]);
 
   return createPortal(
-    <div className="fixed inset-0 z-[70] m-0 flex items-center justify-center p-4 md:p-8" role="dialog" aria-modal="true" aria-label={`诗签预览：${poem.title || "无题"}`}>
+    <div data-analytics-kind="work" data-analytics-key={contentIdentity("poems", poem)} data-analytics-title={poem.title || "无题"} className="fixed inset-0 z-[70] m-0 flex items-center justify-center p-4 md:p-8" role="dialog" aria-modal="true" aria-label={`诗签预览：${poem.title || "无题"}`}>
       <button type="button" className="absolute inset-0 cursor-zoom-out bg-black/92 backdrop-blur-md" onClick={onClose} aria-label="关闭诗签预览" tabIndex={-1} />
       <div className="relative z-10 flex max-h-full min-h-0 w-full max-w-3xl flex-col overflow-hidden">
         <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
@@ -2227,6 +2241,107 @@ function PoemPane({
   );
 }
 
+function PostPane({ items, description = defaultPageCopy.posts }: { items: ImagePost[]; description?: string }) {
+  const [zoom, setZoom] = useState<{ images: string[]; index: number } | null>(null);
+  const usable = items.filter((post) => (post.images || []).some(Boolean) || post.title || post.text);
+  return (
+    <div className="space-y-6">
+      <div><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-sky-300/80">图文随记 / NOTES</span>{description ? <p className="mt-3 max-w-3xl text-[15px] leading-8 text-zinc-300">{zhText(description)}</p> : null}</div>
+      {usable.length > 0 ? (
+        <PostFeed items={usable} onZoom={(images, index) => setZoom({ images, index })} />
+      ) : (
+        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂无图文</p><p className="mt-3 text-sm text-zinc-400">请在后台「图文分享」中新增一条。</p></div>
+      )}
+      {zoom ? <ImageLightbox images={zoom.images} index={zoom.index} onChange={(index) => setZoom((current) => (current ? { ...current, index } : current))} onClose={() => setZoom(null)} /> : null}
+    </div>
+  );
+}
+
+/**
+ * 没上传封面的演示：现场把 PDF 第一页画成封面。
+ * 后台新上传的 PDF 会自动生成封面图，这里主要兜住老条目。
+ *
+ * 不用 IntersectionObserver 做懒加载：它在页面不绘制时（后台标签页、隐藏的
+ * 预览面板）可能一次都不触发，封面就永远停在占位符上。栏目本身已经是点进来
+ * 才渲染，进入时加载一次够用，pdf.js 也是全站共用的。
+ */
+function PdfFirstPage({ url }: { url: string }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    let cancelled = false;
+    let destroyPdf: (() => Promise<void>) | null = null;
+    (async () => {
+      try {
+        const { openPdfSmart, renderPdfPage } = await import("./pdfDeck");
+        // 分块加载：画封面只需要文件头和第一页那几个对象，不必把整份 PDF 下回来。
+        const { doc, destroy } = await openPdfSmart(url);
+        destroyPdf = destroy;
+        if (cancelled) return;
+        // 宽度在挂载这一刻可能还是 0（父容器尚未布局），回退到一个保证有值的宽度。
+        const width = canvas.parentElement?.clientWidth || canvas.clientWidth || 480;
+        await renderPdfPage(doc, 1, canvas, width);
+        if (!cancelled) setState("ready");
+      } catch {
+        if (!cancelled) setState("error");
+      }
+    })();
+    return () => { cancelled = true; void destroyPdf?.(); };
+  }, [url]);
+  return (
+    <>
+      <canvas ref={canvasRef} aria-hidden="true" className="h-full w-full bg-white object-cover transition-transform duration-500 group-hover:scale-[1.03]" style={{ display: state === "ready" ? "block" : "none" }} />
+      {state !== "ready" && <div className="flex h-full items-center justify-center font-serif text-lg tracking-widest text-zinc-500">{state === "error" ? "PDF" : "…"}</div>}
+    </>
+  );
+}
+
+function SlidesPane({ items, description = defaultPageCopy.slides }: { items: SlideDeck[]; description?: string }) {
+  const [playing, setPlaying] = useState<SlideDeck | null>(null);
+  const usable = items.filter((deck) => deck.pdfUrl || deck.fileUrl);
+  return (
+    <div className="space-y-8">
+      <div><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-violet-300/80">演示文稿 / SLIDES</span>{description ? <p className="mt-3 max-w-3xl text-[15px] leading-8 text-zinc-300">{zhText(description)}</p> : null}</div>
+      {usable.length > 0 ? (
+        <div className="grid gap-5 pt-2 sm:grid-cols-2">
+          {usable.map((deck) => (
+            <button
+              key={deck.id || deck.fileUrl}
+              type="button"
+              data-track={`slides:play:${deck.id}`}
+              onClick={() => setPlaying(deck)}
+              className="group overflow-hidden rounded-xl border border-zinc-900 bg-zinc-950/60 text-left transition-colors duration-300 hover:border-zinc-700"
+            >
+              <div className="relative aspect-video overflow-hidden bg-gradient-to-br from-violet-950/60 via-zinc-950 to-zinc-900">
+                {deck.cover ? (
+                  <img src={deck.cover} alt="" loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
+                ) : deck.pdfUrl ? (
+                  <PdfFirstPage url={deck.pdfUrl} />
+                ) : (
+                  <div className="flex h-full items-center justify-center font-serif text-lg tracking-widest text-zinc-500">PPTX</div>
+                )}
+                <span className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors duration-300 group-hover:bg-black/40">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white/90 px-4 py-2 text-sm font-medium text-zinc-900 opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-visible:opacity-100"><Play size={15} /> 开始演示</span>
+                </span>
+              </div>
+              <div className="p-4">
+                <h4 className="font-serif text-base font-bold tracking-wide text-white">{deck.title || "未命名演示"}</h4>
+                {deck.description ? <p className="mt-1.5 line-clamp-2 text-sm leading-6 text-zinc-400">{deck.description}</p> : null}
+                {deck.date ? <p className="mt-2 font-mono text-[11px] text-zinc-500">{deck.date}</p> : null}
+              </div>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂无演示文稿</p><p className="mt-3 text-sm text-zinc-400">请在后台「演示文稿」中上传 .pptx。</p></div>
+      )}
+      {playing ? <SlidePlayer deck={playing} onClose={() => setPlaying(null)} /> : null}
+    </div>
+  );
+}
+
 /**
  * 联系方式里微信 / QQ 的品牌图标（自绘矢量）。
  *
@@ -2276,6 +2391,16 @@ function ContactPane({ data }: { data: PortfolioData }) {
   return <div className="space-y-8"><div><span className="mb-1 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">有缘相识，留笔通信 / INK STATION CONTACT</span><p className="mt-3 text-[15px] leading-8 text-zinc-300">{zhText(pageCopy.contact)}</p></div><div className="grid gap-6 pt-2 md:grid-cols-2">{cards.map((card) => <a key={card.label} href={card.label === "GitHub" ? card.value : undefined} target={card.label === "GitHub" ? "_blank" : undefined} rel="noopener noreferrer" className="group flex flex-col justify-between space-y-4 rounded-xl border border-zinc-900 bg-zinc-950/60 p-5 transition-all duration-300 hover:border-zinc-800 hover:bg-zinc-950"><div className="flex items-center space-x-3"><span className={`rounded-lg border border-zinc-800 bg-zinc-900 p-2.5 ${card.color} transition-transform duration-300 group-hover:scale-105`}>{card.icon}</span><div><h4 className="font-serif text-base font-bold tracking-wider text-white">{card.label}</h4><p className="mt-0.5 font-mono text-[10px] uppercase text-zinc-500">Contact Channel</p></div></div><span className="break-all font-mono text-base font-medium tracking-wide text-white">{card.value}</span></a>)}</div></div>;
 }
 
+
+/** 收起 index.html 里的缓冲加载页。animate=false 时立即移除（被入场动画盖住的情况）。 */
+function dismissBootLoader(animate: boolean) {
+  const loader = document.getElementById("boot-loader");
+  if (!loader || loader.dataset.leaving !== undefined) return;
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!animate || reduced) { loader.remove(); return; }
+  loader.dataset.leaving = "";
+  window.setTimeout(() => loader.remove(), 480);
+}
 
 function preloadImage(url: string) {
   return new Promise<void>((resolve) => {
@@ -2519,7 +2644,7 @@ function IntroDashboard({ data, onSelectWork, onNavigate }: {
 }
 
 export default function App() {
-  if (window.location.pathname.startsWith("/admin")) return <AdminApp />;
+  if (window.location.pathname.startsWith("/admin")) { dismissBootLoader(false); return <AdminApp />; }
   const [data, setData] = useState<PortfolioData>(normalizeData(emptyPortfolioData));
   const [portfolioConfigReady, setPortfolioConfigReady] = useState(false);
   const [portfolioReady, setPortfolioReady] = useState(false);
@@ -2529,7 +2654,10 @@ export default function App() {
   const beginMusicEntry = React.useCallback(() => setMusicEntryReady(true), []);
   const completeEntrance = React.useCallback(() => setEntered(true), []);
   const completeMusicAttempt = React.useCallback(() => setMusicSettled(true), []);
-  const [activeTab, setActiveTab] = useState<TabKey>("intro");
+  const [activeTab, setActiveTab] = useState<TabKey>(() => {
+    const requested = new URLSearchParams(window.location.search).get("tab");
+    return navItems.find(item => item.key === requested)?.key || "intro";
+  });
   const [selectedWork, setSelectedWork] = useState<Work | null>(null);
   const [selectedAiWork, setSelectedAiWork] = useState<Work | null>(null);
   const [selectedGallery, setSelectedGallery] = useState<GalleryItem | null>(null);
@@ -2587,6 +2715,15 @@ export default function App() {
   const siteEntered = entered || (portfolioReady && !entranceAnimationEnabled);
   const floatingSentencesConfig = useMemo(() => resolveFloatingSentencesConfig(data.profile.pageCopy?.floatingSentences, activeTab), [data.profile.pageCopy?.floatingSentences, activeTab]);
 
+  // 缓冲加载页（index.html 里的 #boot-loader）什么时候收起：
+  // - 入场动画开着：配置一到、动画层挂上就立刻撤掉，后面的等待交给动画自己的开门页；
+  // - 入场动画关着：等数据与首屏素材就绪再淡出，直接露出站点 —— 不再经过黑屏渐显。
+  useEffect(() => {
+    if (!portfolioConfigReady) return;
+    if (entranceAnimationEnabled) { dismissBootLoader(false); return; }
+    if (portfolioReady) dismissBootLoader(true);
+  }, [portfolioConfigReady, portfolioReady, entranceAnimationEnabled]);
+
   // 关闭入场动画时不挂载视频，也不让音乐继续等待动画回调。数据加载完成后
   // 直接放行自动播放尝试；浏览器若拦截有声播放，播放器原有的交互重试会接管。
   useEffect(() => {
@@ -2603,7 +2740,7 @@ export default function App() {
   //
   const visibleNavItems = useMemo(() => {
     const byKey = new Map(navItems.map((item) => [item.key as string, item]));
-    return normalizeSectionOrder(data.profile.pageCopy?.sectionOrder)
+    return normalizeSectionOrder(data.profile.pageCopy?.sectionOrder, data.profile.pageCopy?.caseOrderConfigured)
       .filter((key) => isSectionVisible(data.profile.pageCopy, key))
       .map((key) => byKey.get(key))
       .filter((item): item is NonNullable<typeof item> => Boolean(item));
@@ -2615,7 +2752,7 @@ export default function App() {
   // 落到第一个还开着的栏目上；一个都不剩就什么都不切，交给下面的空态接住。
   useEffect(() => {
     if (isSectionVisible(data.profile.pageCopy, activeTab)) return;
-    const fallback = normalizeSectionOrder(data.profile.pageCopy?.sectionOrder)
+    const fallback = normalizeSectionOrder(data.profile.pageCopy?.sectionOrder, data.profile.pageCopy?.caseOrderConfigured)
       .find((key) => isSectionVisible(data.profile.pageCopy, key));
     if (fallback) setActiveTab(fallback);
   }, [data.profile.pageCopy, activeTab]);
@@ -2623,8 +2760,9 @@ export default function App() {
   return (
     <>
     {portfolioConfigReady && entranceAnimationEnabled && <EntranceCinematic ready={portfolioReady} soundReady={!data.profile.musicAutoplay || !(data.musicTracks || []).some(track => track.audioUrl) || musicSettled} musicLeadSeconds={data.profile.pageCopy?.musicLeadSeconds ?? 3} onMusicEntry={beginMusicEntry} onEntered={completeEntrance} />}
-    {portfolioReady && <div className="portfolio-site" inert={!siteEntered} aria-hidden={!siteEntered}>
+    {portfolioReady && <div data-analytics-page={siteEntered ? activeTab : undefined} data-analytics-title={navItems.find(item => item.key === activeTab)?.label} className="portfolio-site" inert={!siteEntered} aria-hidden={!siteEntered}>
       <FloatingSentences config={floatingSentencesConfig} />
+      <MobileViewingNotice />
 
       <header className="site-header">
         <button type="button" data-track="navigation:brand" className="site-brand" onClick={() => setActiveTab("intro")}>
@@ -2687,11 +2825,15 @@ export default function App() {
             ) : (
               <>
             {activeTab === "intro" && sectionShown("intro") && <IntroDashboard data={data} onSelectWork={setSelectedWork} onNavigate={setActiveTab} />}
+            {activeTab === "toolbox" && sectionShown("toolbox") && <Toolbox description={pageCopy.toolbox} />}
+            {activeTab === "cases" && sectionShown("cases") && <WorksPane items={data.profile.pageCopy?.caseWorks ?? defaultCaseWorks} description={pageCopy.cases} onSelect={(work) => { const url = casePageUrl(work.pageUrl); if (url) window.location.assign(url); }} eyebrow="案例分析 / CASE STUDIES" emptyTitle="暂无案例" emptyDescription="案例将在发布后展示。" />}
             {activeTab === "works" && sectionShown("works") && <WorksPane items={[...data.works, ...((data.profile.pageCopy?.poemList || []).map(poemToWork))]} description={pageCopy.works} onSelect={setSelectedWork} categoryOrder={workCategories} />}
             {activeTab === "ai" && sectionShown("ai") && <WorksPane items={data.profile.pageCopy?.aiWorks || []} description={pageCopy.aiZone} onSelect={setSelectedAiWork} eyebrow="与 AI 共作 / AI ZONE EXHIBITS" emptyTitle="暂无 AI 作品" emptyDescription="请进入后台 /admin，在「AI 专区」中新增作品并保存。" />}
             {activeTab === "prospects" && sectionShown("prospects") && <GalleryPane items={data.gallery || []} onSelect={setSelectedGallery} description={pageCopy.gallery} />}
             {activeTab === "treasures" && sectionShown("treasures") && <TreasurePane items={data.treasures || []} onSelect={setSelectedTreasure} description={pageCopy.treasures} />}
             {activeTab === "poems" && sectionShown("poems") && <PoemPane items={data.profile.pageCopy?.poemList || []} description={pageCopy.poems} />}
+            {activeTab === "posts" && sectionShown("posts") && <PostPane items={data.profile.pageCopy?.postList || []} description={pageCopy.posts} />}
+            {activeTab === "slides" && sectionShown("slides") && <SlidesPane items={data.profile.pageCopy?.slideList || []} description={pageCopy.slides} />}
             {activeTab === "resume" && sectionShown("resume") && <ResumePane data={data} />}
             {activeTab === "contact" && sectionShown("contact") && <ContactPane data={data} />}
               </>
@@ -2703,8 +2845,8 @@ export default function App() {
           </footer>
         </section>
       </main>
-      {selectedWork && <WorkModal work={selectedWork} onClose={() => setSelectedWork(null)} />}
-      {selectedAiWork && <WorkModal work={selectedAiWork} onClose={() => setSelectedAiWork(null)} />}
+      {selectedWork && <WorkModal namespace={(data.profile.pageCopy?.poemList || []).some((poem, index) => poemToWork(poem, index).id === selectedWork.id) ? "poems" : "works"} work={selectedWork} onClose={() => setSelectedWork(null)} />}
+      {selectedAiWork && <WorkModal namespace="ai" work={selectedAiWork} onClose={() => setSelectedAiWork(null)} />}
       {selectedGallery && <GalleryModal item={selectedGallery} onClose={() => setSelectedGallery(null)} />}
       {selectedTreasure && <TreasureModal item={selectedTreasure} onClose={() => setSelectedTreasure(null)} />}
       <ShibaAssistant ready={siteEntered} />

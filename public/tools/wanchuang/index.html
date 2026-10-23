@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src 'self' https: blob:;">
+  <title>万创核心</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="glass.css">
+<link rel="stylesheet" href="web.css"></head>
+<body data-view="download"><div class="web-status"><a href="/?tab=toolbox">← 返回工具箱</a><span id="webStatus" role="status">正在连接应用服务…</span></div>
+  <a class="skip-link" href="#workspaceMain">跳到主要内容</a>
+  <div class="app-shell">
+    <aside class="app-sidebar">
+      <div class="sidebar-brand" aria-label="万创核心">
+        <span class="brand-mark"><img src="assets/clipharbor-logo.png" alt="" width="32" height="32"></span>
+        <span class="brand-copy"><strong>万创核心</strong><small>CLIP HARBOR</small></span>
+      </div>
+
+      <nav class="side-nav" aria-label="功能导航">
+        <button class="feature-tab active" data-view="download" aria-current="page">
+          <span class="nav-icon"><i data-lucide="download"></i></span>
+          <span class="nav-copy"><strong>素材采集</strong></span>
+        </button>
+        <button class="feature-tab" data-view="speech">
+          <span class="nav-icon"><i data-lucide="audio-lines"></i></span>
+          <span class="nav-copy"><strong>语音转写</strong></span>
+        </button>
+        <button class="feature-tab" data-view="voice">
+          <span class="nav-icon"><i data-lucide="audio-waveform"></i></span>
+          <span class="nav-copy"><strong>声音生成</strong></span>
+        </button>
+        <button class="feature-tab" data-view="voiceClone">
+          <span class="nav-icon"><i data-lucide="mic-vocal"></i></span>
+          <span class="nav-copy"><strong>声音克隆</strong></span>
+        </button>
+      </nav>
+      <div class="sidebar-footer"><button class="feature-tab feature-tab-system" data-view="settings" aria-label="偏好设置" title="偏好设置"><span class="nav-icon"><i data-lucide="settings"></i></span></button></div>
+
+    </aside>
+
+    <div class="workspace">
+      <main class="workspace-main" id="workspaceMain">
+        <header class="workspace-heading">
+          <h1 id="viewTitle">素材采集</h1>
+        </header>
+        <div id="downloadView" class="view-stack">
+          <section class="panel composer" aria-labelledby="composerTitle">
+            <div class="section-heading">
+              <div>
+                <h2 id="composerTitle">添加链接</h2>
+              </div>
+              <button class="quiet-button" id="pasteButton"><i data-lucide="clipboard-paste"></i>粘贴</button>
+            </div>
+            <label class="sr-only" for="urlInput">视频、图文链接或分享文案，可输入多个链接</label>
+            <textarea id="urlInput" rows="3" placeholder="粘贴链接，或整段分享文案…"></textarea>
+            <div class="composer-footer">
+              <div class="segmented" role="radiogroup" aria-label="下载内容">
+                <button class="segment active" data-mode="video" role="radio" aria-checked="true"><i data-lucide="video"></i>视频</button>
+                <button class="segment" data-mode="cover" role="radio" aria-checked="false"><i data-lucide="image"></i>封面</button>
+                <button class="segment" data-mode="both" role="radio" aria-checked="false"><i data-lucide="copy-plus"></i>视频 + 封面</button>
+              </div>
+              <div class="parse-actions">
+                <span id="parseStatus" class="parse-status" aria-live="polite"></span>
+                <button class="quiet-button" id="parseButton"><i data-lucide="arrow-up-right"></i>解析素材</button>
+                <button class="primary-button" id="downloadButton" hidden><i data-lucide="download"></i>下载</button>
+              </div>
+            </div>
+            <section id="previewPanel" class="preview-panel" hidden aria-labelledby="previewTitle">
+              <div class="preview-heading">
+                <div>
+                  <h3 id="previewTitle">解析结果</h3>
+                  <p id="previewSummary"></p>
+                </div>
+                <div class="preview-actions" id="imageSelectionActions" hidden>
+                  <button type="button" class="quiet-button" id="selectAllMediaButton">全选图片</button>
+                  <button type="button" class="quiet-button" id="clearMediaButton">取消全选</button>
+                </div>
+              </div>
+              <div id="previewList" class="preview-list"></div>
+            </section>
+          </section>
+
+          <section class="panel queue-section" aria-labelledby="queueTitle">
+            <div class="section-heading queue-heading">
+              <div>
+                <h2 id="queueTitle">下载任务</h2>
+                <p id="queueSummary">暂无任务</p>
+              </div>
+              <div class="queue-actions">
+                <button class="quiet-button" id="openFolderButton"><i data-lucide="folder-open"></i>打开目录</button>
+              </div>
+            </div>
+            <div id="emptyState" class="empty-state">
+              <i data-lucide="arrow-down-to-line"></i>
+              <strong>暂无下载任务</strong>
+              <span>下载任务将在这里显示</span>
+            </div>
+            <div id="jobList" class="job-list" aria-live="polite"></div>
+          </section>
+        </div>
+
+        <div id="speechView" class="speech-layout" hidden>
+          <section class="panel composer speech-composer" aria-labelledby="speechTitle">
+            <div class="section-heading">
+              <div>
+                <h2 id="speechTitle">视频链接与识别文稿</h2>
+              </div>
+              <button class="quiet-button" id="speechPasteButton"><i data-lucide="clipboard-paste"></i>粘贴链接</button>
+            </div>
+            <div class="speech-status-row">
+              <span id="speechTaskStatus" class="parse-status" aria-live="polite"></span>
+              <span id="speechTaskDetail" class="speech-task-detail">支持抖音、B站、小红书和央视视频</span>
+            </div>
+            <label class="sr-only" for="speechInput">视频链接或识别文稿</label>
+            <textarea id="speechInput" rows="10" class="speech-input" placeholder="放入视频链接。识别完成，文稿会出现在这里。"></textarea>
+            <div class="composer-footer speech-footer">
+              <span class="field-hint">同时保存 TXT 文稿 / SRT 字幕</span>
+              <div class="parse-actions">
+                <button type="button" class="quiet-button" id="clearSpeechTextButton"><i data-lucide="eraser"></i>清空结果</button>
+                <button class="primary-button" id="speechStartButton"><i data-lucide="mic"></i>开始识别</button>
+              </div>
+            </div>
+          </section>
+
+          <aside class="panel speech-monitor" aria-labelledby="speechMonitorTitle">
+            <div class="section-heading compact-heading">
+              <div>
+                <h2 id="speechMonitorTitle">识别历史</h2>
+              </div>
+              <span class="status-badge" id="speechJobCount">0 个任务</span>
+            </div>
+            <div class="speech-progress">
+              <div class="speech-progress-copy">
+                <span>当前任务</span>
+                <strong id="speechProgressValue">0%</strong>
+              </div>
+              <div class="progress-track"><div class="progress-fill" id="speechProgressFill"></div></div>
+            </div>
+            <div id="speechJobList" class="compact-job-list" aria-live="polite"></div>
+            <div id="speechEmptyJobs" class="mini-empty">
+              <i data-lucide="audio-lines"></i>
+              <strong>暂无识别任务</strong>
+              <span>添加视频链接即可开始</span>
+            </div>
+            <div class="monitor-note">
+              <i data-lucide="info"></i>
+              <span>直接读取连续音频流，不切片，识别结果实时回填。</span>
+            </div>
+          </aside>
+        </div>
+
+        <div id="voiceView" class="voice-layout" hidden>
+          <section class="panel voice-studio" aria-labelledby="voiceTitle">
+            <div class="section-heading">
+              <div>
+                <h2 id="voiceTitle">声音生成</h2>
+                <p>选择已有音色，把文字生成自然语音。</p>
+              </div>
+              <span id="minimaxConnectionBadge" class="status-badge">未连接</span>
+            </div>
+            <label class="field-label" for="voiceText">生成文本</label>
+            <textarea id="voiceText" class="voice-text" maxlength="1000" rows="8" placeholder="输入要用克隆声音朗读的内容…"></textarea>
+            <div class="voice-counter"><span id="voiceCharCount">0</span> / 1000</div>
+            <div class="voice-control-grid">
+              <div class="voice-field">
+                <label class="field-label" for="voicePickerButton">已有音色</label>
+                <div class="input-action">
+                  <div class="voice-picker" id="voicePicker">
+                    <button type="button" id="voicePickerButton" class="voice-picker-trigger" aria-haspopup="dialog" aria-expanded="false">
+                      <span id="voicePickerLabel">选择音色</span><i data-lucide="chevron-down"></i>
+                    </button>
+                    <div id="voicePickerPanel" class="voice-picker-panel" role="dialog" aria-label="选择音色" hidden>
+                      <div class="voice-picker-tabs" role="tablist" aria-label="音色分类">
+                        <button type="button" class="voice-picker-tab active" data-voice-category="favorites"><i data-lucide="star"></i>收藏</button>
+                        <button type="button" class="voice-picker-tab" data-voice-category="mine"><i data-lucide="user-round"></i>我的音色</button>
+                        <button type="button" class="voice-picker-tab" data-voice-category="system"><i data-lucide="library"></i>系统音色</button>
+                      </div>
+                      <div class="voice-picker-search"><i data-lucide="search"></i><input id="voicePickerSearch" type="search" placeholder="搜索名称或音色 ID" autocomplete="off"></div>
+                      <div id="voicePickerList" class="voice-picker-list" role="listbox"></div>
+                    </div>
+                  </div>
+                  <button type="button" class="quiet-button" id="refreshVoiceModels"><i data-lucide="refresh-cw"></i>刷新</button>
+                </div>
+              </div>
+              <div class="voice-field">
+                <label class="field-label" for="voiceId">音色 ID</label>
+                <input id="voiceId" maxlength="20" spellcheck="false" placeholder="例如 my_voice_01">
+              </div>
+            </div>
+            <div class="emotion-control" aria-labelledby="emotionLabel">
+              <div class="emotion-heading"><span id="emotionLabel" class="field-label">表达情绪</span><small id="emotionHint">模型根据文本自动判断</small></div>
+              <div class="emotion-grid" role="radiogroup" aria-label="表达情绪">
+                <button type="button" class="emotion-chip active" data-emotion="" role="radio" aria-checked="true">智能</button>
+                <button type="button" class="emotion-chip" data-emotion="happy" role="radio" aria-checked="false">开心</button>
+                <button type="button" class="emotion-chip" data-emotion="sad" role="radio" aria-checked="false">悲伤</button>
+                <button type="button" class="emotion-chip" data-emotion="angry" role="radio" aria-checked="false">愤怒</button>
+                <button type="button" class="emotion-chip" data-emotion="fearful" role="radio" aria-checked="false">害怕</button>
+                <button type="button" class="emotion-chip" data-emotion="disgusted" role="radio" aria-checked="false">厌恶</button>
+                <button type="button" class="emotion-chip" data-emotion="surprised" role="radio" aria-checked="false">惊讶</button>
+                <button type="button" class="emotion-chip" data-emotion="calm" role="radio" aria-checked="false">平静</button>
+                <button type="button" class="emotion-chip" data-emotion="fluent" role="radio" aria-checked="false">流畅</button>
+                <button type="button" class="emotion-chip" data-emotion="whisper" role="radio" aria-checked="false">耳语</button>
+              </div>
+            </div>
+            <div class="composer-footer">
+              <span class="voice-generation-note"><i data-lucide="info"></i>需要创建新音色？前往“声音克隆”。</span>
+              <div class="parse-actions">
+                <span id="voiceGenerateStatus" class="parse-status" aria-live="polite"></span>
+                <button type="button" class="primary-button" id="generateVoiceButton"><i data-lucide="sparkles"></i>生成语音</button>
+              </div>
+            </div>
+          </section>
+          <aside class="panel voice-result" aria-labelledby="voiceResultTitle">
+            <div class="section-heading compact-heading"><h2 id="voiceResultTitle">生成结果</h2></div>
+            <div id="voiceResultEmpty" class="mini-empty">
+              <i data-lucide="headphones"></i><strong>等待生成</strong><span>完成后可在这里试听</span>
+            </div>
+            <div id="voiceResultReady" hidden>
+              <div class="voice-orb"><i data-lucide="audio-waveform"></i></div>
+              <strong id="voiceResultName">语音已生成</strong>
+              <audio id="voiceAudio" controls></audio>
+              <button type="button" class="quiet-button" id="openVoiceOutput"><i data-lucide="folder-open"></i>打开文件</button>
+            </div>
+            <div class="voice-history-heading">
+              <div>
+                <strong>最近生成</strong>
+                <div class="voice-history-summary"><span id="voiceHistoryCount">0 条</span><button type="button" id="openVoiceHistory" hidden>查看全部<i data-lucide="chevron-right"></i></button></div>
+              </div>
+            </div>
+            <div id="voiceHistoryList" class="voice-history-list" aria-live="polite"></div>
+            <div id="voiceHistoryEmpty" class="voice-history-empty">每次生成都会自动保存在这里</div>
+          </aside>
+        </div>
+
+        <div id="voiceCloneView" class="voice-clone-layout" hidden>
+          <section class="panel voice-studio voice-clone-studio" aria-labelledby="voiceCloneTitle">
+            <div class="section-heading">
+              <div>
+                <span class="section-kicker">VOICE CLONE</span>
+                <h2 id="voiceCloneTitle">创建专属音色</h2>
+                <p>上传一段清晰的人声样本，创建后即可在声音生成中反复使用。</p>
+              </div>
+              <span id="cloneConnectionBadge" class="status-badge">未连接</span>
+            </div>
+            <div class="clone-step"><span>01</span><div><strong>选择参考音频</strong><small>建议 10 秒以上、无背景音乐的人声</small></div></div>
+            <div class="voice-reference clone-reference">
+              <div><strong id="voiceReferenceName">尚未选择音频</strong><span>支持 MP3、M4A、WAV、AAC、OGG</span></div>
+              <div class="inline-actions"><button type="button" class="quiet-button" id="clearVoiceReference" hidden><i data-lucide="x"></i>移除</button><button type="button" class="quiet-button" id="chooseVoiceReference"><i data-lucide="paperclip"></i>选择音频</button></div>
+            </div>
+            <div class="clone-step"><span>02</span><div><strong>命名音色</strong><small>使用英文、数字、下划线或短横线</small></div></div>
+            <label class="field-label" for="cloneVoiceId">新音色 ID</label>
+            <input id="cloneVoiceId" maxlength="20" spellcheck="false" placeholder="例如 my_voice_01">
+            <label class="voice-toggle clone-noise"><input id="voiceNoise" type="checkbox">开启参考音频降噪</label>
+            <div class="composer-footer clone-footer"><span id="voiceCloneStatus" class="parse-status" aria-live="polite"></span><button type="button" class="primary-button" id="cloneVoiceButton"><i data-lucide="sparkles"></i>创建音色</button></div>
+          </section>
+          <aside class="panel clone-info-panel"><div class="section-heading compact-heading"><h2>克隆流程</h2></div><div class="clone-info-list"><div><i data-lucide="upload-cloud"></i><span>上传样本到 MiniMax</span></div><div><i data-lucide="wand-sparkles"></i><span>创建可复用的账号音色</span></div><div><i data-lucide="audio-waveform"></i><span>完成后自动刷新音色列表</span></div></div><button type="button" class="quiet-button" id="goVoiceGenerate"><i data-lucide="arrow-right"></i>去生成语音</button></aside>
+        </div>
+
+        <div id="voiceHistoryView" class="voice-history-page-wrap" hidden>
+          <section class="panel voice-history-page" aria-labelledby="voiceHistoryPageTitle">
+            <div class="voice-history-page-header">
+              <div>
+                <button type="button" class="quiet-button" id="backFromVoiceHistory"><i data-lucide="arrow-left"></i>返回设置</button>
+                <h2 id="voiceHistoryPageTitle">历史记录</h2>
+                <p>查看本地记录、素材位置和失败原因。</p>
+              </div>
+              <span class="status-badge ok" id="voiceHistoryPageCount">0 条记录</span>
+            </div>
+            <div class="history-management-toolbar">
+              <div class="cookie-tabs" role="tablist" aria-label="历史分类">
+                <button type="button" class="cookie-tab active" data-history-kind="voice">声音生成</button>
+                <button type="button" class="cookie-tab" data-history-kind="speech">语音识别</button>
+                <button type="button" class="cookie-tab" data-history-kind="download">素材下载</button>
+              </div>
+              <button type="button" class="quiet-button" id="clearHistoryButton"><i data-lucide="list-x"></i>清除历史</button>
+            </div>
+            <p id="historyMessage" class="cookie-meta" role="status"></p>
+            <div id="voiceHistoryPlayer" class="voice-history-player" hidden>
+              <div><i data-lucide="audio-waveform"></i><span id="voiceHistoryPlayerName">正在播放历史音频</span></div>
+              <audio id="voiceHistoryAudio" controls></audio>
+            </div>
+            <div id="voiceHistoryPageList" class="voice-history-page-list" aria-live="polite"></div>
+            <div id="voiceHistoryPageEmpty" class="mini-empty"><i data-lucide="history"></i><strong>暂无历史记录</strong><span>完成任务后会自动保存到这里</span></div>
+          </section>
+        </div>
+
+        <div id="settingsView" class="settings-layout" hidden>
+          <aside class="settings-navigation">
+            <button type="button" class="quiet-button" id="backFromSettings"><i data-lucide="arrow-left"></i>返回工作台</button>
+            <h2>设置</h2>
+            <nav aria-label="设置分类">
+              <button type="button" data-settings-section="general" class="settings-category active" aria-current="page"><i data-lucide="sliders-horizontal"></i>常规</button>
+              <button type="button" data-settings-section="cookies" class="settings-category"><i data-lucide="key-round"></i>平台 Cookie</button>
+              <button type="button" data-settings-section="speech" class="settings-category"><i data-lucide="mic"></i>语音服务</button>
+              <button type="button" data-settings-section="minimax" class="settings-category"><i data-lucide="audio-waveform"></i>MiniMax 语音</button>
+              <button type="button" data-settings-section="voices" class="settings-category"><i data-lucide="sliders-horizontal"></i>音色管理</button>
+              <button type="button" data-settings-section="history" class="settings-category"><i data-lucide="history"></i>历史记录</button>
+            </nav>
+          </aside>
+          <div class="settings-content">
+          <h2 id="settingsSectionTitle">常规</h2>
+          <div class="environment-status"><span>本机工具</span><div class="tool-status" id="toolStatus" aria-label="工具状态"></div><span class="privacy-note"><i data-lucide="shield-check"></i>凭证加密保存在本机</span></div>
+          <section class="panel settings-panel" data-settings-panel="general">
+            <div class="section-heading">
+              <div>
+                <span class="section-kicker">基础设置</span>
+                <h2>下载与并发</h2>
+                <p>控制文件保存位置和同时运行的下载任务数量。</p>
+              </div>
+            </div>
+            <div class="setting-group">
+              <label for="outputDir">保存目录</label>
+              <div class="input-action">
+                <input id="outputDir" readonly>
+                <button type="button" class="quiet-button" id="chooseFolderButton"><i data-lucide="folder"></i>选择</button>
+              </div>
+            </div>
+            <div class="setting-group compact-row">
+              <div>
+                <label for="concurrency">并发任务</label>
+                <p>建议 2–3 个；抖音解析会启动隔离浏览器。</p>
+              </div>
+              <input id="concurrency" type="number" min="1" max="5" step="1">
+            </div>
+          </section>
+
+          <section class="panel settings-panel speech-settings-panel" data-settings-panel="speech" hidden>
+            <div class="setting-title-row">
+              <div>
+                <span class="section-kicker">语音服务</span>
+                <h2>讯飞实时语音转写</h2>
+                <p>填写讯飞开放平台凭证，并确保应用已开通“实时语音转写”。</p>
+              </div>
+              <span id="speechBadge" class="status-badge">未配置</span>
+            </div>
+            <div class="speech-fields">
+              <label for="iflytekAppId">APPID</label>
+              <input id="iflytekAppId" autocomplete="off" spellcheck="false" placeholder="输入 APPID">
+              <label for="iflytekApiKey">APIKey</label>
+              <input id="iflytekApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="输入 APIKey">
+              <label for="iflytekApiSecret">APISecret</label>
+              <input id="iflytekApiSecret" type="password" autocomplete="off" spellcheck="false" placeholder="输入 APISecret">
+            </div>
+            <div id="speechMeta" class="cookie-meta"></div>
+            <div class="cookie-actions">
+              <button type="button" class="danger-link" id="clearSpeechButton">清除语音识别配置</button>
+              <div class="inline-actions">
+                <button type="button" class="quiet-button" id="validateSpeechButton"><i data-lucide="refresh-cw"></i>重新验证</button>
+                <button type="button" class="quiet-button" id="saveSpeechButton"><i data-lucide="shield-check"></i>保存并验证</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel settings-panel cookie-panel" data-settings-panel="cookies" hidden>
+            <div class="setting-title-row">
+              <div>
+                <span class="section-kicker">平台会话</span>
+                <h2>Cookie 管理</h2>
+                <p>粘贴完整内容后自动清洗、加密保存并验证登录状态。</p>
+              </div>
+              <span id="cookieBadge" class="status-badge">未配置</span>
+            </div>
+            <div class="cookie-tabs" role="tablist" aria-label="Cookie 平台">
+              <button type="button" class="cookie-tab active" data-platform="douyin">抖音</button>
+              <button type="button" class="cookie-tab" data-platform="bilibili">B站</button>
+              <button type="button" class="cookie-tab" data-platform="xiaohongshu">小红书</button>
+            </div>
+            <label class="field-label" for="cookieInput"><span id="cookiePlatformName">抖音</span> Cookie</label>
+            <textarea id="cookieInput" rows="7" placeholder="粘贴抖音 Cookie"></textarea>
+            <div id="cookieFields" class="cookie-meta" role="status" aria-live="polite"></div>
+            <div id="cookieMeta" class="cookie-meta"></div>
+            <div class="cookie-actions">
+              <button type="button" class="danger-link" id="clearCookieButton">清除此平台 Cookie</button>
+              <div class="inline-actions">
+                <button type="button" class="quiet-button" id="authorizeCookieButton"><i data-lucide="scan-line"></i>浏览器授权</button>
+                <button type="button" class="quiet-button" id="validateCookieButton"><i data-lucide="refresh-cw"></i>重新验证</button>
+                <button type="button" class="quiet-button" id="importCookieButton"><i data-lucide="shield-check"></i>保存并验证</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel settings-panel" data-settings-panel="minimax" hidden>
+            <div class="setting-title-row">
+              <div>
+                <span class="section-kicker">声音克隆与生成</span>
+                <h2>MiniMax 语音</h2>
+                <p>API Key 使用 Windows 安全存储加密，不会发送到渲染页面。</p>
+              </div>
+              <span id="minimaxBadge" class="status-badge">未配置</span>
+            </div>
+            <div class="speech-fields">
+              <label for="minimaxApiKey">API Key</label>
+              <input id="minimaxApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-api-…">
+            </div>
+            <div id="minimaxMeta" class="cookie-meta"></div>
+            <div class="cookie-actions">
+              <button type="button" class="danger-link" id="clearMinimaxButton">清除 MiniMax 配置</button>
+              <div class="inline-actions">
+                <button type="button" class="quiet-button" id="refreshMinimaxButton"><i data-lucide="refresh-cw"></i>刷新账号音色</button>
+                <button type="button" class="quiet-button" id="saveMinimaxButton"><i data-lucide="shield-check"></i>保存并连接</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel settings-panel" data-settings-panel="voices" hidden>
+            <div class="setting-title-row"><div><h2>按喜好整理音色</h2><p>关闭的音色将从选择列表和收藏中隐藏，并暂停使用。可随时恢复，设置只保存在本机。</p></div></div>
+            <div class="voice-management-toolbar">
+              <div class="cookie-tabs" role="tablist" aria-label="音色管理分类">
+                <button type="button" class="cookie-tab active" data-manage-voices="all">全部音色</button>
+                <button type="button" class="cookie-tab" data-manage-voices="hidden">已隐藏</button>
+              </div>
+              <input id="manageVoicesSearch" type="search" placeholder="搜索名称或音色 ID" aria-label="搜索管理的音色">
+            </div>
+            <p id="manageVoicesCount" class="cookie-meta"></p>
+            <div id="manageVoicesList" class="manage-voices-list"></div>
+            <p id="manageVoicesMessage" class="cookie-meta" role="status" aria-live="polite"></p>
+          </section>
+          <section class="panel settings-panel" data-settings-panel="history" hidden>
+            <h2>最近生成记录</h2><p>展开查看完整记录，在二级页面中清除历史或删除素材。</p>
+            <button type="button" class="history-settings-entry" data-open-history="voice"><i data-lucide="audio-waveform"></i><span>声音生成记录</span><i data-lucide="chevron-right"></i></button>
+            <button type="button" class="history-settings-entry" data-open-history="speech"><i data-lucide="mic"></i><span>语音识别记录</span><i data-lucide="chevron-right"></i></button>
+            <button type="button" class="history-settings-entry" data-open-history="download"><i data-lucide="download"></i><span>素材下载记录</span><i data-lucide="chevron-right"></i></button>
+          </section>
+          <div class="settings-savebar panel">
+            <span id="settingsMessage" class="settings-message" aria-live="polite"></span>
+            <button class="primary-button" id="saveSettingsButton"><i data-lucide="save"></i>保存基础设置</button>
+          </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="mediaViewer" aria-labelledby="mediaViewerTitle">
+    <header class="viewer-toolbar"><h2 id="mediaViewerTitle">素材预览</h2><button type="button" id="closeMediaViewer" class="icon-button" aria-label="关闭预览" title="关闭预览（Esc）"><i data-lucide="x"></i></button></header>
+    <div id="mediaViewerContent"></div>
+    <p id="mediaViewerMessage" role="status"></p>
+  </dialog>
+
+  <template id="jobTemplate">
+    <article class="job-item">
+      <div class="job-icon"><i data-lucide="video"></i></div>
+      <div class="job-main">
+        <div class="job-top"><span class="job-url"></span><span class="job-status"></span></div>
+        <div class="progress-track"><div class="progress-fill"></div></div>
+        <div class="job-bottom"><span class="job-detail"></span><span class="job-percent"></span></div>
+      </div>
+      <div class="job-controls"></div>
+    </article>
+  </template>
+
+  <script src="vendor/lucide.js"></script>
+  <script src="web-adapter.js"></script><script src="renderer.js"></script><script src="web-downloads.js"></script><script type="module" src="/analytics.js"></script>
+</body>
+</html>
