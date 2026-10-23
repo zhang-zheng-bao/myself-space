@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import crypto from 'node:crypto';
 import WebSocket from 'ws';
+import tls from 'node:tls';
 import {readToolSettings} from '../server/tool-settings';
 const c=readToolSettings();
 const appId=c.iflytekAppId.trim(),apiKey=c.secrets.iflytekApiKey?.trim(),secret=c.secrets.iflytekApiSecret?.trim();
@@ -14,11 +15,21 @@ const signature=crypto.createHmac('sha256',secret).update(`host: iat-api.xfyun.c
 const auth=Buffer.from(`api_key="${apiKey}", algorithm="hmac-sha256", headers="host date request-line", signature="${signature}"`).toString('base64');
 const shanghaiNow=new Date(Date.now()+8*60*60*1000);
 const utc=shanghaiNow.toISOString().replace(/\.\d{3}Z$/,'+0800');
-const realtimeModelRequest={accessKeyId:apiKey,appId,audio_encode:'pcm_s16le',lang:'autodialect',samplerate:'16000',utc,uuid:crypto.randomUUID()};
-const realtimeModelBase=['accessKeyId','appId','lang','utc','uuid'].map(key=>`${encodeURIComponent(key)}=${encodeURIComponent(realtimeModelRequest[key as keyof typeof realtimeModelRequest])}`).join('&');
+const realtimeModelRequest={accessKeyId:apiKey,appId,audio_encode:'pcm_s16le',lang:'autodialect',samplerate:'16000',utc,uuid:crypto.randomUUID().replace(/-/g,'')};
 const realtimeModelQuery=Object.keys(realtimeModelRequest).sort().map(key=>`${encodeURIComponent(key)}=${encodeURIComponent(realtimeModelRequest[key as keyof typeof realtimeModelRequest])}`).join('&');
+const realtimeModelBase=realtimeModelQuery;
 const realtimeModelSignature=crypto.createHmac('sha1',secret).update(realtimeModelBase).digest('base64');
 const realtimeModelUrl='wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1?'+realtimeModelQuery+'&signature='+encodeURIComponent(realtimeModelSignature);
+const realtimeTarget=new URL(realtimeModelUrl);
+await new Promise<void>(resolve=>{
+ const socket=tls.connect({host:realtimeTarget.hostname,port:443,servername:realtimeTarget.hostname},()=>{
+  const key=crypto.randomBytes(16).toString('base64');
+  socket.write(`GET ${realtimeTarget.pathname}${realtimeTarget.search} HTTP/1.1\r\nHost: ${realtimeTarget.host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
+ });
+ let raw='';socket.on('data',chunk=>{raw+=chunk.toString('utf8');if(raw.includes('\r\n\r\n')){const [head]=raw.split('\r\n\r\n');console.log('realtime-model raw',head.split('\r\n').slice(0,8).join(' | '));socket.end();resolve();}});
+ socket.on('error',error=>{console.log('realtime-model raw error',error.message);resolve();});
+ setTimeout(()=>{socket.destroy();resolve();},15000);
+});
 for(const [name,url] of [['realtime-model',realtimeModelUrl],['realtime-standard','wss://rtasr.xfyun.cn/v1/ws?'+new URLSearchParams({appid:appId,ts,signa,lang:'cn'})],['iat','wss://iat-api.xfyun.cn/v2/iat?'+new URLSearchParams({authorization:auth,date,host:'iat-api.xfyun.cn'})]] as const){
  await new Promise<void>(resolve=>{
   const ws=new WebSocket(url);const timer=setTimeout(()=>{console.log(name,'timeout');ws.terminate();resolve();},15000);

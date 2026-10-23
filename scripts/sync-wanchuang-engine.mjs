@@ -65,10 +65,9 @@ body = body.replace('if (job.cancelRequested) cancelPipeline();','cancelPipeline
 body = body.replace(/function iflytekRealtimeWebSocketUrl\(credentials\) \{[\s\S]*?\n\}/, `function iflytekRealtimeWebSocketUrl(credentials) {
   const shanghaiNow = new Date(Date.now() + 8 * 60 * 60 * 1000);
   const utc = shanghaiNow.toISOString().replace(/\\.\\d{3}Z$/, '+0800');
-  const request = {accessKeyId:credentials.apiKey,appId:credentials.appId,audio_encode:'pcm_s16le',lang:'autodialect',samplerate:'16000',utc,uuid:crypto.randomUUID()};
-  const signed = ['accessKeyId','appId','lang','utc','uuid'];
-  const base = signed.map((key) => \`\${encodeURIComponent(key)}=\${encodeURIComponent(request[key])}\`).join('&');
+  const request = {accessKeyId:credentials.apiKey,appId:credentials.appId,audio_encode:'pcm_s16le',lang:'autodialect',samplerate:'16000',utc,uuid:crypto.randomUUID().replace(/-/g,'')};
   const query = Object.keys(request).sort().map((key) => \`\${encodeURIComponent(key)}=\${encodeURIComponent(request[key])}\`).join('&');
+  const base = query;
   const signature = crypto.createHmac('sha1', credentials.apiSecret).update(base).digest('base64');
   return \`wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1?\${query}&signature=\${encodeURIComponent(signature)}\`;
 }`);
@@ -77,7 +76,7 @@ body = body
   .replace("new Error('无法连接讯飞实时语音转写服务')", "new Error('无法连接实时语音转写服务')")
   .replace("new Error('讯飞实时语音转写连接提前关闭')", "new Error('实时语音转写连接提前关闭')")
   .replace("if (payload.action === 'error' || String(payload.code) !== '0') {\n        const suffix = String(payload.code) === '10110'\n          ? '；请在讯飞控制台开通“实时语音转写”并确认授权路数'\n          : '';\n        return fail(new Error(`讯飞实时转写失败：${payload.desc || payload.code}${suffix}`));\n      }", "const code = payload.code ?? payload.data?.code;\n      if (payload.action === 'error' || (code !== undefined && String(code) !== '0')) {\n        return fail(new Error(`实时语音转写失败：${payload.desc || payload.message || payload.data?.desc || code}`));\n      }")
-  .replace("if (payload.action === 'started') {\n        started = true;", "if (payload.action === 'started' || payload.msg_type === 'started' || payload.res_type === 'started') {\n        started = true;\n        sessionId = String(payload.sid || payload.sessionId || '');")
+  .replace("if (payload.action === 'started') {\n        started = true;", "if (payload.action === 'started' || (payload.msg_type === 'action' && payload.data?.sessionId) || payload.msg_type === 'started' || payload.res_type === 'started') {\n        started = true;\n        sessionId = String(payload.sid || payload.sessionId || payload.data?.sessionId || '');")
   .replace("if (payload.action !== 'result' || !payload.data) return;", "if (payload.action !== 'result' && payload.msg_type !== 'result' && payload.res_type !== 'asr') return;\n      if (!payload.data) return;")
   .replace("const result = JSON.parse(payload.data);", "const result = typeof payload.data === 'string' ? JSON.parse(payload.data) : payload.data;")
   .replace("socket.send(Buffer.from('{\"end\": true}'));", "socket.send(JSON.stringify(sessionId ? { end: true, sessionId } : { end: true }));")

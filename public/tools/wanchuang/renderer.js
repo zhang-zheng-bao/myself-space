@@ -827,7 +827,10 @@ function renderSpeechJobs(jobs) {
     $('#speechTaskStatus').textContent = `${current.status} ${current.progress || 0}%`;
     $('#speechTaskDetail').textContent = current.status;
   } else {
-    const last = sessionJobs.at(-1);
+    // A refresh must still surface failures from this browser's persisted
+    // history. Otherwise an old failed task leaves its 1% progress visible
+    // with no explanation.
+    const last = sessionJobs.at(-1) || speechJobs.at(-1);
     if (last?.status === '失败') {
       $('#speechTaskStatus').className = 'parse-status bad';
       $('#speechTaskStatus').textContent = '识别失败';

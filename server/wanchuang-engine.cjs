@@ -687,10 +687,9 @@ function iflytekWebSocketUrl(credentials) {
 function iflytekRealtimeWebSocketUrl(credentials) {
   const shanghaiNow = new Date(Date.now() + 8 * 60 * 60 * 1000);
   const utc = shanghaiNow.toISOString().replace(/\.\d{3}Z$/, '+0800');
-  const request = {accessKeyId:credentials.apiKey,appId:credentials.appId,audio_encode:'pcm_s16le',lang:'autodialect',samplerate:'16000',utc,uuid:crypto.randomUUID()};
-  const signed = ['accessKeyId','appId','lang','utc','uuid'];
-  const base = signed.map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(request[key])}`).join('&');
+  const request = {accessKeyId:credentials.apiKey,appId:credentials.appId,audio_encode:'pcm_s16le',lang:'autodialect',samplerate:'16000',utc,uuid:crypto.randomUUID().replace(/-/g,'')};
   const query = Object.keys(request).sort().map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(request[key])}`).join('&');
+  const base = query;
   const signature = crypto.createHmac('sha1', credentials.apiSecret).update(base).digest('base64');
   return `wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1?${query}&signature=${encodeURIComponent(signature)}`;
 }
@@ -745,9 +744,9 @@ function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {})
       if (payload.action === 'error' || (code !== undefined && String(code) !== '0')) {
         return fail(new Error(`实时语音转写失败：${payload.desc || payload.message || payload.data?.desc || code}`));
       }
-      if (payload.action === 'started' || payload.msg_type === 'started' || payload.res_type === 'started') {
+      if (payload.action === 'started' || (payload.msg_type === 'action' && payload.data?.sessionId) || payload.msg_type === 'started' || payload.res_type === 'started') {
         started = true;
-        sessionId = String(payload.sid || payload.sessionId || '');
+        sessionId = String(payload.sid || payload.sessionId || payload.data?.sessionId || '');
         startedResolve();
         return;
       }
