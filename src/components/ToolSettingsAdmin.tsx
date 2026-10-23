@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import WanchuangManagementAdmin from './WanchuangManagementAdmin';
 const groups = [
   { id: 'runtime', title: '运行参数', description: '任务并发与文件保留时间', fields: [] },
@@ -12,6 +12,7 @@ export default function ToolSettingsAdmin() {
   const [baseline, setBaseline] = useState('');
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [clearSecrets, setClearSecrets] = useState<string[]>([]);
+  const [visibleCookies, setVisibleCookies] = useState<Record<string, boolean>>({});
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
   const [runtime, setRuntime] = useState<{ tools: Record<string, boolean> } | null>(null);
@@ -46,7 +47,7 @@ export default function ToolSettingsAdmin() {
       try {
         const res = await fetch('/api/admin/tools/wanchuang/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...config, secrets, clearSecrets }) });
         const body = await res.json(); if (!res.ok) throw new Error(body.error);
-        setConfig(body); setBaseline(JSON.stringify(body)); setSecrets({}); setClearSecrets([]); setMessage('已加密保存，后续任务将使用最新配置。'); void checkRuntime();
+        setConfig(body); setBaseline(JSON.stringify(body)); setSecrets({}); setVisibleCookies({}); setClearSecrets([]); setMessage('已加密保存，后续任务将使用最新配置。'); void checkRuntime();
       } catch (error) { setMessage(error instanceof Error ? error.message : '保存失败'); } finally { setSaving(false); }
     }}><fieldset disabled={saving} className="space-y-5 disabled:opacity-60">
       <div className="space-y-3">{groups.map(group => {
@@ -65,7 +66,28 @@ export default function ToolSettingsAdmin() {
               <label className="block text-sm">文件保留时间（小时）<input className={input} type="number" min="1" max="24" required value={config.retentionHours} onChange={e => setConfig({ ...config, retentionHours: Number(e.target.value) })} /></label>
             </div>}
             {group.id === 'iflytek' && <label className="block text-sm">App ID<input className={input} maxLength={100} pattern="[a-zA-Z0-9_-]*" value={config.iflytekAppId} onChange={e => setConfig({ ...config, iflytekAppId: e.target.value })} /></label>}
-            {group.fields.map(([key, label]) => <div key={key}><label className="block text-sm">{label}<span className="ml-2 text-xs text-zinc-400">{config.configured[key] ? '已配置' : '未配置'}</span><input className={input} type="password" autoComplete="new-password" maxLength={16000} disabled={clearSecrets.includes(key)} placeholder="留空保留原值" value={secrets[key] || ''} onChange={e => setSecrets({ ...secrets, [key]: e.target.value })} /></label>{config.configured[key] && <label className="mt-2 flex items-center gap-2 text-xs text-zinc-400"><input type="checkbox" checked={clearSecrets.includes(key)} onChange={e => setClearSecrets(e.target.checked ? [...clearSecrets, key] : clearSecrets.filter(item => item !== key))} />保存时清除该项</label>}</div>)}
+            {group.fields.map(([key, label]) => <div key={key}>
+              <label className="block text-sm">{label}<span className="ml-2 text-xs text-zinc-400">{config.configured[key] ? '已配置' : '未配置'}</span>
+                {key.endsWith('Cookie') ? <textarea className={`${input} resize-y font-mono`} rows={4} autoComplete="off" spellCheck={false} maxLength={16000} disabled={clearSecrets.includes(key)} placeholder="粘贴 Cookie、插件 JSON 或 cookies.txt 内容；留空保留原值" value={secrets[key] || ''} style={{ WebkitTextSecurity: visibleCookies[key] ? 'none' : 'disc' } as CSSProperties} onChange={e => setSecrets(previous => ({ ...previous, [key]: e.target.value }))} />
+                  : <input className={input} type="password" autoComplete="new-password" maxLength={16000} disabled={clearSecrets.includes(key)} placeholder="留空保留原值" value={secrets[key] || ''} onChange={e => setSecrets(previous => ({ ...previous, [key]: e.target.value }))} />}
+              </label>
+              {key.endsWith('Cookie') && <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-400">
+                <label className={clearSecrets.includes(key) ? 'opacity-50' : 'cursor-pointer text-emerald-300'}>导入 JSON / TXT 文件<input type="file" className="sr-only" aria-label={`导入${label}文件`} accept=".json,.txt,application/json,text/plain" disabled={clearSecrets.includes(key)} onChange={async e => {
+                  const file = e.target.files?.[0]; e.target.value = '';
+                  if (!file) return;
+                  try {
+                    if (file.size > 64000) throw new Error('Cookie 文件过大，请仅导出当前平台的 Cookie。');
+                    const value = (await file.text()).trim();
+                    if (!value || value.length > 16000) throw new Error('Cookie 内容须为 1–16000 字，请仅导出当前平台的 Cookie。');
+                    setSecrets(previous => ({ ...previous, [key]: value }));
+                    setMessage(`${label}文件已读取，点击保存后校验并生效。`);
+                  } catch (error) { setMessage(error instanceof Error ? error.message : '读取 Cookie 文件失败'); }
+                }} /></label>
+                <button type="button" onClick={() => setVisibleCookies(previous => ({ ...previous, [key]: !previous[key] }))}>{visibleCookies[key] ? '隐藏内容' : '显示内容'}</button>
+                <span>支持 JSON 数组、cookies 包装结构和 Netscape cookies.txt</span>
+              </div>}
+              {config.configured[key] && <label className="mt-2 flex items-center gap-2 text-xs text-zinc-400"><input type="checkbox" checked={clearSecrets.includes(key)} onChange={e => setClearSecrets(e.target.checked ? [...clearSecrets, key] : clearSecrets.filter(item => item !== key))} />保存时清除该项</label>}
+            </div>)}
           </div>
         </details>;
       })}</div>

@@ -5,6 +5,21 @@
 
 ## 服务器准备
 
+### 当前 Windows 生产服务器：随 Git 部署自动准备
+
+推送并合并到 `main` 后，部署工作流在 `npm ci` 之后、构建和重启之前自动运行 `npm run setup:wanchuang`，无需管理员远程手动安装。
+
+- `scripts/wanchuang-dependencies.json` 固定 yt-dlp、FFmpeg 的版本、下载地址和 SHA256；下载后校验，升级时修改此文件。
+- Chromium 使用 `package-lock.json` 锁定的 Playwright 安装器下载，随其版本升级。
+- 二进制保存在部署目录 `.private/wanchuang-runtime/`，不上传 Git；脚本、版本清单、部署配置上传 Git。已有版本复用，首次部署需要下载，耗时较长。
+- 安装后实际执行 yt-dlp、FFmpeg，并启动 Chromium 校验；全部通过才原子更新 `manifest.json`，安装或验证失败会终止部署，不重启现有服务。
+- 服务读取清单中的绝对路径，不依赖部署账户的 PATH 或浏览器用户缓存；显式 `WANCHUANG_*` 路径仍优先，请勿保留失效的手工覆盖配置。
+- 部署账户和 SYSTEM 服务都必须能读取该目录，`.private` 必须持久保留。后台 Cookie/KEY 与任务数据不受安装影响。
+
+本地 Windows 也可运行 `npm run setup:wanchuang`；`npm run check:wanchuang` 仅验证已安装版本及清单，不下载。依赖验证只代表本地执行环境就绪，平台 Cookie 有效性、云服务 KEY 和完整业务任务仍须分别验证。
+
+### Linux 或其他自行部署的环境
+
 使用 Node.js 22 或更新版本，安装网站依赖后运行：
 
 ```sh

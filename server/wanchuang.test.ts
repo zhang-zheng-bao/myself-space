@@ -108,5 +108,16 @@ test('HTTP sessions isolate history/downloads; invalid actions never execute',as
     const blocked=await action('generateVoice',{text:'测试',voiceId:'testvoice123'});assert.equal(blocked.status,400);assert.match((await blocked.json()).error,/禁用|隐藏/);
     assert.equal((await fetch(visibility,{method:'PUT',headers:adminHeaders,body:JSON.stringify({id:'testvoice123',hidden:false})})).status,200);
     assert.deepEqual((await(await fetch(base+'/state',{headers:{Cookie:cookie}})).json()).settings.minimax.hiddenVoices,[]);
+    const updated = (await import('./tool-settings')).readToolSettings();
+    updated.secrets.douyinCookie = JSON.stringify({ cookies: [{ name: 'sessionid', value: 'repaired-session', domain: '.douyin.com' }] });
+    writeToolSettings(updated);
+    for (const browserCookie of [cookie, other]) {
+      const repaired = await (await fetch(base+'/state', { headers: { Cookie: browserCookie } })).json();
+      const profile = repaired.settings.cookieProfiles.find((item:any) => item.platform === 'douyin');
+      assert.equal(profile.status, '未检查', 'Valid replacement must clear the stale format error in every existing session');
+      assert.deepEqual(profile.names, ['sessionid']);
+      assert.equal(profile.fields.loginReady, true);
+      assert.equal(JSON.stringify(repaired).includes('repaired-session'), false);
+    }
   }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));fs.rmSync(directory,{recursive:true,force:true});}
 });

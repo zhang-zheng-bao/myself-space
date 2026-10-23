@@ -6,6 +6,7 @@ const source = path.resolve(process.argv[2] || '../WanChuangCore/main.js');
 const input = fs.readFileSync(source, 'utf8').replace(/\r\n/g,'\n');
 const ast = ts.createSourceFile(source, input, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
 const replacements = {
+  normalizeCookieInput: `function normalizeCookieInput(raw, forcedPlatform = '') { return require('./platform-cookies.cjs').normalizeCookieInput(raw, forcedPlatform); }`,
   defaultOutput: `function defaultOutput() { return path.join(root, 'outputs'); }`,
   decryptCookieHeader: `function decryptCookieHeader(platform = 'douyin') { const raw = readConfig().secrets[platform + 'Cookie']; if(!raw)return ''; try{return normalizeCookieInput(raw, platform).header;}catch{throw new Error(platformConfig(platform).label+' Cookie 格式无法识别，请管理员在后台检查该平台配置');} }`,
   decryptSpeechCredentials: `function decryptSpeechCredentials() { const c = readConfig(); return c.iflytekAppId && c.secrets.iflytekApiKey && c.secrets.iflytekApiSecret ? { appId:c.iflytekAppId, apiKey:c.secrets.iflytekApiKey, apiSecret:c.secrets.iflytekApiSecret } : null; }`,
@@ -80,7 +81,10 @@ function syncConfig() {
     settings[config.encryptedKey] = raw ? 'server-managed' : '';
     settings[config.metaKey] = null;
     if(raw) {
-      try { settings[config.metaKey] = {names:normalizeCookieInput(raw,platform).names}; }
+      try {
+        settings[config.metaKey] = {names:normalizeCookieInput(raw,platform).names};
+        if(cookieHealth[platform].status === '格式有误') cookieHealth[platform] = {status:'未检查',checkedAt:null,message:''};
+      }
       catch { cookieHealth[platform] = {status:'格式有误',checkedAt:null,message:config.label+' Cookie 格式无法识别，请管理员检查'}; }
     }
   }

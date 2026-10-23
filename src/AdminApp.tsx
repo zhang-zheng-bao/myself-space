@@ -1048,7 +1048,7 @@ function VisibilitySwitch({
 }) {
   const label = `在网站前台展示${name}`;
   const toggle = (
-    <label className="inline-flex shrink-0 cursor-pointer items-center gap-3 rounded-lg px-1 py-2.5">
+    <label className="relative inline-flex shrink-0 cursor-pointer items-center gap-3 rounded-lg px-1 py-2.5">
       <span className={`text-sm ${checked ? "text-emerald-300" : "text-zinc-500"}`}>
         {checked ? "已开启" : "已关闭"}
       </span>

@@ -43,20 +43,30 @@ async function publicFetch(input: string, options: RequestInit = {}): Promise<Re
   }
   throw new Error('重定向次数过多');
 }
-function executable(env: string, command: string) {
+function existingFile(candidate: unknown): candidate is string {
+  try { return typeof candidate === 'string' && path.isAbsolute(candidate) && fs.statSync(candidate).isFile(); }
+  catch { return false; }
+}
+function executable(env: string, command: string, managed?: unknown) {
   if (process.env[env] && fs.existsSync(process.env[env]!)) return path.resolve(process.env[env]!);
+  if (existingFile(managed)) return managed;
   for (const directory of (process.env.PATH || '').split(path.delimiter)) {
     const p = path.join(directory,command+(process.platform==='win32'?'.exe':''));
     if (fs.existsSync(p)) return p;
   }
   return '';
 }
-export function runtimeBinaries() {
-  const browserCandidates = [process.env.WANCHUANG_BROWSER, browserDriver.executablePath(),
+export function runtimeBinaries(manifestPath = path.resolve('.private/wanchuang-runtime/manifest.json')) {
+  let managed: Record<string, unknown> = {};
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    if (manifest.schema === 1 && manifest.binaries && typeof manifest.binaries === 'object') managed = manifest.binaries;
+  } catch { /* Existing environment/PATH installs remain supported. */ }
+  const browserCandidates = [process.env.WANCHUANG_BROWSER, managed.browser, browserDriver.executablePath(),
     path.join(process.env.ProgramFiles || '', 'Google/Chrome/Application/chrome.exe'),
     path.join(process.env['ProgramFiles(x86)'] || '', 'Microsoft/Edge/Application/msedge.exe'),
     '/usr/bin/chromium','/usr/bin/chromium-browser','/usr/bin/google-chrome'];
-  return {ytDlp:executable('WANCHUANG_YTDLP','yt-dlp'),ffmpeg:executable('WANCHUANG_FFMPEG','ffmpeg'),browser:browserCandidates.find(p=>p && fs.existsSync(p)) || ''};
+  return {ytDlp:executable('WANCHUANG_YTDLP','yt-dlp',managed.ytDlp),ffmpeg:executable('WANCHUANG_FFMPEG','ffmpeg',managed.ffmpeg),browser:browserCandidates.find(existingFile) || ''};
 }
 let active = 0;
 const waiters: (()=>void)[] = [];

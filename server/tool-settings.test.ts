@@ -4,7 +4,7 @@ import express from 'express';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { registerToolSettings } from './tool-settings';
+import { registerToolSettings, readToolSettings } from './tool-settings';
 
 test('admin settings: permissions, encrypted persistence, masking and clearing', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wanchuang-settings-test-'));
@@ -34,6 +34,26 @@ test('admin settings: permissions, encrypted persistence, masking and clearing',
     assert.ok(!(await retrieved.text()).includes('sensitive-test-value'));
     assert.equal((await (await save({ ...body, secrets: { minimaxApiKey: '' } })).json()).configured.minimaxApiKey, true);
     assert.equal((await (await save({ ...body, secrets: {}, clearSecrets: ['minimaxApiKey'] })).json()).configured.minimaxApiKey, false);
+    const validCookie = 'ttwid=test-public; sessionid=test-session';
+    assert.equal((await save({ ...body, secrets: { douyinCookie: validCookie } })).status, 200);
+    for (const field of ['douyinCookie', 'bilibiliCookie', 'xiaohongshuCookie']) {
+      const before = fs.readFileSync(process.env.TOOL_SETTINGS_FILE!, 'utf8');
+      const invalid = await save({ ...body, concurrency: 3, secrets: { [field]: 'not-a-cookie' } });
+      assert.equal(invalid.status, 400, `${field} must reject unrecognised content before saving`);
+      assert.match((await invalid.json()).error, /Cookie/);
+      assert.equal(fs.readFileSync(process.env.TOOL_SETTINGS_FILE!, 'utf8'), before, 'Rejected changes must not overwrite any saved settings');
+      assert.equal(readToolSettings().secrets.douyinCookie, validCookie);
+    }
+    for (const value of [
+      'Cookie: ttwid=test-public; sessionid=test-session',
+      JSON.stringify([{ name: 'sessionid', value: 'test-session', domain: '.douyin.com' }]),
+      JSON.stringify({ cookies: [{ name: 'sessionid', value: 'test-session', domain: '.douyin.com' }] }),
+      '# Netscape HTTP Cookie File\n.douyin.com\tTRUE\t/\tTRUE\t0\tsessionid\ttest-session',
+    ]) {
+      const response = await save({ ...body, secrets: { douyinCookie: value } });
+      assert.equal(response.status, 200, 'Existing supported formats must remain accepted');
+      assert.equal((await response.json()).configured.douyinCookie, true);
+    }
   } finally {
     server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
     fs.unlinkSync(path.join(directory, 'config.enc')); fs.rmdirSync(directory);

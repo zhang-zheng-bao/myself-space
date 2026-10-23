@@ -5,6 +5,7 @@ import {
   BarChart3,
   Bot,
   BriefcaseBusiness,
+  ChevronDown,
   Compass,
   Download,
   ExternalLink,
@@ -33,7 +34,7 @@ import { isInstrumental } from "./musicMetadata";
 import TimelineArc from "./components/TimelineArc";
 import EntranceCinematic from "./components/EntranceCinematic";
 import ShibaAssistant from "./components/ShibaAssistant";
-import PostFeed from "./components/PostFeed";
+import PostFeed, { ImageReader } from "./components/PostFeed";
 import { defaultCaseWorks, casePageUrl } from "./caseStudies";
 import MobileViewingNotice from "./components/MobileViewingNotice";
 import SlidePlayer from "./components/SlidePlayer";
@@ -1332,16 +1333,7 @@ function WorkModal({ work, onClose, namespace = "works" }: { work: Work; onClose
 }
 
 function GalleryModal({ item, onClose }: { item: GalleryItem; onClose: () => void }) {
-  return (
-    <div data-analytics-kind="work" data-analytics-key={contentIdentity("gallery", item)} data-analytics-title={item.title} className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6">
-      <button className="absolute inset-0 bg-black/92 backdrop-blur-md" onClick={onClose} aria-label="关闭图片" />
-      <div className="relative max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl">
-        <button onClick={onClose} className="absolute right-4 top-4 z-10 rounded-full border border-zinc-800 bg-zinc-950/80 p-2 text-zinc-300 hover:text-white" aria-label="关闭"><X size={16} /></button>
-        <div className="max-h-[76vh] overflow-auto bg-black p-3"><img src={item.imageUrl} alt={zhText(item.title)} className="mx-auto max-h-none max-w-full rounded-lg object-contain" referrerPolicy="no-referrer" /></div>
-        <div className="border-t border-zinc-900 p-5"><span className="rounded border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[11px] text-emerald-300">{item.category}</span><h3 className="mt-3 font-serif text-2xl text-white">{zhText(item.title)}</h3><p className="mt-2 line-clamp-2 text-sm leading-7 text-zinc-300">{zhText(item.description)}</p></div>
-      </div>
-    </div>
-  );
+  return <ImageReader post={{id:item.id,title:zhText(item.title),text:[item.category,zhText(item.description)].filter(Boolean).join(' · '),images:[item.imageUrl]}} analyticsKey={contentIdentity("gallery",item)} onClose={onClose}/>;
 }
 
 /**
@@ -1420,15 +1412,27 @@ function FilterRail({
   onAll: () => void;
   items: { key: string; label: string; active: boolean; onSelect: () => void }[];
 }) {
+  const [mobileOpen, setMobileOpen] = useState(false);
   return (
-    <div className="flex max-w-full gap-1.5 rounded-xl border border-zinc-900 bg-zinc-950/80 p-1.5">
+    <div className="flex max-w-full flex-wrap items-center gap-1.5 rounded-xl border border-zinc-900 bg-zinc-950/80 p-1.5">
       <button
+        type="button"
+        className="flex w-full items-center justify-between rounded border border-transparent px-2.5 py-1.5 text-left text-[11px] font-medium tracking-wide text-zinc-300 md:hidden"
+        onClick={() => setMobileOpen((open) => !open)}
+        aria-expanded={mobileOpen}
+        aria-controls="module-category-options"
+      >
+        <span>模块分类</span>
+        <ChevronDown size={14} className={`transition-transform ${mobileOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+      </button>
+      <button
+        type="button"
         onClick={onAll}
         className={`shrink-0 whitespace-nowrap rounded border px-2.5 py-1.5 text-[11px] font-medium tracking-wide ${allActive ? "border-zinc-700 bg-zinc-900 text-white" : "border-transparent text-zinc-300 hover:text-white"}`}
       >
         全部
       </button>
-      <div className="flex min-w-0 flex-1 flex-nowrap gap-1.5 overflow-hidden">
+      <div id="module-category-options" className={`${mobileOpen ? "flex" : "hidden"} min-w-0 flex-1 flex-nowrap gap-1.5 overflow-hidden md:flex`}>
         {items.map((item) => (
           <button
             key={item.key}

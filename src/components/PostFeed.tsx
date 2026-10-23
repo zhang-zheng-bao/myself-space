@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, ChevronRight, X, Download, Images } from "lucide-react";
+import { ChevronLeft, ChevronRight, X, Download, Images, ZoomIn, ZoomOut, Scan, ScanLine } from "lucide-react";
 import "./post-grid.css";
 import { contentIdentity } from "../analytics-model";
 
@@ -20,11 +20,11 @@ export default function PostFeed({ items }: { items: Post[]; onZoom?: (images: s
       </div>
       <div className="flex flex-1 flex-col p-4"><h3 className="portfolio-card__title">{post.title || "图文随记"}</h3><p className="portfolio-card__description">{post.text}</p></div>
     </button>)}</div>
-    {selected && <PostReader post={selected} onClose={() => setSelected(null)} />}
+    {selected && <ImageReader post={selected} onClose={() => setSelected(null)} />}
   </>;
 }
 
-function PostReader({ post, onClose }: { post: Post; onClose: () => void }) {
+export function ImageReader({ post, onClose, analyticsKey }: { post: Post; onClose: () => void; analyticsKey?: string }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const [index, setIndex] = useState(0);
@@ -46,6 +46,7 @@ function PostReader({ post, onClose }: { post: Post; onClose: () => void }) {
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     dialog.current?.showModal();
+    scroll.current?.focus({ preventScroll: true });
     return () => { document.body.style.overflow = overflow; previous?.focus(); if(ownsFullscreen.current && document.fullscreenElement)void document.exitFullscreen().catch(()=>{}); };
   }, []);
   useEffect(() => {
@@ -70,6 +71,11 @@ function PostReader({ post, onClose }: { post: Post; onClose: () => void }) {
     const rect = el.getBoundingClientRect();
     anchor.current = { x: x === undefined ? el.clientWidth / 2 : x - rect.left, y: y === undefined ? el.clientHeight / 2 : y - rect.top, left: el.scrollLeft, top: el.scrollTop, width: live.current.width };
     setZoom(Math.min(400, Math.max(25, next)));
+  }
+  function resetView(useOriginal = false) {
+    anchor.current = null;
+    setOriginal(useOriginal); setZoom(100);
+    scroll.current?.scrollTo(0, 0);
   }
   useLayoutEffect(() => {
     const el = scroll.current, a = anchor.current;
@@ -113,17 +119,33 @@ function PostReader({ post, onClose }: { post: Post; onClose: () => void }) {
       a.href = url; a.download = `${post.title || '图片'}-${index+1}.${blob.type.split('/')[1]?.replace('jpeg','jpg') || 'png'}`; document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),60000);
     } catch { setMessage('浏览器无法直接下载，请打开原图后另存为。'); } finally { setDownloading(false); }
   }
-  return createPortal(<dialog ref={dialog} className={`notes-dialog${fullscreen ? ' notes-fullscreen' : ''}`} aria-label={post.title || "图文详情"} onCancel={onClose} onClick={e => { if (e.target === dialog.current) onClose(); }} onKeyDown={e=>{ if ((e.target as HTMLElement).matches('input,textarea,select')) return; if(e.key==='ArrowLeft'){e.preventDefault();select(index-1);} if(e.key==='ArrowRight'){e.preventDefault();select(index+1);} if(e.key==='+'||e.key==='=')changeZoom(zoom*1.25); if(e.key==='-')changeZoom(zoom/1.25); }}>
-    <div className="notes-reader" data-analytics-kind="work" data-analytics-key={contentIdentity("posts", post)} data-analytics-title={post.title || "图文"}>
+  return createPortal(<dialog ref={dialog} className={`notes-dialog${fullscreen ? ' notes-fullscreen' : ''}`} aria-label={post.title || "图文详情"} onCancel={onClose} onClick={e => { if (e.target === dialog.current) onClose(); }} onKeyDown={e=>{
+    if ((e.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]') || e.altKey || e.nativeEvent.isComposing) return;
+    if(e.key==='ArrowLeft'){e.preventDefault();select(index-1);}
+    else if(e.key==='ArrowRight'){e.preventDefault();select(index+1);}
+    else if(e.key==='+'||e.key==='='){e.preventDefault();changeZoom(live.current.zoom*1.25);}
+    else if(e.key==='-'||e.key==='_'){e.preventDefault();changeZoom(live.current.zoom/1.25);}
+    else if(e.key==='0'){e.preventDefault();resetView();}
+    else if(e.key==='1' && !e.ctrlKey && !e.metaKey){e.preventDefault();resetView(true);}
+  }}>
+    <div className="notes-reader" data-analytics-kind="work" data-analytics-key={analyticsKey || contentIdentity("posts", post)} data-analytics-title={post.title || "图文"}>
       <header>
-        <h2>{post.title || '图文详情'}</h2>
-        <div className="notes-header-actions">
-          <select className="notes-zoom-select" aria-label="图片缩放" value={original?'original':String(Math.round(zoom))} onChange={e=>{if(e.target.value==='original'){setOriginal(true);setZoom(100);}else{setOriginal(false);changeZoom(Number(e.target.value));}}}>
+        <div className="notes-reader-title"><h2>{post.title || '图文详情'}</h2>{post.text && <p title={post.text}>{post.text}</p>}</div>
+        <div className="notes-header-actions" role="toolbar" aria-label="图片查看工具">
+          <div className="notes-zoom" role="group" aria-label="缩放控制">
+          <button type="button" disabled={!size.width || zoom<=25} onClick={()=>changeZoom(zoom/1.25)} aria-label="缩小图片" title="缩小（−）"><ZoomOut size={17}/></button>
+          <select className="notes-zoom-select" aria-label="图片缩放" title={original?'相对于原始尺寸缩放':'相对于适应窗口缩放'} value={original && zoom===100?'original':String(Math.round(zoom))} onChange={e=>{if(e.target.value==='original'){resetView(true);}else{setOriginal(false);changeZoom(Number(e.target.value));}}}>
             {Array.from(new Set([25,50,75,100,125,150,200,300,400,Math.round(zoom)])).sort((a,b)=>a-b).map(n=><option key={n} value={n}>{n}%</option>)}
             <option value="original">原始尺寸</option>
           </select>
+          <button type="button" disabled={!size.width || zoom>=400} onClick={()=>changeZoom(zoom*1.25)} aria-label="放大图片" title="放大（+）"><ZoomIn size={17}/></button>
+          </div>
+          <span className="notes-toolbar-divider" aria-hidden="true"/>
+          <button type="button" disabled={!size.width} onClick={()=>resetView()} aria-label="适应窗口" title="适应窗口（0）"><Scan size={18}/></button>
+          <button type="button" disabled={!size.width} onClick={()=>resetView(true)} aria-label="原始尺寸" aria-pressed={original && zoom===100} title="原始尺寸（1）"><ScanLine size={18}/></button>
           <button type="button" disabled={downloading} onClick={()=>void download()} aria-label={downloading?'正在下载图片':'下载图片'} title="下载原图"><Download size={19}/></button>
-          <button type="button" onClick={onClose} aria-label="关闭图文" title="关闭"><X size={21}/></button>
+          <span className="notes-toolbar-divider" aria-hidden="true"/>
+          <button type="button" onClick={onClose} aria-label="关闭图文" title="关闭（Esc）"><X size={20}/></button>
         </div>
       </header>
       {message && <p className="notes-reader-message" role="status">{message}</p>}
@@ -135,7 +157,7 @@ function PostReader({ post, onClose }: { post: Post; onClose: () => void }) {
       <footer className="notes-controls">
         <div className="notes-paging">{images.length>1 ? <><button disabled={index===0} onClick={()=>select(index-1)} aria-label="上一张"><ChevronLeft size={18}/></button><span aria-live="polite">{index+1} / {images.length}</span><button disabled={index>=images.length-1} onClick={()=>select(index+1)} aria-label="下一张"><ChevronRight size={18}/></button></> : <span>1 / 1</span>}</div>
         <span className="notes-image-dimensions">{size.width ? `${size.width} × ${size.height}` : ''}</span>
-        <div className="notes-footer-end">{images.length>1 && <button aria-label="显示缩略图" title="缩略图" aria-pressed={showThumbnails} onClick={()=>setShowThumbnails(v=>!v)}><Images size={18}/></button>}</div>
+        <div className="notes-footer-end"><span className="notes-shortcuts">± 缩放 · 0 适应 · 1 原图 · Ctrl/⌘ + 滚轮</span>{images.length>1 && <button aria-label="显示缩略图" title="缩略图" aria-pressed={showThumbnails} onClick={()=>setShowThumbnails(v=>!v)}><Images size={18}/></button>}</div>
       </footer>
     </div>
   </dialog>, document.body);
