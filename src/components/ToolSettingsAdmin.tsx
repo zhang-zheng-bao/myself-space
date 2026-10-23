@@ -2,8 +2,8 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import WanchuangManagementAdmin from './WanchuangManagementAdmin';
 const groups = [
   { id: 'runtime', title: '运行参数', description: '任务并发与文件保留时间', fields: [] },
-  { id: 'iflytek', title: '讯飞语音', description: 'App ID、API Key、API Secret', fields: [['iflytekApiKey', 'API Key'], ['iflytekApiSecret', 'API Secret']] },
-  { id: 'minimax', title: 'MiniMax 语音服务', description: '服务凭证与音色克隆权限', fields: [['minimaxApiKey', 'API Key']] },
+  { id: 'iflytek', title: '语音转写', description: 'App ID、API Key、API Secret', fields: [['iflytekApiKey', 'API Key'], ['iflytekApiSecret', 'API Secret']] },
+  { id: 'minimax', title: '语音生成', description: '服务凭证与音色克隆权限', fields: [['minimaxApiKey', 'API Key']] },
   { id: 'cookies', title: '平台 Cookie', description: '抖音、B站、小红书', fields: [['douyinCookie', '抖音 Cookie'], ['bilibiliCookie', 'B站 Cookie'], ['xiaohongshuCookie', '小红书 Cookie']] },
 ];
 type Config = { concurrency: number; retentionHours: number; iflytekAppId: string; voiceCloneEnabled: boolean; configured: Record<string, boolean> };

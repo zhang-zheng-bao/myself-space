@@ -685,11 +685,12 @@ function iflytekWebSocketUrl(credentials) {
 }
 
 function iflytekRealtimeWebSocketUrl(credentials) {
-  const ts = String(Math.floor(Date.now() / 1000));
-  const digest = crypto.createHash('md5').update(`${credentials.appId}${ts}`).digest('hex');
-  const signa = crypto.createHmac('sha1', credentials.apiKey).update(digest).digest('base64');
-  const query = new URLSearchParams({ appid: credentials.appId, ts, signa, lang: 'cn' });
-  return `wss://rtasr.xfyun.cn/v1/ws?${query}`;
+  const shanghaiNow = new Date(Date.now() + 8 * 60 * 60 * 1000);
+  const utc = shanghaiNow.toISOString().replace(/\.\d{3}Z$/, '+0800');
+  const request = {accessKeyId:credentials.apiKey,appId:credentials.appId,audio_encode:'pcm_s16le',lang:'autodialect',samplerate:'16000',utc,uuid:crypto.randomUUID()};
+  const base = Object.keys(request).sort().map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(request[key])}`).join('&');
+  const signature = crypto.createHmac('sha1', credentials.apiSecret).update(base).digest('base64');
+  return `wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1?${base}&signature=${encodeURIComponent(signature)}`;
 }
 
 function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {}) {
@@ -698,6 +699,7 @@ function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {})
     const segments = new Map();
     let settled = false;
     let started = false;
+    let sessionId = '';
     let sentEnd = false;
     let startedResolve;
     let startedReject;
@@ -723,7 +725,7 @@ function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {})
       cleanup();
       resolve(orderedSegments());
     };
-    socket.onerror = () => fail(new Error('无法连接讯飞实时语音转写服务'));
+    socket.onerror = () => fail(new Error('无法连接实时语音转写服务'));
     socket.onclose = () => {
       if (settled) return;
       if (options.isCancelled?.()) {
@@ -731,25 +733,25 @@ function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {})
         error.name = 'AbortError';
         fail(error);
       } else if (sentEnd) succeed();
-      else fail(new Error('讯飞实时语音转写连接提前关闭'));
+      else fail(new Error('实时语音转写连接提前关闭'));
     };
     socket.onmessage = (event) => {
       let payload;
       try { payload = JSON.parse(String(event.data)); } catch { return; }
-      if (payload.action === 'error' || String(payload.code) !== '0') {
-        const suffix = String(payload.code) === '10110'
-          ? '；请在讯飞控制台开通“实时语音转写”并确认授权路数'
-          : '';
-        return fail(new Error(`讯飞实时转写失败：${payload.desc || payload.code}${suffix}`));
+      const code = payload.code ?? payload.data?.code;
+      if (payload.action === 'error' || (code !== undefined && String(code) !== '0')) {
+        return fail(new Error(`实时语音转写失败：${payload.desc || payload.message || payload.data?.desc || code}`));
       }
-      if (payload.action === 'started') {
+      if (payload.action === 'started' || payload.msg_type === 'started' || payload.res_type === 'started') {
         started = true;
+        sessionId = String(payload.sid || payload.sessionId || '');
         startedResolve();
         return;
       }
-      if (payload.action !== 'result' || !payload.data) return;
+      if (payload.action !== 'result' && payload.msg_type !== 'result' && payload.res_type !== 'asr') return;
+      if (!payload.data) return;
       try {
-        const result = JSON.parse(payload.data);
+        const result = typeof payload.data === 'string' ? JSON.parse(payload.data) : payload.data;
         const st = result.cn?.st;
         if (!st?.rt || String(st.type) !== '0') return;
         const text = st.rt.flatMap((item) => item.ws || [])
@@ -796,7 +798,7 @@ function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {})
           options.onProgress?.(sent);
           await sleep(40);
         }
-        socket.send(Buffer.from('{"end": true}'));
+        socket.send(JSON.stringify(sessionId ? { end: true, sessionId } : { end: true }));
         sentEnd = true;
         setTimeout(() => {
           if (!settled) succeed();
@@ -807,7 +809,7 @@ function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {})
       }
     };
     setTimeout(() => {
-      if (!settled && !started) fail(new Error('讯飞实时语音转写连接超时'));
+      if (!settled && !started) fail(new Error('实时语音转写连接超时'));
     }, 20000);
   });
 }
@@ -1021,7 +1023,7 @@ async function runSpeechRecognition(job) {
     const totalBytes = data.duration ? Number(data.duration) * SPEECH_BYTES_PER_SECOND : 0;
     let lastProgressPublished = 0;
     updateJob(job, { status: '语音识别中', progress: 5 });
-    const segments = await require('./speech-stream.cjs')(ffmpegProcess.stdout, credentials, {
+    const segments = await recognizeContinuousPcmWithIflytek(ffmpegProcess.stdout, credentials, {
       isCancelled: () => job.cancelRequested,
       registerTask: (task) => {
         activeSpeechTasks.add(task);
@@ -1039,7 +1041,7 @@ async function runSpeechRecognition(job) {
       onResult: (liveSegments) => updateJob(job, {
         transcriptText: liveSegments.map((segment) => segment.text).join('\n'),
       }),
-    }, recognizePcmWithIflytek);
+    });
     await Promise.all([ffmpegDone, sourceDone]);
     if (pipelineError) throw pipelineError;
     if (!segments.length) throw new Error('未识别到有效语音内容');

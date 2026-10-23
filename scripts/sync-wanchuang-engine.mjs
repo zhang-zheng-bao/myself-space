@@ -55,10 +55,31 @@ for (const node of ast.statements) {
 }
 let body = parts.join('\n\n').replace('let mainWindow;', 'let mainWindow = {webContents:{send:(name,data)=>onEvent?.(name,data)}};');
 body=body.replace('    configured,\n    models,','    configured,\n    cloneEnabled: readConfig().voiceCloneEnabled !== false,\n    models,');
-body=body.replace('await recognizeContinuousPcmWithIflytek(ffmpegProcess.stdout, credentials, {',"await require('./speech-stream.cjs')(ffmpegProcess.stdout, credentials, {")
-  .replace('    });\n    await Promise.all([ffmpegDone, sourceDone]);','    }, recognizePcmWithIflytek);\n    await Promise.all([ffmpegDone, sourceDone]);')
-  .replace('if (job.cancelRequested) cancelPipeline();','cancelPipeline();')
+// Keep the source's continuous recognition call.  The portable engine below
+// replaces its endpoint/signature with the realtime-transcription LLM protocol.
+body = body.replace('if (job.cancelRequested) cancelPipeline();','cancelPipeline();')
   .replaceAll("status: '连续流式识别'", "status: '语音识别中'");
+// The desktop source targets the legacy standard realtime service. The web
+// runtime uses the realtime-transcription LLM endpoint so its existing three
+// credentials work once that product is enabled in the console.
+body = body.replace(/function iflytekRealtimeWebSocketUrl\(credentials\) \{[\s\S]*?\n\}/, `function iflytekRealtimeWebSocketUrl(credentials) {
+  const shanghaiNow = new Date(Date.now() + 8 * 60 * 60 * 1000);
+  const utc = shanghaiNow.toISOString().replace(/\\.\\d{3}Z$/, '+0800');
+  const request = {accessKeyId:credentials.apiKey,appId:credentials.appId,audio_encode:'pcm_s16le',lang:'autodialect',samplerate:'16000',utc,uuid:crypto.randomUUID()};
+  const base = Object.keys(request).sort().map((key) => \`\${encodeURIComponent(key)}=\${encodeURIComponent(request[key])}\`).join('&');
+  const signature = crypto.createHmac('sha1', credentials.apiSecret).update(base).digest('base64');
+  return \`wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1?\${base}&signature=\${encodeURIComponent(signature)}\`;
+}`);
+body = body
+  .replace('let started = false;\n    let sentEnd = false;', "let started = false;\n    let sessionId = '';\n    let sentEnd = false;")
+  .replace("new Error('无法连接讯飞实时语音转写服务')", "new Error('无法连接实时语音转写服务')")
+  .replace("new Error('讯飞实时语音转写连接提前关闭')", "new Error('实时语音转写连接提前关闭')")
+  .replace("if (payload.action === 'error' || String(payload.code) !== '0') {\n        const suffix = String(payload.code) === '10110'\n          ? '；请在讯飞控制台开通“实时语音转写”并确认授权路数'\n          : '';\n        return fail(new Error(`讯飞实时转写失败：${payload.desc || payload.code}${suffix}`));\n      }", "const code = payload.code ?? payload.data?.code;\n      if (payload.action === 'error' || (code !== undefined && String(code) !== '0')) {\n        return fail(new Error(`实时语音转写失败：${payload.desc || payload.message || payload.data?.desc || code}`));\n      }")
+  .replace("if (payload.action === 'started') {\n        started = true;", "if (payload.action === 'started' || payload.msg_type === 'started' || payload.res_type === 'started') {\n        started = true;\n        sessionId = String(payload.sid || payload.sessionId || '');")
+  .replace("if (payload.action !== 'result' || !payload.data) return;", "if (payload.action !== 'result' && payload.msg_type !== 'result' && payload.res_type !== 'asr') return;\n      if (!payload.data) return;")
+  .replace("const result = JSON.parse(payload.data);", "const result = typeof payload.data === 'string' ? JSON.parse(payload.data) : payload.data;")
+  .replace("socket.send(Buffer.from('{\"end\": true}'));", "socket.send(JSON.stringify(sessionId ? { end: true, sessionId } : { end: true }));")
+  .replace("new Error('讯飞实时语音转写连接超时')", "new Error('实时语音转写连接超时')");
 body = body.replace("path.join(os.tmpdir(), `clipharbor-${id}.cookies.txt`)", "path.join(root, `clipharbor-${id}.cookies.txt`)")
   .replace("fs.writeFileSync(cookieFile, lines.join(os.EOL));", "fs.writeFileSync(cookieFile, lines.join(os.EOL), {mode:0o600});")
   .replace("const settled = await Promise.allSettled(urls.map(probeMedia));", "const settled = []; for (const url of urls) { try { settled.push({status:'fulfilled',value:await probeMedia(url)}); } catch(reason) { settled.push({status:'rejected',reason}); } }")
