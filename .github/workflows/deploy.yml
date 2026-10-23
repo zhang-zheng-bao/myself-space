@@ -25,7 +25,7 @@ jobs:
   deploy:
     # Self-hosted runner installed at C:\actions-runner-zbw on the Windows server
     runs-on: [self-hosted, Windows, X64]
-    timeout-minutes: 40
+    timeout-minutes: 60
 
     steps:
       - name: Fetch latest code

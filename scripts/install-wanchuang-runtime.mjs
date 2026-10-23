@@ -17,7 +17,8 @@ const checkOnly = process.argv.includes('--check');
 fs.mkdirSync(root, { recursive: true });
 
 function run(command, args, env = process.env) {
-  const result = spawnSync(command, args, { env, stdio: 'inherit', timeout: 15 * 60_000, windowsHide: true });
+  // Browser archives can take several minutes to unpack on the Windows host.
+  const result = spawnSync(command, args, { env, stdio: 'inherit', timeout: 45 * 60_000, windowsHide: true });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${path.basename(command)} failed (${result.status})`);
 }
