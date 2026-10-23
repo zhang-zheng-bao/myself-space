@@ -73,6 +73,7 @@ body = body.replace(/function iflytekRealtimeWebSocketUrl\(credentials\) \{[\s\S
 }`);
 body = body
   .replace('let started = false;\n    let sentEnd = false;', "let started = false;\n    let sessionId = '';\n    let sentEnd = false;")
+  .replace("    const task = { cancel: () => socket.close() };", "    startedPromise.catch(() => {});\n    const task = { cancel: () => socket.close() };")
   .replace("new Error('无法连接讯飞实时语音转写服务')", "new Error('无法连接实时语音转写服务')")
   .replace("new Error('讯飞实时语音转写连接提前关闭')", "new Error('实时语音转写连接提前关闭')")
   .replace("if (payload.action === 'error' || String(payload.code) !== '0') {\n        const suffix = String(payload.code) === '10110'\n          ? '；请在讯飞控制台开通“实时语音转写”并确认授权路数'\n          : '';\n        return fail(new Error(`讯飞实时转写失败：${payload.desc || payload.code}${suffix}`));\n      }", "const code = payload.code ?? payload.data?.code;\n      if (payload.action === 'error' || (code !== undefined && String(code) !== '0')) {\n        return fail(new Error(`实时语音转写失败：${payload.desc || payload.message || payload.data?.desc || code}`));\n      }")
