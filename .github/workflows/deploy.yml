@@ -68,7 +68,11 @@ jobs:
         working-directory: C:\deploy-zhengbao
         run: |
           & "C:\Program Files\nodejs\npm.cmd" run setup:wanchuang
-          if ($LASTEXITCODE -ne 0) { throw "WanChuang runtime provisioning failed; service was not restarted" }
+          if ($LASTEXITCODE -ne 0) {
+            # Runtime downloads may be blocked on the server. Keep the web/API update deployable;
+            # the service reports missing download dependencies until they are provisioned.
+            Write-Warning "WanChuang runtime provisioning failed; continuing with application deploy"
+          }
 
       - name: Build (frontend + server bundle)
         shell: powershell
