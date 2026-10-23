@@ -176,7 +176,7 @@
                         <button type="button" class="voice-picker-tab" data-voice-category="mine"><i data-lucide="user-round"></i>我的音色</button>
                         <button type="button" class="voice-picker-tab" data-voice-category="system"><i data-lucide="library"></i>系统音色</button>
                       </div>
-                      <div class="voice-picker-search"><i data-lucide="search"></i><input id="voicePickerSearch" type="search" placeholder="搜索名称或音色 ID" autocomplete="off"></div>
+                      <div class="voice-picker-search"><i data-lucide="search"></i><input id="voicePickerSearch" type="search" placeholder="搜索音色名称" autocomplete="off"></div>
                       <div id="voicePickerList" class="voice-picker-list" role="listbox"></div>
                     </div>
                   </div>
@@ -243,18 +243,37 @@
               </div>
               <span id="cloneConnectionBadge" class="status-badge">未连接</span>
             </div>
-            <div class="clone-step"><span>01</span><div><strong>选择参考音频</strong><small>建议 10 秒以上、无背景音乐的人声</small></div></div>
+            <ol class="clone-progress" aria-label="音色克隆步骤">
+              <li data-clone-step="1" aria-current="step"><span class="clone-progress-number">01</span><div><strong>上传样本</strong><small>准备清晰人声</small></div></li>
+              <li data-clone-step="2"><span class="clone-progress-number">02</span><div><strong>设置音色</strong><small>确认标识与降噪</small></div></li>
+              <li data-clone-step="3"><span class="clone-progress-number">03</span><div><strong>创建完成</strong><small>前往生成语音</small></div></li>
+            </ol>
+            <p id="cloneAvailability" class="clone-availability" role="status" hidden>管理员已关闭音色克隆，已有音色仍可用于生成语音。</p>
+            <fieldset id="cloneControls" class="clone-controls">
+            <div id="cloneUploadStep" class="clone-operation">
+            <div class="clone-operation-heading"><span class="clone-eyebrow">步骤 01</span><h3 tabindex="-1" id="cloneUploadHeading">选择一段参考人声</h3><p>建议使用 10 秒以上、单人说话、没有背景音乐的音频。</p></div>
             <div class="voice-reference clone-reference">
-              <div><strong id="voiceReferenceName">尚未选择音频</strong><span>支持 MP3、M4A、WAV、AAC、OGG</span></div>
+              <div><i data-lucide="audio-lines" class="clone-upload-icon"></i><strong id="voiceReferenceName">尚未选择音频</strong><span>MP3 / M4A / WAV / AAC / OGG · 最大 20 MB</span></div>
               <div class="inline-actions"><button type="button" class="quiet-button" id="clearVoiceReference" hidden><i data-lucide="x"></i>移除</button><button type="button" class="quiet-button" id="chooseVoiceReference"><i data-lucide="paperclip"></i>选择音频</button></div>
             </div>
-            <div class="clone-step"><span>02</span><div><strong>命名音色</strong><small>使用英文、数字、下划线或短横线</small></div></div>
-            <label class="field-label" for="cloneVoiceId">新音色 ID</label>
+            <div class="clone-step-actions"><span class="clone-help">上传后可继续设置音色</span><button type="button" class="primary-button" id="cloneNextStep" disabled>下一步<i data-lucide="arrow-right"></i></button></div>
+            </div>
+            <div id="cloneSettingsStep" class="clone-operation" hidden>
+            <div class="clone-operation-heading"><span class="clone-eyebrow">步骤 02</span><h3 tabindex="-1" id="cloneSettingsHeading">确认音色设置</h3><p>为新音色设置唯一标识，创建后即可在音色列表中使用。</p></div>
+            <div class="clone-sample-summary"><i data-lucide="file-audio"></i><span id="cloneSampleSummary">已上传参考音频</span><button type="button" class="quiet-button" id="cloneChangeSample">更换样本</button></div>
+            <label class="field-label" for="cloneVoiceId">音色标识</label>
             <input id="cloneVoiceId" maxlength="20" spellcheck="false" placeholder="例如 my_voice_01">
+            <p class="clone-help">8–20 位英文、数字、下划线或短横线，用于区分账号中的音色。</p>
             <label class="voice-toggle clone-noise"><input id="voiceNoise" type="checkbox">开启参考音频降噪</label>
-            <div class="composer-footer clone-footer"><span id="voiceCloneStatus" class="parse-status" aria-live="polite"></span><button type="button" class="primary-button" id="cloneVoiceButton"><i data-lucide="sparkles"></i>创建音色</button></div>
+            <div class="clone-step-actions"><button type="button" class="quiet-button" id="clonePreviousStep"><i data-lucide="arrow-left"></i>上一步</button><button type="button" class="primary-button" id="cloneVoiceButton"><i data-lucide="sparkles"></i>创建音色</button></div>
+            </div>
+            <div id="cloneCompleteStep" class="clone-operation clone-complete" hidden>
+              <span class="clone-complete-icon"><i data-lucide="check"></i></span><h3 tabindex="-1" id="cloneCompleteHeading">专属音色已创建</h3><p>音色列表已刷新，现在可以使用它生成语音。</p>
+              <div class="clone-complete-actions"><button type="button" class="quiet-button" id="cloneStartAgain">继续创建</button><button type="button" class="primary-button" id="goVoiceGenerate">去生成语音<i data-lucide="arrow-right"></i></button></div>
+            </div>
+            </fieldset>
+            <p id="voiceCloneStatus" class="parse-status clone-status" role="status" aria-live="polite"></p>
           </section>
-          <aside class="panel clone-info-panel"><div class="section-heading compact-heading"><h2>克隆流程</h2></div><div class="clone-info-list"><div><i data-lucide="upload-cloud"></i><span>上传样本到 MiniMax</span></div><div><i data-lucide="wand-sparkles"></i><span>创建可复用的账号音色</span></div><div><i data-lucide="audio-waveform"></i><span>完成后自动刷新音色列表</span></div></div><button type="button" class="quiet-button" id="goVoiceGenerate"><i data-lucide="arrow-right"></i>去生成语音</button></aside>
         </div>
 
         <div id="voiceHistoryView" class="voice-history-page-wrap" hidden>

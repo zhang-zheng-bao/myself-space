@@ -54,6 +54,7 @@ for (const node of ast.statements) {
   }
 }
 let body = parts.join('\n\n').replace('let mainWindow;', 'let mainWindow = {webContents:{send:(name,data)=>onEvent?.(name,data)}};');
+body=body.replace('    configured,\n    models,','    configured,\n    cloneEnabled: readConfig().voiceCloneEnabled !== false,\n    models,');
 body = body.replace("path.join(os.tmpdir(), `clipharbor-${id}.cookies.txt`)", "path.join(root, `clipharbor-${id}.cookies.txt`)")
   .replace("fs.writeFileSync(cookieFile, lines.join(os.EOL));", "fs.writeFileSync(cookieFile, lines.join(os.EOL), {mode:0o600});")
   .replace("const settled = await Promise.allSettled(urls.map(probeMedia));", "const settled = []; for (const url of urls) { try { settled.push({status:'fulfilled',value:await probeMedia(url)}); } catch(reason) { settled.push({status:'rejected',reason}); } }")
@@ -95,7 +96,7 @@ function syncConfig() {
   settings.minimaxCredentialsEncrypted = decryptMinimaxCredentials() ? 'server-managed' : '';
 }
 return {
-  async call(name, payload) { syncConfig(); if(!handlers.has(name)) throw new Error('不支持的操作'); return handlers.get(name)(null,payload); },
+  async call(name, payload) { syncConfig(); if(name==='minimax:clone' && readConfig().voiceCloneEnabled===false) throw new Error('管理员已关闭音色克隆'); if(!handlers.has(name)) throw new Error('不支持的操作'); return handlers.get(name)(null,payload); },
   snapshot() { syncConfig(); return publicState(); },
   clearHistory(kind) { if(kind==='voice') voiceHistory=voiceHistory.filter(x=>x.status==='生成中'); else jobs=jobs.filter(x=>(x.type||'download')!==kind || !['已完成','失败','已取消'].includes(x.status)); persistHistory(); return {jobs,voiceHistory}; },
   busy() { return active > 0 || voiceHistory.some(x=>x.status==='生成中'); }

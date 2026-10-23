@@ -24,6 +24,25 @@ let pendingCookieProfiles;
 let consumedSpeechJobs = new Set();
 let activeSpeechJobIds = new Set();
 let voiceReferencePath = '';
+let voiceReferenceLabel = '';
+window.addEventListener('wanchuang-audio-selected',event=>{voiceReferenceLabel=event.detail.name;});
+let cloneStep = 1;
+let cloneBusy = false;
+function renderCloneFlow(step=cloneStep, focus=false) {
+  cloneStep=step;
+  const minimax=state?.settings.minimax || {};
+  const enabled=minimax.cloneEnabled !== false;
+  document.querySelectorAll('[data-clone-step]').forEach(item=>{
+    const number=Number(item.dataset.cloneStep);
+    item.classList.toggle('is-complete',number<step);
+    if(number===step)item.setAttribute('aria-current','step');else item.removeAttribute('aria-current');
+  });
+  for(const [index,name] of ['Upload','Settings','Complete'].entries()) $('#clone'+name+'Step').hidden=index+1!==step;
+  $('#cloneAvailability').hidden=enabled;
+  $('#cloneControls').disabled=!enabled||cloneBusy;
+  $('#cloneNextStep').disabled=!voiceReferencePath||cloneBusy||!enabled;
+  if(focus) $('#clone'+['Upload','Settings','Complete'][step-1]+'Heading').focus();
+}
 let voiceOutputPath = '';
 let voiceAudioObjectUrl = '';
 let voiceCategory = 'favorites';
@@ -565,6 +584,7 @@ function renderMinimaxMeta() {
   renderVoiceManagement();
   $('#cloneConnectionBadge').textContent = minimax.configured ? 'MiniMax 已连接' : '未连接';
   $('#cloneConnectionBadge').className = `status-badge${minimax.configured ? ' ok' : ''}`;
+  renderCloneFlow();
 }
 
 function renderVoiceManagement() {
@@ -588,9 +608,9 @@ function renderVoiceManagement() {
     row.className = `manage-voice-row${hidden.has(model.id) ? ' is-hidden' : ''}`;
     const copy = document.createElement('div');
     const name = document.createElement('strong');
-    name.textContent = model.name || model.id;
+    name.textContent = model.name && model.name!==model.id ? model.name : '未命名音色';
     const detail = document.createElement('small');
-    detail.textContent = `${model.type === 'system' ? '系统音色' : '我的音色'} · ${model.id}`;
+    detail.textContent = model.type === 'system' ? '系统音色' : '我的音色';
     copy.append(name, detail);
     const toggle = document.createElement('button');
     toggle.type = 'button';
@@ -637,7 +657,7 @@ function renderVoicePicker() {
   const query = ($('#voicePickerSearch')?.value || '').trim().toLowerCase();
   const selected = selectedVoiceModel();
   $('#voicePickerLabel').textContent = selected
-    ? (selected.name ? `${selected.name} · ${selected.id}` : selected.id)
+    ? (selected.name && selected.name!==selected.id ? selected.name : '未命名音色')
     : '选择音色';
   document.querySelectorAll('[data-voice-category]').forEach((button) => {
     button.classList.toggle('active', button.dataset.voiceCategory === voiceCategory);
@@ -666,8 +686,8 @@ function renderVoicePicker() {
     choose.type = 'button';
     choose.className = 'voice-picker-choice';
     choose.innerHTML = `<span class="voice-avatar">${icon(model.type === 'system' ? 'waves' : 'mic-2')}</span><span><strong></strong><small></small></span>${selected?.id === model.id ? icon('check') : ''}`;
-    choose.querySelector('strong').textContent = model.name || model.id;
-    choose.querySelector('small').textContent = model.name ? model.id : model.type === 'system' ? '系统音色' : '账号音色';
+    choose.querySelector('strong').textContent = model.name && model.name!==model.id ? model.name : '未命名音色';
+    choose.querySelector('small').textContent = model.type === 'system' ? '系统音色' : '账号音色';
     choose.addEventListener('click', () => {
       $('#voiceId').value = model.id;
       closeVoicePicker();
@@ -1299,18 +1319,36 @@ document.addEventListener('keydown', (event) => {
 window.addEventListener('resize', positionVoicePicker);
 document.addEventListener('scroll', positionVoicePicker, true);
 $('#chooseVoiceReference').addEventListener('click', async () => {
+  if(state.settings.minimax?.cloneEnabled===false)return;
+  $('#chooseVoiceReference').disabled=true;
+  const previousStatus=$('#voiceCloneStatus').textContent;
+  $('#voiceCloneStatus').className='parse-status';
+  $('#voiceCloneStatus').textContent='请选择音频，选择后将上传到服务器…';
   const selected = await window.clipHarbor.chooseAudio();
-  if (!selected) return;
+  $('#chooseVoiceReference').disabled=false;
+  if (!selected) {if($('#voiceCloneStatus').textContent==='请选择音频，选择后将上传到服务器…')$('#voiceCloneStatus').textContent=previousStatus;return;}
   voiceReferencePath = selected;
-  $('#voiceReferenceName').textContent = selected.split(/[\\/]/).pop();
+  $('#voiceReferenceName').textContent = voiceReferenceLabel || selected.split(/[\\/]/).pop();
+  $('#cloneSampleSummary').textContent=$('#voiceReferenceName').textContent;
   $('#clearVoiceReference').hidden = false;
+  $('#voiceCloneStatus').className='parse-status ok';
+  $('#voiceCloneStatus').textContent='样本已上传，可以进入下一步。';
+  renderCloneFlow();
 });
 $('#clearVoiceReference').addEventListener('click', () => {
   voiceReferencePath = '';
-  $('#voiceReferenceName').textContent = '未选择，仅使用已有音色';
+  $('#voiceReferenceName').textContent = '尚未选择音频';
   $('#clearVoiceReference').hidden = true;
+  $('#voiceCloneStatus').textContent='';
+  renderCloneFlow(1);
+});
+$('#cloneNextStep').addEventListener('click',()=>{if(voiceReferencePath){$('#voiceCloneStatus').textContent='';renderCloneFlow(2,true);}});
+for(const id of ['clonePreviousStep','cloneChangeSample']) $('#'+id).addEventListener('click',()=>renderCloneFlow(1,true));
+$('#cloneStartAgain').addEventListener('click',()=>{
+  voiceReferencePath='';$('#voiceReferenceName').textContent='尚未选择音频';$('#cloneVoiceId').value='';$('#clearVoiceReference').hidden=true;$('#voiceCloneStatus').textContent='';renderCloneFlow(1,true);
 });
 $('#cloneVoiceButton').addEventListener('click', async () => {
+  if(state.settings.minimax?.cloneEnabled===false){window.dispatchEvent(new CustomEvent('wanchuang-error',{detail:'管理员已关闭音色克隆'}));return;}
   if (!state.settings.minimax?.configured) {
     $('#voiceCloneStatus').className = 'parse-status bad';
     $('#voiceCloneStatus').textContent = 'MiniMax 尚未配置，请联系管理员在后台配置 API Key';
@@ -1327,6 +1365,7 @@ $('#cloneVoiceButton').addEventListener('click', async () => {
     $('#cloneVoiceId').focus();return;
   }
   const button = $('#cloneVoiceButton');
+  cloneBusy=true;renderCloneFlow();
   button.disabled = true;
   $('#voiceCloneStatus').className = 'parse-status';
   $('#voiceCloneStatus').textContent = '正在上传样本并创建音色…';
@@ -1336,11 +1375,12 @@ $('#cloneVoiceButton').addEventListener('click', async () => {
     renderMinimaxMeta();
     renderTools();
     $('#voiceCloneStatus').className = 'parse-status ok';
-    $('#voiceCloneStatus').textContent = `音色 ${voiceId} 创建成功，已刷新列表`;
+    $('#voiceCloneStatus').textContent = '音色创建成功，已刷新列表';
+    renderCloneFlow(3,true);
   } catch (error) {
     $('#voiceCloneStatus').className = 'parse-status bad';
     $('#voiceCloneStatus').textContent = errorMessage(error);
-  } finally { button.disabled = false; renderIcons(); }
+  } finally { cloneBusy=false;button.disabled = false;renderCloneFlow(); renderIcons(); }
 });
 $('#goVoiceGenerate').addEventListener('click', () => setActiveView('voice'));
 $('#generateVoiceButton').addEventListener('click', async () => {

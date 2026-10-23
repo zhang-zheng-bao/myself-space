@@ -66,6 +66,13 @@ test('admin settings: permissions, encrypted persistence, masking and clearing',
     assert.doesNotMatch(await cleaned.text(), /cleaned-session|foreign-session/);
     assert.equal((await save({ ...body, secrets: {} })).status, 200);
     assert.equal(readToolSettings().secrets.douyinCookie, 'sessionid=cleaned-session', 'Unrelated updates preserve the cleaned Cookie');
+    assert.equal((await save({...body,voiceCloneEnabled:'false'})).status,400);
+    const disabled=await save({...body,secrets:{},voiceCloneEnabled:false});
+    assert.equal((await disabled.json()).voiceCloneEnabled,false);
+    assert.equal(readToolSettings().voiceCloneEnabled,false);
+    await save({...body,secrets:{}});
+    assert.equal(readToolSettings().voiceCloneEnabled,false,'Older clients must preserve a disabled clone setting');
+    assert.equal((await(await save({...body,secrets:{},voiceCloneEnabled:true})).json()).voiceCloneEnabled,true);
   } finally {
     server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
     fs.unlinkSync(path.join(directory, 'config.enc')); fs.rmdirSync(directory);

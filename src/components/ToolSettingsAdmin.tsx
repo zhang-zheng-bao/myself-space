@@ -3,10 +3,10 @@ import WanchuangManagementAdmin from './WanchuangManagementAdmin';
 const groups = [
   { id: 'runtime', title: '运行参数', description: '任务并发与文件保留时间', fields: [] },
   { id: 'iflytek', title: '讯飞语音', description: 'App ID、API Key、API Secret', fields: [['iflytekApiKey', 'API Key'], ['iflytekApiSecret', 'API Secret']] },
-  { id: 'minimax', title: 'MiniMax 声音生成', description: '语音生成服务凭证', fields: [['minimaxApiKey', 'API Key']] },
+  { id: 'minimax', title: 'MiniMax 语音服务', description: '服务凭证与音色克隆权限', fields: [['minimaxApiKey', 'API Key']] },
   { id: 'cookies', title: '平台 Cookie', description: '抖音、B站、小红书', fields: [['douyinCookie', '抖音 Cookie'], ['bilibiliCookie', 'B站 Cookie'], ['xiaohongshuCookie', '小红书 Cookie']] },
 ];
-type Config = { concurrency: number; retentionHours: number; iflytekAppId: string; configured: Record<string, boolean> };
+type Config = { concurrency: number; retentionHours: number; iflytekAppId: string; voiceCloneEnabled: boolean; configured: Record<string, boolean> };
 export default function ToolSettingsAdmin() {
   const [config, setConfig] = useState<Config | null>(null);
   const [baseline, setBaseline] = useState('');
@@ -61,6 +61,10 @@ export default function ToolSettingsAdmin() {
             <span className="text-xs text-zinc-400">{group.id === 'runtime' ? `${config.concurrency} 并发 · ${config.retentionHours} 小时` : pending ? '待保存' : `已填写 ${configuredCount}/${total}`}</span>
           </summary>
           <div className="space-y-4 border-t border-zinc-800 p-4">
+            {group.id === 'minimax' && <div className="flex items-center justify-between gap-4 rounded-lg border border-zinc-800 p-4">
+              <div><strong className="text-sm font-medium">允许前台克隆音色</strong><p className="mt-1 text-xs leading-5 text-zinc-400">关闭后禁止上传克隆样本和创建音色，已有音色仍可生成语音。修改后点击保存生效。</p></div>
+              <button type="button" role="switch" aria-label="允许前台克隆音色" aria-checked={config.voiceCloneEnabled} onClick={() => setConfig({...config,voiceCloneEnabled:!config.voiceCloneEnabled})} className={`relative h-7 w-12 shrink-0 rounded-full transition-colors focus-visible:outline focus-visible:outline-emerald-400 ${config.voiceCloneEnabled?'bg-emerald-600':'bg-zinc-700'}`}><span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${config.voiceCloneEnabled?'left-6':'left-1'}`} /></button>
+            </div>}
             {group.id === 'runtime' && <div className="grid gap-4 sm:grid-cols-2">
               <label className="block text-sm">最大并发任务<input className={input} type="number" min="1" max="3" required value={config.concurrency} onChange={e => setConfig({ ...config, concurrency: Number(e.target.value) })} /></label>
               <label className="block text-sm">文件保留时间（小时）<input className={input} type="number" min="1" max="24" required value={config.retentionHours} onChange={e => setConfig({ ...config, retentionHours: Number(e.target.value) })} /></label>

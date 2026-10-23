@@ -54,7 +54,7 @@
           const file=input.files?.[0];if(!file){resolve(null);return;}
           if(file.size>20*1024*1024){status('参考音频不能超过 20MB',true);resolve(null);return;}
           const data=new FormData();data.append('audio',file);status('正在上传参考音频…');
-          try{resolve((await request('/audio',{method:'POST',body:data})).refPath);}catch(error){status(error.message,true);resolve(null);}
+          try{const result=await request('/audio',{method:'POST',body:data});window.dispatchEvent(new CustomEvent('wanchuang-audio-selected',{detail:{name:file.name}}));resolve(result.refPath);}catch(error){status(error.message,true);resolve(null);}
         };input.click();
       });
     },

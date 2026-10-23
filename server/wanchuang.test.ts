@@ -47,6 +47,9 @@ test('desktop engine reads current server Cookie and KEY, persists history witho
     const reloaded=createEngine(options);assert.equal(reloaded.snapshot().voiceHistory[0].status,'已完成');
     for(const file of fs.readdirSync(root).filter(f=>f.endsWith('.json')))assert.doesNotMatch(fs.readFileSync(path.join(root,file),'utf8'),/test-session|updated-server-key/);
     await assert.rejects(engine.call('settings:save',{outputDir:'elsewhere'}));
+    const disabled=createEngine({...options,readConfig:()=>({...config,voiceCloneEnabled:false})});
+    assert.equal(disabled.snapshot().settings.minimax.cloneEnabled,false);
+    await assert.rejects(disabled.call('minimax:clone',{}),/关闭音色克隆/);
   }finally{await new Promise(r=>setTimeout(r,300));fs.rmSync(root,{recursive:true,force:true});}
 });
 
@@ -118,6 +121,12 @@ test('HTTP sessions isolate history/downloads; invalid actions never execute',as
     const blocked=await action('generateVoice',{text:'测试',voiceId:'testvoice123'});assert.equal(blocked.status,400);assert.match((await blocked.json()).error,/禁用|隐藏/);
     assert.equal((await fetch(visibility,{method:'PUT',headers:adminHeaders,body:JSON.stringify({id:'testvoice123',hidden:false})})).status,200);
     assert.deepEqual((await(await fetch(base+'/state',{headers:{Cookie:cookie}})).json()).settings.minimax.hiddenVoices,[]);
+    writeToolSettings({...readToolSettings(),voiceCloneEnabled:false});
+    assert.equal((await(await fetch(base+'/state',{headers:{Cookie:cookie}})).json()).settings.minimax.cloneEnabled,false);
+    const cloneDenied=await action('cloneVoice',{refPath:'reference-example.wav',voiceId:'testvoice123'});
+    assert.equal(cloneDenied.status,403);assert.match((await cloneDenied.json()).error,/关闭音色克隆/);
+    assert.equal((await fetch(base+'/audio',{method:'POST',headers:{Cookie:cookie}})).status,403);
+    writeToolSettings({...readToolSettings(),voiceCloneEnabled:true});
     const repairedSave = await fetch(adminBase+'/settings', {method:'PUT',headers:adminHeaders,body:JSON.stringify({
       concurrency:2,retentionHours:6,iflytekAppId:'',clearSecrets:[],secrets:{douyinCookie:JSON.stringify({cookies:[
         {name:'sessionid',value:'repaired-session',domain:'.douyin.com'},

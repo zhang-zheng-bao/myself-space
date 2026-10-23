@@ -217,6 +217,7 @@ export function registerWanchuang(app:Express,requireAdmin:RequestHandler) {
   const upload=multer({storage:multer.diskStorage({destination:(_req,res,done)=>done(null,root),filename:(_req,file,done)=>done(null,'upload-'+crypto.randomUUID()+path.extname(file.originalname).toLowerCase())}),limits:{fileSize:20*1024*1024,files:1},fileFilter:(_req,file,done)=>done(null,/\.(mp3|wav|m4a|aac|ogg)$/i.test(file.originalname))}).single('audio');
   app.post('/api/tools/wanchuang/audio',(req,res)=>{
     const s:Session=res.locals.wanchuang;
+    if(readToolSettings().voiceCloneEnabled===false){res.status(403).json({error:'管理员已关闭音色克隆'});return;}
     if(fs.readdirSync(s.directory).filter(n=>n.startsWith('reference-')).length>=3){res.status(429).json({error:'最多保留 3 份参考音频，请复用已有音频'});return;}
     upload(req,res,error=>{
       if(error || !req.file){res.status(400).json({error:'请选择不超过 20MB 的 MP3、WAV、M4A、AAC 或 OGG 音频'});return;}
@@ -227,6 +228,7 @@ export function registerWanchuang(app:Express,requireAdmin:RequestHandler) {
   app.post('/api/tools/wanchuang/action',async(req,res)=>{
     const s:Session=res.locals.wanchuang;
     const method=String(req.body?.method||'');let payload=req.body?.payload;
+    if(method==='cloneVoice' && readToolSettings().voiceCloneEnabled===false){res.status(403).json({error:'管理员已关闭音色克隆'});return;}
     if(!channels[method]){res.status(400).json({error:'不支持的操作'});return;}
     if(Date.now()-s.window>3600000){s.window=Date.now();s.requests=0;}
     if(costly.has(method) && (++s.requests>30 || s.pending>=2)){res.status(429).json({error:'操作较多，请等待当前任务完成或稍后重试'});return;}

@@ -7,7 +7,7 @@ import {recordOperation} from './wanchuang-audit';
 
 const fields = ['iflytekApiKey', 'iflytekApiSecret', 'minimaxApiKey', 'douyinCookie', 'bilibiliCookie', 'xiaohongshuCookie'];
 export type VoiceModel = { id: string; name: string; type: string; createdAt?: string };
-export type Settings = { concurrency: number; retentionHours: number; iflytekAppId: string; secrets: Record<string, string>; hiddenVoices?: string[]; voiceModels?: VoiceModel[]; voiceModelsAccount?: string };
+export type Settings = { concurrency: number; retentionHours: number; iflytekAppId: string; secrets: Record<string, string>; voiceCloneEnabled?: boolean; hiddenVoices?: string[]; voiceModels?: VoiceModel[]; voiceModelsAccount?: string };
 export function readToolSettings(): Settings {
   const file = path.resolve(process.env.TOOL_SETTINGS_FILE || '.private/wanchuang-settings.enc');
   if (!fs.existsSync(file)) return { concurrency: 2, retentionHours: 6, iflytekAppId: '', secrets: {} };
@@ -45,7 +45,7 @@ export function registerToolSettings(app: Express, requireAdmin: RequestHandler)
     return readToolSettings();
   }
   function masked(config: Settings) {
-    return { concurrency: config.concurrency, retentionHours: config.retentionHours, iflytekAppId: config.iflytekAppId,
+    return { concurrency: config.concurrency, retentionHours: config.retentionHours, iflytekAppId: config.iflytekAppId, voiceCloneEnabled: config.voiceCloneEnabled !== false,
       configured: Object.fromEntries(fields.map(field => [field, Boolean(config.secrets[field])])) };
   }
   app.get('/api/admin/tools/wanchuang/settings', requireAdmin, (_req, res) => {
@@ -56,6 +56,7 @@ export function registerToolSettings(app: Express, requireAdmin: RequestHandler)
     res.setHeader('Cache-Control', 'no-store');
     if (req.headers['sec-fetch-site'] === 'cross-site') { res.status(403).json({ error: '不允许跨站保存' }); return; }
     const b = req.body;
+    if (b?.voiceCloneEnabled !== undefined && typeof b.voiceCloneEnabled !== 'boolean') {res.status(400).json({error:'音色克隆开关格式有误'});return;}
     if (!b || !Number.isInteger(b.concurrency) || b.concurrency < 1 || b.concurrency > 3 || !Number.isInteger(b.retentionHours) || b.retentionHours < 1 || b.retentionHours > 24 || typeof b.iflytekAppId !== 'string' || !/^[a-zA-Z0-9_-]{0,100}$/.test(b.iflytekAppId) || !b.secrets || typeof b.secrets !== 'object' || Array.isArray(b.secrets) || fields.some(f => b.secrets[f] !== undefined && (typeof b.secrets[f] !== 'string' || b.secrets[f].length > (f.endsWith('Cookie') ? 1024 * 1024 : 16000))) || !Array.isArray(b.clearSecrets) || b.clearSecrets.some((f: string) => !fields.includes(f))) {
       res.status(400).json({ error: '配置格式有误：并发 1–3，文件保留时间 1–24 小时。' }); return;
     }
@@ -78,6 +79,7 @@ export function registerToolSettings(app: Express, requireAdmin: RequestHandler)
     try {
       const next = read();
       next.concurrency = b.concurrency; next.retentionHours = b.retentionHours; next.iflytekAppId = b.iflytekAppId;
+      if(b.voiceCloneEnabled !== undefined) next.voiceCloneEnabled=b.voiceCloneEnabled;
       for (const f of fields) { if (b.clearSecrets.includes(f)) delete next.secrets[f]; else if (b.secrets[f]?.trim()) next.secrets[f] = b.secrets[f].trim(); }
       writeToolSettings(next);
       res.json(masked(next));

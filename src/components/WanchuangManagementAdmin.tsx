@@ -52,7 +52,7 @@ function VoiceManagement() {
     <summary className={summary}><GroupTitle title="音色管理" description="统一管理前台可用音色，隐藏与恢复即时保存" />{data && <span className="text-xs text-zinc-400">{data.models.length} 个音色</span>}</summary>
     {open && <div className="space-y-4 border-t border-zinc-800 p-4">
       <div className="flex flex-wrap gap-3">
-        <input className={`${input} min-w-0 flex-1`} aria-label="搜索音色" placeholder="搜索音色名称或 ID" value={query} onChange={event => setQuery(event.target.value)} />
+        <input className={`${input} min-w-0 flex-1`} aria-label="搜索音色" placeholder="搜索音色名称" value={query} onChange={event => setQuery(event.target.value)} />
         <select className={input} aria-label="音色类型" value={type} onChange={event => setType(event.target.value)}><option value="all">全部类型</option>{Object.entries(typeNames).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
         <button type="button" className={button} disabled={!!busy || loading || !data?.configured} onClick={() => void refresh()}><RefreshCw size={14} className={busy === 'refresh' ? 'animate-spin' : ''} />刷新账号音色</button>
       </div>
@@ -60,7 +60,7 @@ function VoiceManagement() {
       {loading && <p role="status" className="text-xs text-zinc-400">正在读取音色…</p>}
       {data?.configured && !loading && !models.length && <p className="py-4 text-sm text-zinc-400">{data.models.length ? '没有匹配的音色。' : '尚未同步音色，请点击“刷新账号音色”。'}</p>}
       <div className="max-h-[520px] space-y-2 overflow-auto">{models.map(voice => <div key={voice.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-800 p-3">
-        <div className="min-w-0"><p className="text-sm text-zinc-100">{voice.name || voice.id}<span className="ml-2 text-xs text-zinc-500">{voice.hidden ? '已隐藏' : '前台可用'}</span></p><p className="mt-1 break-all text-xs text-zinc-500">{typeNames[voice.type] || voice.type} · {voice.id}</p></div>
+        <div className="min-w-0"><p className="text-sm text-zinc-100">{voice.name && voice.name!==voice.id ? voice.name : '未命名音色'}<span className="ml-2 text-xs text-zinc-500">{voice.hidden ? '已隐藏' : '前台可用'}</span></p><p className="mt-1 text-xs text-zinc-500">{typeNames[voice.type] || voice.type}</p></div>
         <button type="button" className={button} aria-label={`${voice.hidden ? '恢复' : '隐藏'}音色 ${voice.name || voice.id}`} disabled={!!busy} onClick={() => void toggle(voice)}>{voice.hidden ? <Eye size={14} /> : <EyeOff size={14} />}{voice.hidden ? '恢复显示' : '隐藏音色'}</button>
       </div>)}</div>
       <p role="status" className="text-xs text-emerald-200">{message}</p>
