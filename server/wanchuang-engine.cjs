@@ -708,9 +708,6 @@ function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {})
       startedResolve = resolveStarted;
       startedReject = rejectStarted;
     });
-    // A rejected readiness promise can happen before onopen starts awaiting it
-    // (for example when the remote gateway refuses the upgrade). Attach a
-    // handler immediately so one failed transcription cannot terminate Node.
     startedPromise.catch(() => {});
     const task = { cancel: () => socket.close() };
     const unregisterTask = options.registerTask?.(task);
