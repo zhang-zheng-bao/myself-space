@@ -1,28 +1,79 @@
-# Portfolio + Supabase CMS
+# MySpace · 个人作品集与创作工具站
 
-这是一个前后端一体的个人作品集项目：
+这是一个前后端一体的个人网站，集成作品展示、案例分析、图文图库、演示文稿、创作工具和内容管理后台。
 
-- 前台：`/` 展示个人资料、经历、作品、展望、简历和联系方式。
-- 后台：`/admin` 管理站点资料、经历、作品、图片、视频、音乐链接、跳转/下载链接、技能、奖项和联系方式。
-- 后端：Express BFF，同源提供 API，使用 Supabase 数据库和 Storage。
+- 前台：`/`，通过模块导航浏览内容；模块可在后台配置、排序和开关。
+- 后台：`/admin`，集中维护内容、媒体、应用配置、访客和使用统计。
+- 万创核心：`/tools/wanchuang/index.html`，独立的网页版创作应用，工具箱卡片直接跳转进入。
+- 技术栈：React 19、TypeScript、Vite 6、Tailwind CSS 4、Express、Supabase；媒体支持腾讯云 COS 和 Supabase Storage。
+
+## 2.0 之后的累计更新
+
+以下按当前代码整理，截至 **2026-10-27**。`package.json` 仍为 `2.0.0`，本节记录后续累计功能，不代表另一个已发布的版本号。
+
+| 方向 | 当前功能 |
+| --- | --- |
+| 内容模块 | 普通作品、AI 作品、案例分析、工具箱、图文分享、演示文稿等；案例分析默认位于 AI 作品之后，可配置封面与网页入口 |
+| 图库与长图 | 多图上传、原始比例查看、缩放与快捷键；列表封面与正文图片分开，封面支持区域选择 |
+| 演示文稿 | PDF / PPTX 展示、封面配置、翻页、全屏及自动播放 |
+| 后台体验 | 应用分类配置、分组折叠、统一表单与提示；内容按变更保存，处理保存期间的后续编辑和冲突 |
+| 站点检测 | 默认查看今天；页面、作品、视频和访客维度的停留与观看统计，内容删除后保留历史统计；超过两分钟有效停留的近期真人访问提醒 |
+| 万创核心 | 视频素材解析与下载、文案转写、声音生成、音色克隆和结果文件下载；Cookie 支持请求头、插件 JSON 与 cookies.txt 导入清洗 |
+| 音色与记录 | 管理员统一刷新、隐藏和恢复音色；隐藏仅影响前台，后台保留音色；克隆开关、分步骤克隆界面、任务历史与操作记录 |
+| 转写流程 | 实时接口、静音分段并发、文案段落整理、带时间戳的 SRT 和 TXT 下载；超五分钟默认处理前五分钟，明确确认后完整识别 |
+| 部署 | GitHub Actions 自动部署；Windows 自动准备和校验下载、音频处理、浏览器运行依赖，构建后重启并检查服务 |
+
+应用运行依赖、平台 Cookie、服务账号凭证及账号并发授权分别影响功能是否可用；依赖安装成功或网站健康检查通过，不等于所有外部服务均已验证。
 
 ## 本地运行
 
+使用 Node.js 22 或更新版本。复制环境模板后填写自己的配置：
+
 ```bash
-npm install
+npm ci
 cp .env.example .env
 npm run dev
 ```
 
-打开：
+Windows PowerShell 用 `Copy-Item .env.example .env` 代替 `cp`。未配置 Supabase 时可用本地 JSON 预览和保存基础内容；数据库统计、云存储及外部服务需分别配置。
+
+默认打开以下地址；可通过 `.env` 的 `PORT` 修改端口：
 
 - 前台：http://localhost:3010
 - 后台：http://localhost:3010/admin
+
+管理员登录使用 `.env` 中的 `ADMIN_PHONE` 和 `ADMIN_PASSWORD`。
+
+## 万创核心网页版
+
+Windows x64 安装和检查执行依赖：
+
+```bash
+npm run setup:wanchuang
+npm run check:wanchuang
+```
+
+安装器按版本清单准备 yt-dlp、FFmpeg 和 Chromium，文件保存在 `.private/wanchuang-runtime/`。二进制不提交 Git，安装脚本和版本清单随代码部署；不需要安装 Electron。Linux 的安装方式见[执行服务说明](docs/wanchuang-web.md)。
+
+在 `/admin` → 应用配置 → 万创核心配置平台 Cookie、转写与声音服务凭证。配置按应用和服务分组，公开应用不提供凭证编辑入口。后台还可控制音色克隆、管理隐藏音色、查看任务历史及操作记录。
+
+转写采用以下规则：
+
+- 超过五分钟的音频在提交前提示选择范围；默认、选择“仅识别前 5 分钟”或关闭提示，均只处理前 300 秒。时长未知时也会提示。
+- 只有选择“是，完整识别”才处理全部音频。截取由服务端 FFmpeg 执行，重试保留原选择。
+- 在持续至少 400 ms 的低音量区间中点切分，每段至少约 20 秒；默认全站共享两路识别连接，按原始顺序合并文案并还原字幕时间。
+- 背景音乐可能影响静音检测；找不到静音时保留完整片段，长片段暂存磁盘，任务结束或取消后清理。
+- `WANCHUANG_SPEECH_CONCURRENCY` 控制识别连接数（1–3，默认 2），与后台控制完整任务数量的“并发”不同，需匹配服务账号授权。
+
+配置使用 AES-256-GCM 加密，默认保存至 `.private/wanchuang-settings.enc`。`TOOL_SETTINGS_SECRET` 至少 32 位；未单独配置时使用同样满足长度要求的 `ADMIN_SESSION_SECRET`。部署和备份必须同时保留配置文件与原加密密钥。
+
+结果文件与应用历史按后台设置的 1–24 小时保留策略清理；操作审计独立记录，网站内容统计独立存入数据库。三者不是同一种数据。
 
 ## Supabase 配置
 
 1. 创建 Supabase 项目。
 2. 打开 Supabase SQL Editor，执行 `supabase/schema.sql`。
+   启用内容停留与视频观看统计时，再执行 `supabase/engagement-analytics.sql`；升级已有站点也需执行该增量脚本，具体见[统计说明](docs/engagement-analytics.md)。
 3. 在 `.env` 中配置：
 
 ```env
@@ -30,7 +81,7 @@ SUPABASE_URL="https://your-project.supabase.co"
 SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"
 SUPABASE_STORAGE_BUCKET="portfolio-media"
 ADMIN_PASSWORD="your-admin-password"
-ADMIN_SESSION_SECRET="a-long-random-string"
+ADMIN_SESSION_SECRET="replace-with-your-own-random-secret-at-least-32-characters"
 ```
 
 `SUPABASE_SERVICE_ROLE_KEY` 只在服务端使用，不会暴露给浏览器。
@@ -47,7 +98,39 @@ ADMIN_SESSION_SECRET="a-long-random-string"
 - `portfolio_contact`
 - `portfolio_awards`
 
-媒体文件上传到 Supabase Storage 的 `portfolio-media` bucket，返回公开 URL 后写入作品或头像字段。
+配置腾讯云 COS 时使用 COS 存储；未配置时使用 Supabase Storage 的 `portfolio-media` bucket。具体环境变量见 [.env.example](.env.example)。媒体地址随内容保存；图文、案例等扩展模块配置也使用 `profile.pageCopy`，不要求每个模块新建一张表。
+
+## 构建、部署与检查
+
+```bash
+npm run lint
+npm run build
+```
+
+生产运行需设置 `NODE_ENV=production`，再执行 `npm start`。PowerShell 示例：
+
+```powershell
+$env:NODE_ENV = 'production'
+npm start
+```
+
+当前仓库的 [GitHub Actions 工作流](.github/workflows/deploy.yml) 在推送 `main` 后使用 Windows 自托管 Runner 更新部署目录；按锁文件变化安装 npm 依赖，校验应用运行依赖，构建、重启，再检查 `/health` 与网关连通性。此工作流包含当前服务器的目录和端口配置，迁移服务器时需调整；安装脚本不会替你开通云服务或填写 Cookie / KEY。
+
+`.env`、`.private/`、上传文件与数据库应独立持久化并备份，不能随代码更新清空。应用任务和会话目前由单个 Node 进程协调，多实例部署前需要共享队列与会话存储。
+
+转写与应用接口的回归检查：
+
+```bash
+npx tsx --test server/speech-duration.test.ts server/speech-scope.test.ts server/speech-parallel.test.ts server/realtime-completion.test.ts server/wanchuang.test.ts
+```
+
+覆盖识别范围选择、实际 FFmpeg 截取、静音分段、全局并发、字幕时间偏移、失败与取消清理等。实际云端识别效果和账号授权仍需使用有效凭证测试。
+
+## 专项文档
+
+- [万创核心执行依赖、安装与运行](docs/wanchuang-web.md)
+- [管理员应用配置与凭证存储](docs/wanchuang-admin-settings.md)
+- [页面、作品、视频和访客统计](docs/engagement-analytics.md)
 
 ## API
 
@@ -55,8 +138,12 @@ ADMIN_SESSION_SECRET="a-long-random-string"
 - `POST /api/admin/login`：管理员登录。
 - `POST /api/admin/logout`：退出登录。
 - `GET /api/admin/session`：检查登录状态。
-- `PUT /api/admin/portfolio`：保存完整站点内容。
+- `PATCH /api/admin/portfolio`：按变更保存，检查冲突并保留无关修改。
+- `PUT /api/admin/portfolio`：完整内容保存接口。
 - `POST /api/admin/upload`：上传图片、视频、音乐、PDF、压缩包等媒体到 Storage。
+- `GET /api/tools/wanchuang/state` / `POST /api/tools/wanchuang/action`：当前浏览器的应用状态和任务操作。
+- `/api/admin/tools/wanchuang/*`：管理员专属的应用配置、音色、历史与操作记录接口。
+- `GET /health`：服务存活检查。
 - `POST /api/track`：创建一次访问并返回 `visitId`。
 - `POST /api/track/dwell`：增量上报前台可见停留时间。
 - `POST /api/track/events`：批量写入按钮与链接点击事件。
