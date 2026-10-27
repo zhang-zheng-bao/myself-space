@@ -839,6 +839,10 @@ function renderSpeechJobs(jobs) {
       $('#speechTaskStatus').className = 'parse-status ok';
       $('#speechTaskStatus').textContent = '识别完成';
       $('#speechTaskDetail').textContent = '结果已填入输入框，TXT 与 SRT 已保存';
+    } else if (last?.status === '已取消') {
+      $('#speechTaskStatus').className = 'parse-status';
+      $('#speechTaskStatus').textContent = '识别已取消';
+      $('#speechTaskDetail').textContent = last.transcriptText ? '已识别的文稿已保留，可重新开始识别' : '任务已取消，可重新开始识别';
     } else if (!sessionJobs.length) {
       $('#speechTaskStatus').className = 'parse-status';
       $('#speechTaskStatus').textContent = '';

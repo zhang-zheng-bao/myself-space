@@ -711,12 +711,14 @@ function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {})
     startedPromise.catch(() => {});
     const task = { cancel: () => socket.close() };
     const unregisterTask = options.registerTask?.(task);
-    const cleanup = () => unregisterTask?.();
+    let connectTimer, finishTimer;
+    const cleanup = () => { clearTimeout(connectTimer); clearTimeout(finishTimer); unregisterTask?.(); };
     const orderedSegments = () => [...segments.values()].sort((a, b) => a.segId - b.segId);
     const fail = (error) => {
       if (settled) return;
       settled = true;
       cleanup();
+      pcmStream.destroy?.();
       startedReject(error);
       try { socket.close(); } catch {}
       reject(error);
@@ -725,6 +727,7 @@ function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {})
       if (settled) return;
       settled = true;
       cleanup();
+      try { socket.close(); } catch {}
       resolve(orderedSegments());
     };
     socket.onerror = (error) => fail(new Error(`无法连接实时语音转写服务：${error?.message || '网络或服务授权异常'}`));
@@ -756,11 +759,11 @@ function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {})
       try {
         const result = typeof payload.data === 'string' ? JSON.parse(payload.data) : payload.data;
         const st = result.cn?.st;
-        if (!st?.rt || String(st.type) !== '0') return;
+        if (!st?.rt || String(st.type) !== '0') { if (result.ls === true && sentEnd) succeed(); return; }
         const text = st.rt.flatMap((item) => item.ws || [])
           .map((item) => item.cw?.[0]?.w || '')
           .join('').trim();
-        if (!text) return;
+        if (!text) { if (result.ls === true && sentEnd) succeed(); return; }
         const wordFrames = st.rt.flatMap((item) => item.ws || []).map((item) => Number(item.we) || 0);
         const start = Math.max(0, Number(st.bg || 0) / 1000);
         const explicitEnd = Number(st.ed || 0) / 1000;
@@ -772,6 +775,7 @@ function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {})
           text,
         });
         options.onResult?.(orderedSegments());
+        if (result.ls === true && sentEnd) succeed();
       } catch {}
     };
     socket.onopen = async () => {
@@ -779,6 +783,7 @@ function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {})
         await startedPromise;
         let carry = Buffer.alloc(0);
         let sent = 0;
+        let audioStartedAt = 0;
         for await (const piece of pcmStream) {
           if (options.isCancelled?.()) {
             const error = new Error('语音识别已取消');
@@ -787,15 +792,18 @@ function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {})
           }
           carry = carry.length ? Buffer.concat([carry, piece]) : Buffer.from(piece);
           while (carry.length >= 1280) {
+            if (settled) return;
+            if (!audioStartedAt) audioStartedAt = Date.now();
+            await sleep(Math.max(0, audioStartedAt + sent / SPEECH_BYTES_PER_SECOND * 1000 - Date.now()));
             const frame = carry.subarray(0, 1280);
             carry = carry.subarray(1280);
             socket.send(frame);
             sent += frame.length;
             options.onProgress?.(sent);
-            await sleep(40);
           }
         }
         if (carry.length) {
+          if (settled) return;
           socket.send(carry);
           sent += carry.length;
           options.onProgress?.(sent);
@@ -803,15 +811,12 @@ function recognizeContinuousPcmWithIflytek(pcmStream, credentials, options = {})
         }
         socket.send(JSON.stringify(sessionId ? { end: true, sessionId } : { end: true }));
         sentEnd = true;
-        setTimeout(() => {
-          if (!settled) succeed();
-          try { socket.close(); } catch {}
-        }, 15000);
+        finishTimer = setTimeout(() => fail(new Error('音频已发送，但服务未确认最终结果，请重试；已识别文稿已保留')), 30000);
       } catch (error) {
         fail(error);
       }
     };
-    setTimeout(() => {
+    connectTimer = setTimeout(() => {
       if (!settled && !started) fail(new Error('实时语音转写连接超时'));
     }, 20000);
   });
@@ -1042,7 +1047,7 @@ async function runSpeechRecognition(job) {
         updateJob(job, { status: '语音识别中', progress });
       },
       onResult: (liveSegments) => updateJob(job, {
-        transcriptText: liveSegments.map((segment) => segment.text).join('\n'),
+        transcriptText: require('./transcript-format.cjs').formatTranscript(liveSegments),
       }),
     });
     await Promise.all([ffmpegDone, sourceDone]);
@@ -1050,7 +1055,7 @@ async function runSpeechRecognition(job) {
     if (!segments.length) throw new Error('未识别到有效语音内容');
 
     updateJob(job, { status: '生成文稿', progress: 96 });
-    const transcriptText = segments.map((segment) => segment.text).join('\n');
+    const transcriptText = require('./transcript-format.cjs').formatTranscript(segments);
     const base = `${cleanFilename(data.title)} [${job.id.slice(0, 8)}]`;
     const transcriptPath = path.join(settings.outputDir, `${base}.txt`);
     const subtitlePath = path.join(settings.outputDir, `${base}.srt`);
@@ -1643,7 +1648,7 @@ function terminateProcessTree(child) {
 
 async function executeJob(job) {
   const release = await acquire();
-  const deadline = setTimeout(() => { job.cancelRequested = true; running.get(job.id)?.cancel(); }, 15 * 60_000);
+  const deadline = setTimeout(() => { job.cancelRequested = true; running.get(job.id)?.cancel(); }, job.type === 'speech' ? (8 * 60 + 5) * 60_000 : 15 * 60_000);
   try {
     if (job.cancelRequested) throw new Error('任务已取消');
     updateJob(job, { status: '准备中', progress: 1, error: '' });

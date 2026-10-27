@@ -83,6 +83,21 @@ body = body
   .replace("socket.send(Buffer.from('{\"end\": true}'));", "socket.send(JSON.stringify(sessionId ? { end: true, sessionId } : { end: true }));")
   .replace("new Error('讯飞实时语音转写连接超时')", "new Error('实时语音转写连接超时')");
 body = body.replace("socket.onerror = () => fail(new Error('无法连接实时语音转写服务'));", "socket.onerror = (error) => fail(new Error(`无法连接实时语音转写服务：${error?.message || '网络或服务授权异常'}`));\n    socket.on('unexpected-response', (_request, response) => { const status = response?.statusCode ? `HTTP ${response.statusCode}` : 'HTTP 握手被拒绝'; response?.resume?.(); fail(new Error(`实时语音转写服务拒绝连接：${status}。请确认已开通实时转写大模型服务，并使用该服务绑定的凭据。`)); });");
+body = body
+  .replace("const cleanup = () => unregisterTask?.();", "let connectTimer, finishTimer;\n    const cleanup = () => { clearTimeout(connectTimer); clearTimeout(finishTimer); unregisterTask?.(); };")
+  .replace('      cleanup();\n      startedReject(error);', '      cleanup();\n      pcmStream.destroy?.();\n      startedReject(error);')
+  .replace('      cleanup();\n      resolve(orderedSegments());', '      cleanup();\n      try { socket.close(); } catch {}\n      resolve(orderedSegments());')
+  .replace("if (!st?.rt || String(st.type) !== '0') return;", "if (!st?.rt || String(st.type) !== '0') { if (result.ls === true && sentEnd) succeed(); return; }")
+  .replace('        options.onResult?.(orderedSegments());', '        options.onResult?.(orderedSegments());\n        if (result.ls === true && sentEnd) succeed();')
+  .replace('        if (!text) return;', '        if (!text) { if (result.ls === true && sentEnd) succeed(); return; }')
+  .replace('        let sent = 0;\n        for await', '        let sent = 0;\n        let audioStartedAt = 0;\n        for await')
+  .replace('          while (carry.length >= 1280) {', '          while (carry.length >= 1280) {\n            if (settled) return;\n            if (!audioStartedAt) audioStartedAt = Date.now();\n            await sleep(Math.max(0, audioStartedAt + sent / SPEECH_BYTES_PER_SECOND * 1000 - Date.now()));')
+  .replace('            await sleep(40);\n          }', '          }')
+  .replace('        if (carry.length) {', '        if (carry.length) {\n          if (settled) return;')
+  .replace('        setTimeout(() => {\n          if (!settled) succeed();\n          try { socket.close(); } catch {}\n        }, 15000);', "        finishTimer = setTimeout(() => fail(new Error('音频已发送，但服务未确认最终结果，请重试；已识别文稿已保留')), 30000);")
+  .replace('    setTimeout(() => {\n      if (!settled && !started)', '    connectTimer = setTimeout(() => {\n      if (!settled && !started)')
+  .replace("liveSegments.map((segment) => segment.text).join('\\n')", "require('./transcript-format.cjs').formatTranscript(liveSegments)")
+  .replace("segments.map((segment) => segment.text).join('\\n')", "require('./transcript-format.cjs').formatTranscript(segments)");
 body = body.replace("path.join(os.tmpdir(), `clipharbor-${id}.cookies.txt`)", "path.join(root, `clipharbor-${id}.cookies.txt`)")
   .replace("fs.writeFileSync(cookieFile, lines.join(os.EOL));", "fs.writeFileSync(cookieFile, lines.join(os.EOL), {mode:0o600});")
   .replace("const settled = await Promise.allSettled(urls.map(probeMedia));", "const settled = []; for (const url of urls) { try { settled.push({status:'fulfilled',value:await probeMedia(url)}); } catch(reason) { settled.push({status:'rejected',reason}); } }")
@@ -99,6 +114,7 @@ body = body.replace("path.join(os.tmpdir(), `clipharbor-${id}.cookies.txt`)", "p
   .replace("output.write(chunk);\n    received += chunk.length;", "received += chunk.length;\n    if (received > 300 * 1024 * 1024) { controller.abort(); output.destroy(); throw new Error('单个文件超过 300MB'); }\n    if (!output.write(chunk)) await require('node:events').once(output, 'drain');")
   .replace("if (videoUrl) {\n      const referer", "if (videoUrl) {\n      await validateRemote(videoUrl);\n      ffmpegArgs.push('-protocol_whitelist', 'https,http,tcp,tls,crypto');\n      const referer");
 const header = `// Generated from WanChuangCore 0.1.33 (MIT). Regenerate with scripts/sync-wanchuang-engine.mjs.\nmodule.exports = function createEngine({root, readConfig, binaries, chromium, fetch, spawn, acquire, validateRemote}) {\nconst {spawnSync} = require('node:child_process');\nconst WebSocket = require('ws');\nconst app = {getPath:()=>root,isPackaged:false};\nconst safeStorage = {isEncryptionAvailable:()=>true};\nconst handlers = new Map();\nconst ipcMain = {handle:(name,handler)=>handlers.set(name,handler)};\n`;
+body = body.replace('}, 15 * 60_000);', "}, job.type === 'speech' ? (8 * 60 + 5) * 60_000 : 15 * 60_000);");
 const footer = `
 fs.mkdirSync(root,{recursive:true});
 settings = loadSettings(); settings.outputDir = defaultOutput(); settings.concurrency = 1;
