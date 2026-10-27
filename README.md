@@ -131,6 +131,7 @@ npx tsx --test server/speech-duration.test.ts server/speech-scope.test.ts server
 - [万创核心执行依赖、安装与运行](docs/wanchuang-web.md)
 - [管理员应用配置与凭证存储](docs/wanchuang-admin-settings.md)
 - [页面、作品、视频和访客统计](docs/engagement-analytics.md)
+- [工具箱历史需求与当前实现差异](docs/prd.md)
 
 ## API
 
@@ -147,13 +148,17 @@ npx tsx --test server/speech-duration.test.ts server/speech-scope.test.ts server
 - `POST /api/track`：创建一次访问并返回 `visitId`。
 - `POST /api/track/dwell`：增量上报前台可见停留时间。
 - `POST /api/track/events`：批量写入按钮与链接点击事件。
+- `POST /api/track/engagement`：上报页面、作品和视频的累计参与时长快照。
 - `GET /api/admin/analytics/summary?range=today|7d|30d|all&humanOnly=1`：汇总指标、趋势、地区/来源/设备分布和按钮点击排行。
 - `GET /api/admin/analytics/visitors?range&humanOnly&page&pageSize&q`：分页搜索访客。
 - `GET /api/admin/analytics/visitors/:visitorKey/visits`：某访客最近 100 次访问明细。
 - `GET /api/admin/analytics/assistant-keywords?range&humanOnly`：聚合访客提问关键词，用于后台词云。
 - `GET /api/admin/analytics/visitors/:visitorKey/conversations`：某访客的聊天会话目录。
 - `GET /api/admin/analytics/visitors/:visitorKey/conversations/:conversationId/messages`：按需读取一段会话的消息。
-- `PATCH /api/admin/visits` / `POST /api/admin/visits/clear`：备注、拉黑、删除访客或清空统计。
+- `GET /api/admin/analytics/content` / `GET /api/admin/analytics/journey`：内容聚合与访客浏览轨迹。
+- `GET /api/admin/analytics/recent-visits`：近期满足有效停留条件的真人访问。
+- `PATCH /api/admin/visits`：修改访客显示名称／备注（`label`）或拉黑状态。
+- `POST /api/admin/visits/clear`：删除指定访客或全部访问概览；不清空独立保存的内容停留统计。
 
 ## 小柴与访客长期记忆
 
@@ -177,7 +182,7 @@ npx tsx --test server/speech-duration.test.ts server/speech-scope.test.ts server
 
 ## 统计与埋点规范
 
-本站使用第一方假名化统计，不接入第三方 Cookie。生产构建自动启用；本地开发默认关闭，避免开发刷新和 Playwright 验收污染真实数据。需要专门调试时，在 `.env` 临时设置 `VITE_ENABLE_ANALYTICS="true"`。
+本站使用第一方假名化统计，不接入第三方 Cookie。生产构建在非本机地址默认启用；开发模式和 localhost 默认不采集，自动化浏览器也不采集。需要专门调试时，在 `.env` 临时设置 `VITE_ENABLE_ANALYTICS="true"`。该变量不是生产统计的关闭开关：生产环境设为 `false` 也不会关闭统计；修改 Vite 环境变量后需重启开发服务或重新构建。
 
 ### 统计口径
 
@@ -207,9 +212,9 @@ npx tsx --test server/speech-duration.test.ts server/speech-scope.test.ts server
 
 ### 数据与隐私
 
-`portfolio_events` 保存控件键、控件标签、页面路径、假名访客、会话和发生时间，不保存输入框值、查询参数或 URL hash。`portfolio_visits` 的 referrer 只保留 origin 与 pathname。三张统计表启用 RLS，浏览器 anon/authenticated 角色无权直读，只能由 Express 的 service role 访问。小柴的长期记忆会保存访客主动发送的聊天内容和回答，必须在隐私说明中单独披露用途、保留期和清除入口；该表同样启用 RLS。后台词云只返回访客提问的聚合词频，不批量返回原始正文。上线前还应披露统计目的、字段和保留周期；如面向要求同意后才能分析的地区，需在 `startVisitTracking()` 前接入同意状态。
+`portfolio_events` 保存控件键、控件标签、页面路径、假名访客、会话和发生时间，不保存输入框值、查询参数或 URL hash。`portfolio_visits` 的 referrer 只保留 origin 与 pathname。内容停留快照独立保存于 `portfolio_engagements`，保留访问时的标题和稳定内容编号，删除作品后仍可查看历史。统计表启用 RLS，浏览器 anon/authenticated 角色无权直读，只能由 Express 的 service role 访问。小柴的长期记忆会保存访客主动发送的聊天内容和回答，必须在隐私说明中单独披露用途、保留期和清除入口；该表同样启用 RLS。后台词云只返回访客提问的聚合词频，不批量返回原始正文。上线前还应披露统计目的、字段和保留周期；如面向要求同意后才能分析的地区，需在 `startVisitTracking()` 前接入同意状态。
 
-首次启用或升级统计功能后，需要在 Supabase SQL Editor 重新执行完整的 `supabase/schema.sql`。脚本幂等，不会清空已有访问记录。
+新项目先执行 `supabase/schema.sql`，再执行 `supabase/engagement-analytics.sql`。已有项目启用内容停留统计时也需要执行后者，单独执行基础 schema 不会安装该功能。脚本采用可重复执行的迁移，不清空已有访问记录；各指标口径、历史保留与升级步骤以[内容监测文档](docs/engagement-analytics.md)为准。
 
 ## 前台视觉规范
 
@@ -270,7 +275,7 @@ npx tsx --test server/speech-duration.test.ts server/speech-scope.test.ts server
 - 左侧主图是 5 秒静音循环视频 `public/hero-creator-stage.webm` / `.mp4`（720×960，3:4），首帧 `public/hero-creator-stage-poster.webp` 作为 poster；开启“减少动态效果”时只显示 poster，面板离开视口或标签页隐藏时暂停播放。素材本身不包含 UI 或静态粒子。桌面以顶部为锚点放大约 `1.08`，裁掉多余底部；动态粒子由页面独立渲染，并使用右上向左下、左下向右上两组不规则轨迹。
 - “关于我”下方三项数据的醒目数值、短标签和补充说明统一存放在 `profile.pageCopy.homeStats`，通过后台“站点资料 → 首页数据标签”编辑；未配置时使用代码默认值。
 - 首页“我的作品”读取全部作品，以双轨无缝方式持续从左向右轮播；卡片固定 `aspect-ratio: 1.92`，封面使用 `object-fit: cover`，悬停或键盘聚焦时暂停。
-- “作品展示”和“AI专区”共用三列两行布局：宽屏每页 6 项，缩略图固定 `1.92:1`；分类、徽章和作品标签叠放在图片内，不在图片上方另占一行。
+- 作品列表主卡片使用 `16:9` 封面（`aspect-video`）；图库卡片仍有 `1.92:1` 展示区域，首页轮播也保留 `1.92:1`。这些比例描述各自入口，不适用于二级页原图；详情中的图片按原始比例查看。
 - 桌面时间线是独立视窗，展示全部经历并自动逐条滚动；鼠标、触摸或键盘操作时暂停自动播放，移动端展开为自然文档流。相邻节点之间使用 SVG 主能量线、四条连续变化的外围电弧和三条短分叉，端点始终收拢到节点；电弧按实际节点间距生成，离屏、后台及低动态模式停止动画。禁止使用贯穿整条时间线的下行扫描光束。
 - 右上和右下手写英文是展示层，必须 `pointer-events: none`，不得遮挡按钮或正文。
 - 间距以 4px/8px 为基础节奏，常用值为 `8 / 12 / 16 / 24 / 32 / 48px`；图标光学居中、1px 边界和参考图像素对齐允许小幅修正。
