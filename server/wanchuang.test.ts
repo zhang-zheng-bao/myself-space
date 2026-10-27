@@ -112,6 +112,9 @@ test('HTTP sessions isolate history/downloads; invalid actions never execute',as
     const visibility=adminBase+'/voices/visibility',body=JSON.stringify({id:'testvoice123',hidden:true});
     assert.equal((await fetch(visibility,{method:'PUT',headers:{'Content-Type':'application/json'},body})).status,401);
     assert.equal((await fetch(visibility,{method:'PUT',headers:adminHeaders,body})).status,200);
+    const hiddenCatalog=await(await fetch(adminBase+'/voices',{headers:adminHeaders})).json();
+    assert.equal(hiddenCatalog.models.length,voices.models.length,'Hiding must not remove the voice from the admin catalog');
+    assert.deepEqual(hiddenCatalog.models.find((voice:any)=>voice.id==='testvoice123'),{...voices.models[0],hidden:true});
     for(const browserCookie of [cookie,other]){
       const browserState=await(await fetch(base+'/state',{headers:{Cookie:browserCookie}})).json();
       assert.deepEqual(browserState.settings.minimax.hiddenVoices,['testvoice123']);
@@ -120,6 +123,8 @@ test('HTTP sessions isolate history/downloads; invalid actions never execute',as
     }
     const blocked=await action('generateVoice',{text:'测试',voiceId:'testvoice123'});assert.equal(blocked.status,400);assert.match((await blocked.json()).error,/禁用|隐藏/);
     assert.equal((await fetch(visibility,{method:'PUT',headers:adminHeaders,body:JSON.stringify({id:'testvoice123',hidden:false})})).status,200);
+    const restoredCatalog=await(await fetch(adminBase+'/voices',{headers:adminHeaders})).json();
+    assert.deepEqual(restoredCatalog.models,voices.models,'Admin can restore the same hidden voice');
     assert.deepEqual((await(await fetch(base+'/state',{headers:{Cookie:cookie}})).json()).settings.minimax.hiddenVoices,[]);
     writeToolSettings({...readToolSettings(),voiceCloneEnabled:false});
     assert.equal((await(await fetch(base+'/state',{headers:{Cookie:cookie}})).json()).settings.minimax.cloneEnabled,false);

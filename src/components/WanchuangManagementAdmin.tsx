@@ -24,6 +24,7 @@ function VoiceManagement() {
   const [data, setData] = useState<{ configured: boolean; models: Voice[] } | null>(null);
   const [query, setQuery] = useState('');
   const [type, setType] = useState('all');
+  const [visibility, setVisibility] = useState('all');
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
@@ -33,7 +34,8 @@ function VoiceManagement() {
     request('/voices', { signal: abort.signal }).then(setData).catch(error => { if (!abort.signal.aborted) setMessage(error.message); }).finally(() => { if (!abort.signal.aborted) setLoading(false); });
     return () => abort.abort();
   }, [open]);
-  const models = (data?.models || []).filter(voice => (type === 'all' || voice.type === type) && `${voice.name} ${voice.id}`.toLowerCase().includes(query.toLowerCase()));
+  const hiddenCount = (data?.models || []).filter(voice => voice.hidden).length;
+  const models = (data?.models || []).filter(voice => (type === 'all' || voice.type === type) && (visibility === 'all' || (visibility === 'hidden' ? voice.hidden : !voice.hidden)) && `${voice.name} ${voice.id}`.toLowerCase().includes(query.toLowerCase()));
   async function refresh() {
     setBusy('refresh'); setMessage('正在读取 MiniMax 账号音色…');
     try { const result = await request('/voices/refresh', { method: 'POST' }); setData(result); setMessage(`已同步 ${result.models.length} 个音色。`); }
@@ -44,16 +46,17 @@ function VoiceManagement() {
     setBusy(voice.id); setMessage('');
     try {
       setData(await request('/voices/visibility', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: voice.id, hidden: !voice.hidden }) }));
-      setMessage(voice.hidden ? '已恢复，前台可选择此音色。' : '已隐藏，前台将不能选择或生成此音色。');
+      setMessage(voice.hidden ? '已恢复，前台可选择此音色。' : '已从前台隐藏，后台仍保留此音色，可随时恢复显示。');
     } catch (error) { setMessage(error instanceof Error ? error.message : '保存失败'); }
     finally { setBusy(''); }
   }
   return <details className={group} onToggle={event => setOpen(event.currentTarget.open)}>
-    <summary className={summary}><GroupTitle title="音色管理" description="统一管理前台可用音色，隐藏与恢复即时保存" />{data && <span className="text-xs text-zinc-400">{data.models.length} 个音色</span>}</summary>
+    <summary className={summary}><GroupTitle title="音色管理" description="隐藏仅影响前台，后台保留全部音色并可随时恢复" />{data && <span className="text-xs text-zinc-400">{data.models.length} 个音色 · {hiddenCount} 个已隐藏</span>}</summary>
     {open && <div className="space-y-4 border-t border-zinc-800 p-4">
       <div className="flex flex-wrap gap-3">
         <input className={`${input} min-w-0 flex-1`} aria-label="搜索音色" placeholder="搜索音色名称" value={query} onChange={event => setQuery(event.target.value)} />
         <select className={input} aria-label="音色类型" value={type} onChange={event => setType(event.target.value)}><option value="all">全部类型</option>{Object.entries(typeNames).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
+        <select className={input} aria-label="音色显示状态" value={visibility} onChange={event => setVisibility(event.target.value)}><option value="all">全部音色</option><option value="visible">前台可用</option><option value="hidden">已隐藏</option></select>
         <button type="button" className={button} disabled={!!busy || loading || !data?.configured} onClick={() => void refresh()}><RefreshCw size={14} className={busy === 'refresh' ? 'animate-spin' : ''} />刷新账号音色</button>
       </div>
       {!loading && data && !data.configured && <p className="adm-note text-xs">请先在上方 MiniMax 配置中填写并保存 API Key。</p>}
