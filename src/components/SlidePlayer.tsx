@@ -291,7 +291,7 @@ export default function SlidePlayer({ deck, onClose }: { deck: SlideDeck; onClos
                 {AUTOPLAY_OPTIONS.map((sec) => <option key={sec} value={sec}>{sec} 秒/页</option>)}
               </select>
               <button type="button" className="slide-player__btn" onClick={() => setAutoplay((on) => !on)} aria-pressed={autoplay} aria-label={autoplay ? "暂停自动播放" : "自动播放"}>
-                {autoplay ? <Pause size={15} /> : <Play size={15} />}
+                {autoplay ? <Pause fill="currentColor" strokeWidth={0} aria-hidden="true" size={15} /> : <Play size={15} />}
                 <span className="hidden sm:inline">{autoplay ? "暂停" : "自动播放"}</span>
               </button>
               <button type="button" className="slide-player__btn" onClick={toggleFullscreen} aria-label={fullscreen ? "退出全屏" : "全屏"}>

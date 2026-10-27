@@ -457,6 +457,19 @@
     <p id="mediaViewerMessage" role="status"></p>
   </dialog>
 
+  <dialog id="speechLengthDialog" class="speech-length-dialog" aria-labelledby="speechLengthTitle" aria-describedby="speechLengthDescription">
+    <form method="dialog">
+      <span class="speech-length-icon" aria-hidden="true"><i data-lucide="clock-3"></i></span>
+      <h2 id="speechLengthTitle">音频时间过长，是否完整识别？</h2>
+      <p id="speechLengthDescription"></p>
+      <p class="speech-length-hint">默认仅识别前 5 分钟。完整识别将处理全部音频，耗时和用量会增加。</p>
+      <div class="speech-length-actions">
+        <button type="submit" value="preview" autofocus>仅识别前 5 分钟</button>
+        <button type="submit" value="full" class="primary">是，完整识别</button>
+      </div>
+    </form>
+  </dialog>
+
   <template id="jobTemplate">
     <article class="job-item">
       <div class="job-icon"><i data-lucide="video"></i></div>

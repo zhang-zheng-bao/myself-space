@@ -87,11 +87,13 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
           <div className="flex items-center space-x-4">
             <button
               onClick={togglePlay}
+              aria-label={isPlaying ? "暂停视频" : "播放视频"}
+              title={isPlaying ? "暂停视频" : "播放视频"}
               className="p-1 px-2.5 rounded-md hover:bg-zinc-800/80 text-zinc-300 transition-colors flex items-center gap-1.5 text-xs"
             >
               {isPlaying ? (
                 <>
-                  <Pause size={13} className="text-zinc-400" /> 暂停
+                  <Pause fill="currentColor" strokeWidth={0} aria-hidden="true" size={13} className="text-zinc-400" /> 暂停
                 </>
               ) : (
                 <>

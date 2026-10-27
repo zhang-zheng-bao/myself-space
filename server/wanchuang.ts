@@ -250,7 +250,8 @@ export function registerWanchuang(app:Express,requireAdmin:RequestHandler) {
         if(!Array.isArray(items) || !items.length || items.length>5)throw new Error('每次提交 1–5 个任务');
         if(s.engine.snapshot().jobs.filter((x:any)=>!finished.has(x.status)).length+items.length>10)throw new Error('请等待现有任务完成');
         // Resolve media server-side. Never trust client-supplied media URLs or file paths.
-        payload={type:payload.type||'download',mode:payload.mode||'video',items:items.map((item:any)=>({url:validateMediaUrl(String(item.url)),selectedMedia:Array.isArray(item.selectedMedia)?item.selectedMedia.filter((n:any)=>Number.isInteger(n)&&n>=0).slice(0,100):[]}))};
+        if(items.some((item:any)=>item.fullRecognition!==undefined && typeof item.fullRecognition!=='boolean'))throw new Error('识别范围格式有误');
+        payload={type:payload.type||'download',mode:payload.mode||'video',items:items.map((item:any)=>({url:validateMediaUrl(String(item.url)),fullRecognition:item.fullRecognition===true,selectedMedia:Array.isArray(item.selectedMedia)?item.selectedMedia.filter((n:any)=>Number.isInteger(n)&&n>=0).slice(0,100):[]}))};
       }
       if(method==='cloneVoice') {
         if(!payload || !/^reference-[a-f0-9-]+\.(mp3|wav|m4a|aac|ogg)$/.test(payload.refPath||''))throw new Error('请先上传参考音频');

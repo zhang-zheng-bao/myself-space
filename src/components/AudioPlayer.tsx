@@ -269,9 +269,11 @@ export default function AudioPlayer() {
             </button>
             <button
               onClick={togglePlay}
+              aria-label={isPlaying ? "暂停音乐" : "播放音乐"}
+              title={isPlaying ? "暂停音乐" : "播放音乐"}
               className="p-2 rounded-full bg-emerald-400 hover:bg-emerald-300 text-zinc-950 flex items-center justify-center transition-all cursor-pointer shadow-md hover:scale-105"
             >
-              {isPlaying ? <Pause size={12} className="fill-zinc-950 text-zinc-950" /> : <Play size={12} className="fill-zinc-950 text-zinc-950 translate-x-[0.5px]" />}
+              {isPlaying ? <Pause fill="currentColor" strokeWidth={0} aria-hidden="true" size={12} className="fill-zinc-950 text-zinc-950" /> : <Play size={12} className="fill-zinc-950 text-zinc-950 translate-x-[0.5px]" />}
             </button>
             <button
               onClick={handleNext}
@@ -357,7 +359,7 @@ export default function AudioPlayer() {
                         <span className="w-[1.2px] h-2 bg-emerald-400 animate-[soundWave_0.9s_ease-in-out_infinite]" />
                       </span>
                     ) : isActive ? (
-                      <Pause size={9} className="text-zinc-500 font-bold" />
+                      <Pause fill="currentColor" strokeWidth={0} aria-hidden="true" size={9} className="text-zinc-500 font-bold" />
                     ) : (
                       <Play size={9} className="opacity-0 group-hover:opacity-60 text-zinc-400 transition-opacity" />
                     )}
@@ -531,9 +533,11 @@ export default function AudioPlayer() {
 
                           <button
                             onClick={togglePlay}
+                            aria-label={isPlaying ? "暂停音乐" : "播放音乐"}
+                            title={isPlaying ? "暂停音乐" : "播放音乐"}
                             className="p-2.5 rounded-full bg-white hover:bg-zinc-100 text-zinc-950 hover:scale-105 transition-all cursor-pointer shadow-xl"
                           >
-                            {isPlaying ? <Pause size={15} className="fill-black text-black" /> : <Play size={15} className="fill-black text-black translate-x-[0.5px]" />}
+                            {isPlaying ? <Pause fill="currentColor" strokeWidth={0} aria-hidden="true" size={15} className="fill-black text-black" /> : <Play size={15} className="fill-black text-black translate-x-[0.5px]" />}
                           </button>
 
                           <button

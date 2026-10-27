@@ -795,6 +795,7 @@ function renderSpeechJobList(speechJobs) {
   }
 }
 
+let speechSubmitting = false;
 function renderSpeechJobs(jobs) {
   const speechJobs = jobs.filter((job) => job.type === 'speech');
   const sessionJobs = speechJobs.filter((job) => activeSpeechJobIds.has(job.id));
@@ -825,7 +826,9 @@ function renderSpeechJobs(jobs) {
     if (current.transcriptText) $('#speechInput').value = current.transcriptText;
     $('#speechTaskStatus').className = 'parse-status';
     $('#speechTaskStatus').textContent = `${current.status} ${current.progress || 0}%`;
-    $('#speechTaskDetail').textContent = current.status;
+    $('#speechTaskDetail').textContent = current.speechChunks
+      ? `按静音分段 · 已完成 ${current.speechChunks.completed}/${current.speechChunks.discovered} 段 · 最多 ${current.speechChunks.concurrency} 段并发`
+      : current.status;
   } else {
     // A refresh must still surface failures from this browser's persisted
     // history. Otherwise an old failed task leaves its 1% progress visible
@@ -849,7 +852,7 @@ function renderSpeechJobs(jobs) {
       $('#speechTaskDetail').textContent = speechJobs.length ? `已保存 ${speechJobs.length} 条本地识别历史` : '支持抖音、B站、小红书和央视视频';
     }
   }
-  $('#speechStartButton').disabled = active.length > 0;
+  $('#speechStartButton').disabled = speechSubmitting || active.length > 0;
 }
 
 function renderJobs(jobs) {
@@ -1046,11 +1049,33 @@ $('#speechStartButton').addEventListener('click', async () => {
     $('#speechTaskStatus').textContent = '没有找到 ffmpeg';
     return;
   }
-  const items = urls.map((url) => ({ url }));
+  if (speechSubmitting) return;
+  speechSubmitting = true;
+  $('#speechStartButton').disabled = true;
   activeSpeechJobIds = new Set();
   consumedSpeechJobs = new Set();
   $('#speechInput').value = urls.join('\n');
   try {
+    $('#speechTaskStatus').className = 'parse-status';
+    $('#speechTaskStatus').textContent = '正在检查音频时长…';
+    const parsed = await window.clipHarbor.parseMedia(urls.join('\n'));
+    const items = [];
+    for (const url of urls) {
+      const media = parsed.find(item => item.url === url);
+      if (!media?.ok) throw new Error(media?.error || '无法读取音频时长，请重试');
+      let fullRecognition = false;
+      const duration = Number(media.duration) || 0;
+      if (duration > 300 || !duration) {
+        const dialog = $('#speechLengthDialog');
+        $('#speechLengthTitle').textContent = duration ? '音频时间过长，是否完整识别？' : '音频时长未知，是否完整识别？';
+        $('#speechLengthDescription').textContent = `${media.title || '当前视频'}${duration ? ` · 时长约 ${Math.floor(duration/60)} 分 ${Math.round(duration%60)} 秒` : ' · 暂时无法确认时长'}`;
+        dialog.returnValue = '';
+        const choice = new Promise(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue), {once:true}));
+        dialog.showModal();
+        fullRecognition = (await choice) === 'full';
+      }
+      items.push({url,fullRecognition});
+    }
     const beforeIds = new Set((state.jobs || []).map((job) => job.id));
     const jobs = await window.clipHarbor.addJobs({ items, mode: 'transcript', type: 'speech' });
     activeSpeechJobIds = new Set(jobs
@@ -1062,6 +1087,9 @@ $('#speechStartButton').addEventListener('click', async () => {
   } catch (error) {
     $('#speechTaskStatus').className = 'parse-status bad';
     $('#speechTaskStatus').textContent = errorMessage(error);
+  } finally {
+    speechSubmitting = false;
+    $('#speechStartButton').disabled = (state.jobs || []).some(job => job.type === 'speech' && !['已完成','失败','已取消'].includes(job.status));
   }
 });
 

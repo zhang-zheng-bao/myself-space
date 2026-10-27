@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   AppWindow,
@@ -732,7 +732,7 @@ function AudioBlock({ tracks, autoplay, compact = false, onAutoplaySettled }: { 
           <span>{currentTrack ? zhText(currentTrack.artist) || "Unknown" : "请在后台上传音乐"}</span>
         </div>
         <button type="button" data-track="music:toggle" onClick={togglePlay} disabled={!currentTrack} className="hero-audio__play" aria-label={isPlaying ? "暂停音乐" : "播放音乐"}>
-          {isPlaying ? <Pause size={15} className="fill-current" /> : <Play size={15} className="translate-x-px fill-current" />}
+          {isPlaying ? <Pause fill="currentColor" strokeWidth={0} aria-hidden="true" size={15} className="fill-current" /> : <Play size={15} className="translate-x-px fill-current" />}
         </button>
         <div className="hero-audio__wave">
           {[8, 14, 22, 17, 27, 19, 13, 9, 16, 11, 18, 12, 8, 14].map((height, index, bars) => (
@@ -780,7 +780,7 @@ function AudioBlock({ tracks, autoplay, compact = false, onAutoplaySettled }: { 
             <span className="music-queue__number">{index === trackIndex && isPlaying ? <BarChart3 size={16} /> : String(index + 1).padStart(2, "0")}</span>
             <span className="music-queue__cover">{track.coverUrl ? <img src={track.coverUrl} alt="" referrerPolicy="no-referrer" /> : <ListMusic size={18} />}</span>
             <span className="music-queue__text"><strong>{title}</strong><small>{zhText(track.artist) || "未知作者"}{isInstrumental(track.lyrics) ? " · 纯音乐" : ""}</small></span>
-            <span className="music-queue__track-action" aria-hidden="true">{playing ? <Pause size={14} className="fill-current" /> : <Play size={14} className="fill-current" />}</span>
+            <span className="music-queue__track-action" aria-hidden="true">{playing ? <Pause fill="currentColor" strokeWidth={0} aria-hidden="true" size={14} className="fill-current" /> : <Play size={14} className="fill-current" />}</span>
           </button>})}
         </div>
       </section>}
@@ -926,7 +926,7 @@ function AudioBlock({ tracks, autoplay, compact = false, onAutoplaySettled }: { 
             <div className="flex items-center gap-2">
               <button onClick={() => playIndex(trackIndex - 1)} disabled={playlist.length <= 1} className="rounded-full border border-zinc-800 bg-zinc-900 p-1.5 text-zinc-300 transition hover:border-zinc-700 hover:text-white disabled:opacity-35" aria-label="上一首"><SkipBack size={13} /></button>
               <button onClick={togglePlay} disabled={!currentTrack} className="inline-flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-200 transition hover:border-emerald-400 hover:text-emerald-200 disabled:opacity-35" aria-label={isPlaying ? "暂停音乐" : "播放音乐"}>
-                {isPlaying ? <Pause size={13} className="fill-current" /> : <Play size={13} className="translate-x-[1px] fill-current" />}
+                {isPlaying ? <Pause fill="currentColor" strokeWidth={0} aria-hidden="true" size={13} className="fill-current" /> : <Play size={13} className="translate-x-[1px] fill-current" />}
                 <span>{isPlaying ? "暂停" : "播放"}</span>
               </button>
               <button onClick={() => playIndex(trackIndex + 1)} disabled={playlist.length <= 1} className="rounded-full border border-zinc-800 bg-zinc-900 p-1.5 text-zinc-300 transition hover:border-zinc-700 hover:text-white disabled:opacity-35" aria-label="下一首"><SkipForward size={13} /></button>

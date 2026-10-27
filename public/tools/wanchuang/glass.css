@@ -472,3 +472,11 @@ body:has(#mediaViewer[open]) { overflow:hidden; }
  .feature-tab,.feature-tab-system,.feature-tab-system.active { justify-content:center; padding:10px; }
  .workspace-main { width:calc(100% - 24px); }
 }
+.speech-length-dialog { width:min(460px,calc(100vw - 32px)); padding:26px; border:1px solid var(--line); border-radius:16px; background:#f8fafc; color:var(--text); box-shadow:0 24px 80px #12243b30; }
+.speech-length-dialog::backdrop { background:#14223560; }
+.speech-length-dialog h2 { margin:16px 0 10px; font-size:18px; line-height:1.5; }
+.speech-length-dialog p { overflow-wrap:anywhere; font-size:13px; line-height:1.8; }
+.speech-length-icon { display:inline-flex; padding:10px; border-radius:12px; color:var(--accent-bright); background:#0878df10; }
+.speech-length-hint { color:var(--muted); }
+.speech-length-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:22px; }
+.speech-length-actions button { flex:1; min-height:42px; white-space:nowrap; }

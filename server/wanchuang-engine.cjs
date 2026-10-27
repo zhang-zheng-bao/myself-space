@@ -968,6 +968,9 @@ async function runSpeechRecognition(job) {
     : '';
   let sourceProcess;
   let ffmpegProcess;
+  const speechLimitSeconds = job.fullRecognition === true ? 0 : 300;
+  let audioLimitReached = false;
+  updateJob(job, { speechLimitSeconds });
   const activeSpeechTasks = new Set();
   const cancelPipeline = () => {
     for (const task of activeSpeechTasks) task.cancel();
@@ -992,6 +995,7 @@ async function runSpeechRecognition(job) {
     } else {
       ffmpegArgs.push('-i', 'pipe:0');
     }
+    if (speechLimitSeconds) ffmpegArgs.push('-t', String(speechLimitSeconds));
     ffmpegArgs.push(
       '-vn', '-ac', '1', '-ar', String(SPEECH_SAMPLE_RATE),
       '-c:a', 'pcm_s16le', '-f', 's16le', 'pipe:1',
@@ -999,15 +1003,17 @@ async function runSpeechRecognition(job) {
     ffmpegProcess = spawn(ffmpeg, ffmpegArgs, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let ffmpegError = '';
     let pipelineError;
+    let sourceFailure;
     ffmpegProcess.stderr.on('data', (chunk) => { ffmpegError += chunk.toString(); });
     ffmpegProcess.stdin.on('error', (error) => {
       if (error.code !== 'EPIPE') pipelineError ||= error;
     });
     const ffmpegDone = new Promise((resolve, reject) => {
       ffmpegProcess.on('error', reject);
-      ffmpegProcess.on('close', (code) => code === 0
-        ? resolve()
-        : reject(new Error(ffmpegError.trim().split(/\r?\n/).slice(-3).join(' ') || `FFmpeg 退出码 ${code}`)));
+      ffmpegProcess.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(ffmpegError.trim().split(/\r?\n/).slice(-3).join(' ') || `FFmpeg 退出码 ${code}`));
+      });
     }).catch((error) => { pipelineError ||= error; });
     let sourceDone = Promise.resolve();
     if (!videoUrl) {
@@ -1020,24 +1026,28 @@ async function runSpeechRecognition(job) {
       sourceProcess.stdout.pipe(ffmpegProcess.stdin);
       sourceDone = new Promise((resolve, reject) => {
         sourceProcess.on('error', reject);
-        sourceProcess.on('close', (code) => code === 0
+        sourceProcess.on('close', (code) => code === 0 || audioLimitReached
           ? resolve()
           : reject(new Error(sourceError.trim().split(/\r?\n/).slice(-3).join(' ') || `音频流退出码 ${code}`)));
-      }).catch((error) => { pipelineError ||= error; });
+      }).catch((error) => { sourceFailure = error; });
     } else {
       ffmpegProcess.stdin.end();
     }
 
-    const totalBytes = data.duration ? Number(data.duration) * SPEECH_BYTES_PER_SECOND : 0;
+    const duration = Number(data.duration) || 0;
+    const totalBytes = (speechLimitSeconds ? Math.min(duration || speechLimitSeconds, speechLimitSeconds) : duration) * SPEECH_BYTES_PER_SECOND;
     let lastProgressPublished = 0;
+    let processedBytes = 0;
     updateJob(job, { status: '语音识别中', progress: 5 });
-    const segments = await recognizeContinuousPcmWithIflytek(ffmpegProcess.stdout, credentials, {
+    const segments = await require('./speech-parallel.cjs').recognizeSilenceParallel(ffmpegProcess.stdout, credentials, recognizeContinuousPcmWithIflytek, {
+      onChunkState: (speechChunks) => updateJob(job, { speechChunks }),
       isCancelled: () => job.cancelRequested,
       registerTask: (task) => {
         activeSpeechTasks.add(task);
         return () => activeSpeechTasks.delete(task);
       },
       onProgress: (sentBytes) => {
+        processedBytes = sentBytes;
         const now = Date.now();
         if (now - lastProgressPublished < 250) return;
         lastProgressPublished = now;
@@ -1050,7 +1060,10 @@ async function runSpeechRecognition(job) {
         transcriptText: require('./transcript-format.cjs').formatTranscript(liveSegments),
       }),
     });
+    audioLimitReached = !!speechLimitSeconds && processedBytes >= speechLimitSeconds * SPEECH_BYTES_PER_SECOND;
+    if(audioLimitReached) terminateProcessTree(sourceProcess);
     await Promise.all([ffmpegDone, sourceDone]);
+    if(sourceFailure && !audioLimitReached) throw sourceFailure;
     if (pipelineError) throw pipelineError;
     if (!segments.length) throw new Error('未识别到有效语音内容');
 
@@ -1744,6 +1757,7 @@ ipcMain.handle('jobs:add', (_event, payload) => {
       id: crypto.randomUUID(),
       url: item.url,
       type: payload.type || 'download',
+      fullRecognition: item.fullRecognition === true,
       mode: payload.mode || 'video',
       selectedMedia: Array.isArray(item.selectedMedia) ? item.selectedMedia.map(Number) : [],
       resolved: item.resolved || null,

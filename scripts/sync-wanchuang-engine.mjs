@@ -115,6 +115,17 @@ body = body.replace("path.join(os.tmpdir(), `clipharbor-${id}.cookies.txt`)", "p
   .replace("if (videoUrl) {\n      const referer", "if (videoUrl) {\n      await validateRemote(videoUrl);\n      ffmpegArgs.push('-protocol_whitelist', 'https,http,tcp,tls,crypto');\n      const referer");
 const header = `// Generated from WanChuangCore 0.1.33 (MIT). Regenerate with scripts/sync-wanchuang-engine.mjs.\nmodule.exports = function createEngine({root, readConfig, binaries, chromium, fetch, spawn, acquire, validateRemote}) {\nconst {spawnSync} = require('node:child_process');\nconst WebSocket = require('ws');\nconst app = {getPath:()=>root,isPackaged:false};\nconst safeStorage = {isEncryptionAvailable:()=>true};\nconst handlers = new Map();\nconst ipcMain = {handle:(name,handler)=>handlers.set(name,handler)};\n`;
 body = body.replace('}, 15 * 60_000);', "}, job.type === 'speech' ? (8 * 60 + 5) * 60_000 : 15 * 60_000);");
+body = body.replace('await recognizeContinuousPcmWithIflytek(ffmpegProcess.stdout, credentials, {', "await require('./speech-parallel.cjs').recognizeSilenceParallel(ffmpegProcess.stdout, credentials, recognizeContinuousPcmWithIflytek, {\n      onChunkState: (speechChunks) => updateJob(job, { speechChunks }),");
+body = body.replace("      type: payload.type || 'download',", "      type: payload.type || 'download',\n      fullRecognition: item.fullRecognition === true,")
+  .replace('  let ffmpegProcess;\n', '  let ffmpegProcess;\n  const speechLimitSeconds = job.fullRecognition === true ? 0 : 300;\n  let audioLimitReached = false;\n  updateJob(job, { speechLimitSeconds });\n')
+  .replace('    ffmpegArgs.push(\n', "    if (speechLimitSeconds) ffmpegArgs.push('-t', String(speechLimitSeconds));\n    ffmpegArgs.push(\n")
+  .replace('    let pipelineError;', '    let pipelineError;\n    let sourceFailure;')
+  .replace('      }).catch((error) => { pipelineError ||= error; });', '      }).catch((error) => { sourceFailure = error; });')
+  .replace("sourceProcess.on('close', (code) => code === 0", "sourceProcess.on('close', (code) => code === 0 || audioLimitReached")
+  .replace('    let lastProgressPublished = 0;', '    let lastProgressPublished = 0;\n    let processedBytes = 0;')
+  .replace('      onProgress: (sentBytes) => {', '      onProgress: (sentBytes) => {\n        processedBytes = sentBytes;')
+  .replace('    await Promise.all([ffmpegDone, sourceDone]);', '    audioLimitReached = !!speechLimitSeconds && processedBytes >= speechLimitSeconds * SPEECH_BYTES_PER_SECOND;\n    if(audioLimitReached) terminateProcessTree(sourceProcess);\n    await Promise.all([ffmpegDone, sourceDone]);\n    if(sourceFailure && !audioLimitReached) throw sourceFailure;')
+  .replace('    const totalBytes = data.duration ? Number(data.duration) * SPEECH_BYTES_PER_SECOND : 0;', '    const duration = Number(data.duration) || 0;\n    const totalBytes = (speechLimitSeconds ? Math.min(duration || speechLimitSeconds, speechLimitSeconds) : duration) * SPEECH_BYTES_PER_SECOND;');
 const footer = `
 fs.mkdirSync(root,{recursive:true});
 settings = loadSettings(); settings.outputDir = defaultOutput(); settings.concurrency = 1;
