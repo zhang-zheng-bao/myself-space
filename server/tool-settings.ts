@@ -7,7 +7,7 @@ import {recordOperation} from './wanchuang-audit';
 
 const fields = ['iflytekApiKey', 'iflytekApiSecret', 'minimaxApiKey', 'douyinCookie', 'bilibiliCookie', 'xiaohongshuCookie'];
 export type VoiceModel = { id: string; name: string; type: string; createdAt?: string };
-export type Settings = { concurrency: number; retentionHours: number; iflytekAppId: string; secrets: Record<string, string>; voiceCloneEnabled?: boolean; hiddenVoices?: string[]; voiceModels?: VoiceModel[]; voiceModelsAccount?: string };
+export type Settings = { concurrency: number; retentionHours: number; iflytekAppId: string; secrets: Record<string, string>; voiceCloneEnabled?: boolean; hiddenVoices?: string[]; voiceModels?: VoiceModel[]; voiceModelsAccount?: string; avatarCall?: import('./avatar-call').AvatarCallSettings };
 export function readToolSettings(): Settings {
   const file = path.resolve(process.env.TOOL_SETTINGS_FILE || '.private/wanchuang-settings.enc');
   if (!fs.existsSync(file)) return { concurrency: 2, retentionHours: 6, iflytekAppId: '', secrets: {} };

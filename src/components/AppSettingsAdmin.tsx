@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ArrowLeft, ChevronRight, Plus } from 'lucide-react';
 import ToolSettingsAdmin from './ToolSettingsAdmin';
+import AvatarCallSettingsAdmin from './AvatarCallSettingsAdmin';
 
 // Each application owns its form and authenticated API; add entries here as apps are integrated.
 const applications = [{
@@ -8,6 +9,11 @@ const applications = [{
   description: '素材采集、语音转写、声音生成',
   icon: '/tools/wanchuang/assets/clipharbor-logo.png',
   settings: ToolSettingsAdmin,
+}, {
+  id: 'avatar-call', name: '数字人通话', category: '站点助手',
+  description: '系统提示词、形象、音色克隆与通话设置',
+  icon: '/assistant-shiba.webp',
+  settings: AvatarCallSettingsAdmin,
 }];
 
 export default function AppSettingsAdmin() {

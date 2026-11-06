@@ -4452,7 +4452,7 @@ export default function AdminApp() {
         >
           <div className="flex items-center gap-2">
             <ShieldCheck size={16} className="text-emerald-300" />
-            <p className="font-mono text-xs uppercase tracking-[0.28em] text-emerald-300">Portfolio Admin</p>
+            <p className="font-mono text-xs tracking-[0.28em] text-emerald-300">一“页”知我</p>
           </div>
           <h1 className="mt-3 text-2xl font-semibold tracking-tight">管理员登录</h1>
           <p className="mt-2 text-sm leading-6 text-zinc-400">
@@ -4540,7 +4540,7 @@ export default function AdminApp() {
       <header className="z-30 shrink-0 border-b border-zinc-900 bg-zinc-950/90 px-3 py-2.5 backdrop-blur md:px-5">
         <div className="mx-auto flex max-w-[1600px] flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
-            <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-emerald-300">Portfolio CMS</p>
+            <p className="font-mono text-[11px] tracking-[0.22em] text-emerald-300">一“页”知我</p>
             <h1 className="mt-0.5 truncate text-lg font-semibold tracking-tight">网站数据管理后台</h1>
           </div>
           <div className="flex flex-wrap items-center gap-2">

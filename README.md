@@ -1,4 +1,4 @@
-# MySpace · 个人作品集与创作工具站
+# 一“页”知我 · Me on One Page
 
 这是一个前后端一体的个人网站，集成作品展示、案例分析、图文图库、演示文稿、创作工具和内容管理后台。
 
@@ -7,9 +7,16 @@
 - 万创核心：`/tools/wanchuang/index.html`，独立的网页版创作应用，工具箱卡片直接跳转进入。
 - 技术栈：React 19、TypeScript、Vite 6、Tailwind CSS 4、Express、Supabase；媒体支持腾讯云 COS 和 Supabase Storage。
 
-## 2.0 之后的累计更新
+## 3.0.0 · 染墨主题与数字人通话
 
-以下按当前代码整理，截至 **2026-10-27**。`package.json` 仍为 `2.0.0`，本节记录后续累计功能，不代表另一个已发布的版本号。
+当前版本 **3.0.0**，更新日期 **2026-11-06**。原 `v2.0.0` 标签保留，改版前的累计更新以 `v2.1.0` 留档。
+
+- 新增「染墨主题」：右上角切换，选择保存在当前浏览器；也可通过 `/?theme=ink` 预览。原主题与内容数据保留。
+- 染墨主题使用独立生成的全身角色、两角人物、纸墨背景、朱红笔触和作品描边素材。人物目前为静态透明插画，并非实时 3D 模型；模块切换姿态尚未实现。
+- 新增数字人通话管理员预览，后台按应用配置凭证、系统提示词、形象与音色；接入及数据库迁移见[数字人通话说明](docs/avatar-call.md)。外部服务需自行配置，模拟协议测试不等于真实云端通话已验证。
+- 品牌更新为一“页”知我（Me on One Page），调整开屏文字动画。
+
+以下为截至本版本的累计功能：
 
 | 方向 | 当前功能 |
 | --- | --- |
@@ -43,6 +50,8 @@ Windows PowerShell 用 `Copy-Item .env.example .env` 代替 `cp`。未配置 Sup
 - 后台：http://localhost:3010/admin
 
 管理员登录使用 `.env` 中的 `ADMIN_PHONE` 和 `ADMIN_PASSWORD`。
+
+工作树不会自动共享 `.env`。本地使用云端数据时，需要在当前工作目录配置同一个 Supabase 项目，以及完整的 `TENCENT_COS_SECRET_ID`、`TENCENT_COS_SECRET_KEY`、`TENCENT_COS_BUCKET`、`TENCENT_COS_REGION`。只连接数据库而未配置私有存储签名，会导致媒体请求返回 403。`.env`、`.private/` 和外部服务密钥不提交 Git。
 
 ## 万创核心网页版
 
@@ -163,6 +172,8 @@ npx tsx --test server/speech-duration.test.ts server/speech-scope.test.ts server
 ## 小柴与访客长期记忆
 
 网站通过 Express 代理调用 Dify，`DIFY_API_KEY` 只保存在服务端。Dify 的 `conversation_id` 负责当前会话，Supabase 的 `portfolio_assistant_memories` 保存跨会话记忆；两者不要混为一谈。
+
+小柴窗口也支持数字人通话的管理员预览。进入「应用配置 → 数字人通话」管理系统提示词、形象、克隆音色与通话时长；参见[数字人通话配置](docs/avatar-call.md)。
 
 首次启用时：
 

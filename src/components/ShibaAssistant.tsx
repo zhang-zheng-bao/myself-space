@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { ArrowUp, Menu, Move, RotateCcw, Square, Trash2, X } from "lucide-react";
+import { ArrowUp, Menu, Move, Phone, RotateCcw, Square, Trash2, X } from "lucide-react";
 import { getVisitorKey } from "../tracking";
+import AssistantVideoCall from "./AssistantVideoCall";
+import "./assistant-video-call.css";
 
 /**
  * 右下角的柴犬小助手。当前上下文由 Dify 按 conversation_id 保存，跨会话记忆
@@ -99,6 +101,7 @@ function MessageBody({ text }: { text: string }) {
 }
 
 export default function ShibaAssistant({ ready = true }: { ready?: boolean }) {
+  const [showCall, setShowCall] = useState(false);
   const [open, setOpen] = useState(false);
   const [config, setConfig] = useState<Config | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -317,6 +320,7 @@ export default function ShibaAssistant({ ready = true }: { ready?: boolean }) {
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const close = () => {
+    setShowCall(false);
     setOpen(false);
     launcherRef.current?.focus();
   };
@@ -417,9 +421,8 @@ export default function ShibaAssistant({ ready = true }: { ready?: boolean }) {
     }
   };
 
-  // 生产环境没配 Key 就整个不出现；开发时照常显示，方便调样式。
   const isDev = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV);
-  if (!config || (!config.enabled && !isDev)) return null;
+  if (!config) return null;
 
   const opening = config.opening || "汪～我是小柴，可以问我关于小主人的经历、作品和技能。";
   const suggestions = config.suggestions?.length ? config.suggestions : ["你做过哪些项目？", "擅长哪些技能？", "怎么联系你？"];
@@ -427,12 +430,13 @@ export default function ShibaAssistant({ ready = true }: { ready?: boolean }) {
 
   return (
     <div className="shiba-assistant" data-open={open || undefined}>
-      {open && <section ref={panelRef} id="shiba-assistant-panel" className="shiba-assistant__panel" role="dialog" aria-label="小柴助手"
+      {open && <section ref={panelRef} id="shiba-assistant-panel" className="shiba-assistant__panel" data-call-entry={!showCall || undefined} role="dialog" aria-label="小柴助手"
         style={{ ...placement, "--drag-x": `${offset.x}px`, "--drag-y": `${offset.y}px` } as CSSProperties}
         onPointerDown={event => { if (menuOpen && !(event.target as Element).closest(".shiba-assistant__menu, .shiba-assistant__header > button")) setMenuOpen(false); }}>
         <header className="shiba-assistant__header" onPointerDown={startDrag}>
           <button type="button" data-track="assistant:menu" onClick={() => setMenuOpen(value => !value)} aria-label="菜单" aria-expanded={menuOpen} title="菜单"><Menu size={18} /></button>
           <strong>小柴</strong>
+          {!showCall && <button type="button" data-track="assistant:video-call" onClick={() => { setMenuOpen(false); setShowCall(true); }} aria-label="数字人通话" title="数字人通话"><Phone size={17} /></button>}
           <button type="button" data-track="assistant:close" onClick={close} aria-label="关闭小助手" title="关闭"><X size={18} /></button>
           {menuOpen && <div className="shiba-assistant__menu" role="menu">
             <button type="button" role="menuitem" data-track="assistant:reset" onClick={() => { setMenuOpen(false); resetConversation(); }} disabled={!messages.length}><RotateCcw size={14} />新对话</button>
@@ -440,12 +444,13 @@ export default function ShibaAssistant({ ready = true }: { ready?: boolean }) {
             <button type="button" role="menuitem" data-track="assistant:recenter" onClick={() => { setMenuOpen(false); setOffset({ x: 0, y: 0 }); setDock({ x: 0, y: 0 }); writeDock({ x: 0, y: 0 }); }} disabled={!offset.x && !offset.y && !dock.x && !dock.y}><Move size={14} />回到右下角</button>
           </div>}
         </header>
+        {showCall ? <AssistantVideoCall close={() => setShowCall(false)} /> : <>
         <div ref={listRef} className="shiba-assistant__messages" aria-live="polite">
           <div className="shiba-assistant__message" data-role="assistant">
             <img src={AVATAR} alt="" aria-hidden="true" />
             <div className="shiba-assistant__bubble"><MessageBody text={opening} /></div>
           </div>
-          {!messages.length && <div className="shiba-assistant__suggestions">
+          {config.enabled && !messages.length && <div className="shiba-assistant__suggestions">
             {suggestions.map(question => <button key={question} type="button" data-track="assistant:suggestion" onClick={() => send(question)}>{question}</button>)}
           </div>}
           {messages.map((message, index) => {
@@ -461,7 +466,7 @@ export default function ShibaAssistant({ ready = true }: { ready?: boolean }) {
             );
           })}
         </div>
-        <form className="shiba-assistant__composer" onSubmit={event => { event.preventDefault(); send(input); }}>
+        {(config.enabled || isDev) && <form className="shiba-assistant__composer" onSubmit={event => { event.preventDefault(); send(input); }}>
           <textarea ref={inputRef} value={input} rows={2} maxLength={MAX_QUERY} placeholder={config.enabled ? "输入问题" : "开发模式：未配置 DIFY_API_KEY"}
             aria-label="输入问题" onChange={event => setInput(event.target.value)}
             onKeyDown={event => {
@@ -471,7 +476,8 @@ export default function ShibaAssistant({ ready = true }: { ready?: boolean }) {
           {streaming
             ? <button type="button" data-track="assistant:stop" onClick={() => abortRef.current?.abort()} aria-label="停止回答" title="停止"><Square size={14} className="fill-current" /></button>
             : <button type="submit" data-track="assistant:send" disabled={!input.trim()} aria-label="发送" title="发送（Enter）"><ArrowUp size={18} /></button>}
-        </form>
+        </form>}
+        </>}
       </section>}
       <div className="shiba-assistant__dock" style={{ "--dock-x": `${dock.x}px`, "--dock-y": `${dock.y}px` } as CSSProperties}>
         {greeting && !open && <div className="shiba-assistant__greeting" data-side={greetingSide} role="status">

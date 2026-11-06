@@ -13,11 +13,13 @@ import COS from "cos-nodejs-sdk-v5";
 import mammoth from "mammoth";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { WebSocket } from "ws";
+import { registerAvatarCall } from "./server/avatar-call";
 import { createServer as createViteServer } from "vite";
 
 type JsonRecord = Record<string, any>;
 
 const PORT = Number(process.env.PORT || 3010);
+const HOST = process.env.HOST || "0.0.0.0";
 const SESSION_COOKIE = "portfolio_admin";
 const SESSION_TTL_SECONDS = 60 * 60 * 12;
 const MAX_UPLOAD_SIZE_MB = Number(process.env.MAX_UPLOAD_SIZE_MB || 50);
@@ -1422,6 +1424,7 @@ async function startServer() {
 
   app.use(express.json({ limit: "60mb" }));
   registerToolSettings(app, requireAdmin);
+  registerAvatarCall(app, requireAdmin, supabase);
   registerWanchuang(app, requireAdmin);
   app.use(express.urlencoded({ limit: "60mb", extended: true }));
   app.use((_req, res, next) => {
@@ -2906,7 +2909,7 @@ async function startServer() {
     });
   }
 
-  const server = app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, HOST, () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
     console.log(supabase ? "Supabase backend enabled." : "Supabase env missing; using local JSON fallback for reads/saves.");
   });

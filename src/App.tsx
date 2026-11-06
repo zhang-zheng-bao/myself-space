@@ -33,6 +33,7 @@ import AdminApp from "./AdminApp";
 import { isInstrumental } from "./musicMetadata";
 import TimelineArc from "./components/TimelineArc";
 import EntranceCinematic from "./components/EntranceCinematic";
+import { InkCharacter, InkScenery } from "./components/InkTheme";
 import ShibaAssistant from "./components/ShibaAssistant";
 import PostFeed, { ImageReader } from "./components/PostFeed";
 import { defaultCaseWorks, casePageUrl } from "./caseStudies";
@@ -2392,12 +2393,19 @@ function ContactPane({ data }: { data: PortfolioData }) {
 }
 
 
-/** 收起 index.html 里的缓冲加载页。animate=false 时立即移除（被入场动画盖住的情况）。 */
+/** 首屏就绪后通知笔画动画收笔；后台无需展示开屏。 */
 function dismissBootLoader(animate: boolean) {
   const loader = document.getElementById("boot-loader");
-  if (!loader || loader.dataset.leaving !== undefined) return;
+  if (!loader || loader.dataset.leaving !== undefined || loader.dataset.completing !== undefined) return;
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (!animate || reduced) { loader.remove(); return; }
+  if (loader.dataset.strokeController === "ready") {
+    loader.dataset.completing = "";
+    loader.dispatchEvent(new Event("boot:complete"));
+    // A broken/interrupted animation must never trap visitors on the loading screen.
+    window.setTimeout(() => loader.remove(), 2200);
+    return;
+  }
   loader.dataset.leaving = "";
   window.setTimeout(() => loader.remove(), 480);
 }
@@ -2645,6 +2653,18 @@ function IntroDashboard({ data, onSelectWork, onNavigate }: {
 
 export default function App() {
   if (window.location.pathname.startsWith("/admin")) { dismissBootLoader(false); return <AdminApp />; }
+  const [theme, setTheme] = useState<'original' | 'ink'>(() => {
+    if (new URLSearchParams(location.search).get('theme') === 'ink') return 'ink';
+    try { return localStorage.getItem('portfolio-theme') === 'ink' ? 'ink' : 'original'; } catch { return 'original'; }
+  });
+  const changeTheme = () => setTheme(current => {
+    const next = current === 'ink' ? 'original' : 'ink';
+    try { localStorage.setItem('portfolio-theme', next); } catch { /* Theme still works without storage. */ }
+    const url = new URL(location.href);
+    url.searchParams.delete('theme');
+    history.replaceState(null, '', url);
+    return next;
+  });
   const [data, setData] = useState<PortfolioData>(normalizeData(emptyPortfolioData));
   const [portfolioConfigReady, setPortfolioConfigReady] = useState(false);
   const [portfolioReady, setPortfolioReady] = useState(false);
@@ -2715,14 +2735,10 @@ export default function App() {
   const siteEntered = entered || (portfolioReady && !entranceAnimationEnabled);
   const floatingSentencesConfig = useMemo(() => resolveFloatingSentencesConfig(data.profile.pageCopy?.floatingSentences, activeTab), [data.profile.pageCopy?.floatingSentences, activeTab]);
 
-  // 缓冲加载页（index.html 里的 #boot-loader）什么时候收起：
-  // - 入场动画开着：配置一到、动画层挂上就立刻撤掉，后面的等待交给动画自己的开门页；
-  // - 入场动画关着：等数据与首屏素材就绪再淡出，直接露出站点 —— 不再经过黑屏渐显。
+  // 首屏数据和素材就绪后才完成最后几笔；视频入场层在下面准备好，避免抢先遮住书写。
   useEffect(() => {
-    if (!portfolioConfigReady) return;
-    if (entranceAnimationEnabled) { dismissBootLoader(false); return; }
     if (portfolioReady) dismissBootLoader(true);
-  }, [portfolioConfigReady, portfolioReady, entranceAnimationEnabled]);
+  }, [portfolioReady]);
 
   // 关闭入场动画时不挂载视频，也不让音乐继续等待动画回调。数据加载完成后
   // 直接放行自动播放尝试；浏览器若拦截有声播放，播放器原有的交互重试会接管。
@@ -2760,14 +2776,15 @@ export default function App() {
   return (
     <>
     {portfolioConfigReady && entranceAnimationEnabled && <EntranceCinematic ready={portfolioReady} soundReady={!data.profile.musicAutoplay || !(data.musicTracks || []).some(track => track.audioUrl) || musicSettled} musicLeadSeconds={data.profile.pageCopy?.musicLeadSeconds ?? 3} onMusicEntry={beginMusicEntry} onEntered={completeEntrance} />}
-    {portfolioReady && <div data-analytics-page={siteEntered ? activeTab : undefined} data-analytics-title={navItems.find(item => item.key === activeTab)?.label} className="portfolio-site" inert={!siteEntered} aria-hidden={!siteEntered}>
+    {portfolioReady && <div data-theme={theme} data-analytics-page={siteEntered ? activeTab : undefined} data-analytics-title={navItems.find(item => item.key === activeTab)?.label} className="portfolio-site" inert={!siteEntered} aria-hidden={!siteEntered}>
+      {theme === 'ink' && <InkScenery />}
       <FloatingSentences config={floatingSentencesConfig} />
       <MobileViewingNotice />
 
       <header className="site-header">
         <button type="button" data-track="navigation:brand" className="site-brand" onClick={() => setActiveTab("intro")}>
           <strong>{data.profile.name}</strong>
-          <span>我的空间 / MY SPACE</span>
+          <span>一“页”知我</span>
           <i aria-hidden="true"><b /><b /><b /></i>
         </button>
         <nav className="site-nav" aria-label="主要导航">
@@ -2777,6 +2794,7 @@ export default function App() {
             </button>
           ))}
         </nav>
+        <button type="button" className="theme-switch" onClick={changeTheme} aria-label={theme === 'ink' ? '切换到原主题' : '切换到染墨主题'} title={theme === 'ink' ? '当前：染墨主题；点击切换' : '点击切换为染墨主题'}>{theme === 'ink' ? '染墨主题' : '原主题'} ⇄</button>
         <button type="button" data-track="navigation:mobile-menu" className="mobile-menu-button" onClick={() => setMobileMenuOpen((open) => !open)} aria-label="打开导航">
           {mobileMenuOpen ? <X size={19} /> : <Menu size={19} />}
         </button>
@@ -2794,9 +2812,9 @@ export default function App() {
 
       <main className="portfolio-layout">
         <aside className="hero-panel">
-          <HeroArt />
+          {theme === 'ink' ? <InkCharacter section={activeTab} /> : <HeroArt />}
           <span className="hero-panel__veil" />
-          <DynamicParticles />
+          {theme !== 'ink' && <DynamicParticles />}
           <div className="hero-panel__aside" aria-hidden="true">HUMAN<br />×<br />AI<br />×<br />CREATIVE<br />×<br />A BETTER<br />TOMORROW</div>
           <div className="hero-panel__copy">
             <span className="hero-panel__label">CREATE · SHARE · A BETTER TOMORROW</span>
