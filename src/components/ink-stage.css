@@ -42,7 +42,7 @@
   [data-theme="ink"] .ink-paper--bottom { display: none; }
   [data-theme="ink"] .ink-mountains, [data-theme="ink"] .ink-smoke { display: block; }
   [data-theme="ink"] .ink-mountains--br {
-    right: 0; bottom: 0; width: calc(420 * var(--u)); opacity: .92;
+    right: calc(-30 * var(--u)); bottom: calc(-28 * var(--u)); width: calc(340 * var(--u)); opacity: .92;
     -webkit-mask-image: radial-gradient(130% 170% at 100% 100%, #000 45%, transparent 72%);
     mask-image: radial-gradient(130% 170% at 100% 100%, #000 45%, transparent 72%);
   }

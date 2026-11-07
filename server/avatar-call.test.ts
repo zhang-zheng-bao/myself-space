@@ -47,8 +47,11 @@ test('admin can migrate the prompt and cloned voice; video session waits for clo
       if (url === '/live/v1/voices/clone') return { voice: 'new_voice' };
       return { live: { id: '900719925474099312' }, rtc: { token: 'short-lived-rtc', user_id: 'visitor' } };
     },
-    dial: url => {
-      assert.equal(new URL(url).searchParams.get('authorization'), 'vda_test_only');
+    dial: (url, key) => {
+      const parsed = new URL(url);
+      assert.equal(parsed.searchParams.has('authorization'), false);
+      assert.equal(parsed.searchParams.get('live_id'), '900719925474099312');
+      assert.equal(key, 'vda_test_only');
       return new WebSocket(`ws://127.0.0.1:${address.port}`);
     },
   });
