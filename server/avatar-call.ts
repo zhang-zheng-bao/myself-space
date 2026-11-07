@@ -118,9 +118,50 @@ export function registerAvatarCall(app: Express, requireAdmin: RequestHandler, s
       const key = keyFrom(readToolSettings());
       if (!key) return res.status(400).json({ error: '请先保存服务密钥。' });
       const body = await transport.request(key, '/live/v1/voices');
-      if (!Array.isArray(body.voices)) throw new ServiceError('音色列表返回格式异常。');
-      res.json({ voices: body.voices.map((item: any) => item?.voice).filter((v: unknown) => short(v, 128)) });
+      if (!Array.isArray(body?.voices)) throw new ServiceError('音色列表返回格式异常。');
+      const sources = [
+        { items: body.voices, shared: false },
+        { items: Array.isArray(body.public_voices) ? body.public_voices : [], shared: true },
+      ];
+      const voices = new Map<string, { voice: string; provider: string; shared: boolean }>();
+      for (const { items, shared } of sources) {
+        for (const item of items) {
+          const voice = item?.voice;
+          if (typeof voice !== 'string' || !voice.trim() || !short(voice, 128) || voices.has(voice)) continue;
+          voices.set(voice, {
+            voice, shared,
+            provider: typeof item.provider === 'string' && item.provider.length <= 32 ? item.provider : '',
+          });
+        }
+      }
+      res.json({ voices: [...voices.values()] });
     } catch (e) { res.status(502).json({ error: e instanceof ServiceError ? e.message : '暂时无法读取云端音色。' }); }
+  });
+  app.get(adminPath + '/avatars', requireAdmin, async (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      const key = keyFrom(readToolSettings());
+      if (!key) return res.status(400).json({ error: '请先保存服务密钥。' });
+      const avatars = [];
+      for (let page = 0; page < 5; page++) {
+        const body = await transport.request(key, `/live/v1/avatars?pager.page=${page}&pager.pagesz=100`);
+        if (!Array.isArray(body?.items)) throw new ServiceError('形象列表返回格式异常。');
+        for (const item of body.items) {
+          if (item?.id === undefined || item?.id === null) continue;
+          const id = String(item.id);
+          if (!id || id.length > 160) continue;
+          avatars.push({
+            id,
+            name: typeof item.name === 'string' ? item.name : '',
+            imageUrl: typeof item.image_uri === 'string' && httpsUrl(item.image_uri) ? item.image_uri : '',
+            status: typeof item.status === 'string' ? item.status : '',
+            createdAt: typeof item.created_at === 'string' ? item.created_at : '',
+          });
+        }
+        if (body.items.length < 100) break;
+      }
+      res.json({ avatars });
+    } catch (e) { res.status(502).json({ error: e instanceof ServiceError ? e.message : '暂时无法读取云端形象。' }); }
   });
   app.post(adminPath + '/voices', safeOrigin, requireAdmin, async (req, res) => {
     const { audioUrl, name, transcript, voiceProvider } = req.body || {};

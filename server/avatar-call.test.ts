@@ -31,7 +31,19 @@ test('admin can migrate the prompt and cloned voice; video session waits for clo
   }, null, {
     request: async (_key, url, body) => {
       calls.push({ url, body });
-      if (url === '/live/v1/voices') return { voices: [{ voice: 'original_voice' }] };
+      if (url === '/live/v1/voices') return {
+        voices: [{ voice: 'original_voice', provider: 'qwen_omni' }],
+        public_voices: [{ voice: 'vidu-xiaoya', provider: 'qwen_omni', language: 'zh' }],
+      };
+      if (url.startsWith('/live/v1/avatars?pager.page=')) {
+        const page = Number(new URL('https://api.vidu.cn' + url).searchParams.get('pager.page'));
+        if (page === 0) return { items: Array.from({ length: 100 }, (_, index) => ({
+          id: `a${index}`, name: `Avatar ${index}`, image_uri: index === 1 ? 'http://insecure' : 'https://example.com/avatar.png',
+          status: 'success', created_at: '2026-10-16T15:45:15Z',
+        })) };
+        if (page === 1) return { items: Array.from({ length: 3 }, (_, index) => ({ id: `b${index}`, status: 'success' })) };
+        return { items: [] };
+      }
       if (url === '/live/v1/voices/clone') return { voice: 'new_voice' };
       return { live: { id: '900719925474099312' }, rtc: { token: 'short-lived-rtc', user_id: 'visitor' } };
     },
@@ -57,7 +69,23 @@ test('admin can migrate the prompt and cloned voice; video session waits for clo
     assert.equal(saved.persona, '测试角色提示词');
     assert.equal(saved.configured, true);
     assert.doesNotMatch(JSON.stringify(saved), /vda_test_only/);
-    assert.deepEqual(await (await fetch(url + '/api/admin/assistant/call/voices', { headers: admin })).json(), { voices: ['original_voice'] });
+    assert.deepEqual(await (await fetch(url + '/api/admin/assistant/call/voices', { headers: admin })).json(), { voices: [
+      { voice: 'original_voice', provider: 'qwen_omni', shared: false },
+      { voice: 'vidu-xiaoya', provider: 'qwen_omni', shared: true },
+    ] });
+    assert.equal((await fetch(url + '/api/admin/assistant/call/avatars')).status, 401);
+    const avatarResponse = await fetch(url + '/api/admin/assistant/call/avatars', { headers: admin });
+    const avatarData = await avatarResponse.json();
+    assert.equal(avatarData.avatars.length, 103);
+    assert.equal(avatarData.avatars[1].imageUrl, '');
+    assert.deepEqual(avatarData.avatars[0], {
+      id: 'a0', name: 'Avatar 0', imageUrl: 'https://example.com/avatar.png',
+      status: 'success', createdAt: '2026-10-16T15:45:15Z',
+    });
+    assert.deepEqual(calls.filter(call => call.url.startsWith('/live/v1/avatars?')).map(call => call.url), [
+      '/live/v1/avatars?pager.page=0&pager.pagesz=100',
+      '/live/v1/avatars?pager.page=1&pager.pagesz=100',
+    ]);
     const clone = await fetch(url + '/api/admin/assistant/call/voices', { method: 'POST', headers: admin, body: JSON.stringify({
       audioUrl: 'https://example.com/voice.wav', name: 'new_voice', transcript: '', voiceProvider: 'qwen_omni',
     }) });
