@@ -33,3 +33,6 @@ deploy-package.zip
 # 构建产物（由服务器在部署时构建，不入库）
 server/server.cjs
 server/server.cjs.map
+
+# Dify 应用导出文件（含系统提示词，只在本地保留）
+dify/*.yml
