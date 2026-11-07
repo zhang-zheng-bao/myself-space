@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import type { AvatarCallSettings } from '../../server/avatar-call';
 
 type Config = AvatarCallSettings & { configured: boolean };
+type VoiceOption = { voice: string; provider: string; shared: boolean };
+type AvatarOption = { id: string; name: string; imageUrl: string; status: string; createdAt: string };
 const route = '/api/admin/assistant/call';
 const input = 'mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100';
 const button = 'rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-100 hover:bg-zinc-800 disabled:opacity-50';
@@ -19,7 +21,8 @@ export default function AvatarCallSettingsAdmin() {
   const [apiKey, setApiKey] = useState('');
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
-  const [voices, setVoices] = useState<string[]>([]);
+  const [voices, setVoices] = useState<VoiceOption[]>([]);
+  const [avatars, setAvatars] = useState<AvatarOption[]>([]);
   const [audioUrl, setAudioUrl] = useState('');
   const [voiceName, setVoiceName] = useState('');
   const [transcript, setTranscript] = useState('');
@@ -53,7 +56,7 @@ export default function AvatarCallSettingsAdmin() {
       event.preventDefault();
       void perform(async () => {
         const data = await request('/settings', json('PUT', { ...config, apiKey }));
-        setConfig(data); setBaseline(JSON.stringify(data)); if (apiKey) setVoices([]); setApiKey(''); setStatus('已保存。');
+        setConfig(data); setBaseline(JSON.stringify(data)); if (apiKey) { setVoices([]); setAvatars([]); } setApiKey(''); setStatus('已保存。');
       });
     }}>
       <fieldset disabled={busy} className="space-y-3 disabled:opacity-60">
@@ -98,12 +101,43 @@ export default function AvatarCallSettingsAdmin() {
           <div className={fields}>
             <label className="text-sm">原云端形象 ID<input maxLength={160} className={input} value={config.avatarId} onChange={e => update('avatarId', e.target.value)} /></label>
             <label className="text-sm">形象图片 HTTPS 链接<input type="url" maxLength={2048} className={input} value={config.imageUrl} placeholder="未填形象 ID 时使用" onChange={e => update('imageUrl', e.target.value)} /></label>
-            <label className="text-sm">音色名<input maxLength={128} className={input} list="assistant-avatar-voices" value={config.voice} onChange={e => update('voice', e.target.value)} /></label>
+            <label className="text-sm">音色名<input maxLength={128} className={input} list="assistant-avatar-voices" value={config.voice} onChange={e => {
+              const voice = e.target.value;
+              update('voice', voice);
+              const match = voices.find(item => item.voice === voice);
+              if (match?.provider === 'qwen_omni' || match?.provider === 'doubao') update('voiceProvider', match.provider);
+            }} /></label>
             {config.model === 'vidu-s2' && <label className="text-sm">原音色所属服务<select className={input} value={config.voiceProvider} onChange={e => update('voiceProvider', e.target.value as Config['voiceProvider'])}><option value="qwen_omni">Qwen Omni（默认）</option><option value="doubao">豆包</option></select></label>}
-            <datalist id="assistant-avatar-voices">{voices.map(voice => <option key={voice} value={voice} />)}</datalist>
+            <datalist id="assistant-avatar-voices">{voices.map(voice => <option key={voice.voice} value={voice.voice} label={`${voice.shared ? '公共' : '克隆'} · ${voice.provider}`} />)}</datalist>
             <div className="self-end"><button className={button} type="button" disabled={!config.configured} onClick={() => void perform(async () => {
-              const data = await request('/voices'); setVoices(data.voices); setStatus(data.voices.length ? `已读取 ${data.voices.length} 个云端克隆音色，可在音色名中选择。` : '当前账号没有云端克隆音色。');
+              const data = await request('/voices');
+              setVoices(data.voices);
+              const clones = data.voices.filter((voice: VoiceOption) => !voice.shared).length;
+              const shared = data.voices.filter((voice: VoiceOption) => voice.shared).length;
+              setStatus(data.voices.length ? `已读取 ${data.voices.length} 个音色（克隆 ${clones} 个，公共 ${shared} 个），可在音色名中选择。` : '当前账号没有可用音色。');
             })}>读取已有音色</button></div>
+            <div className="sm:col-span-2">
+              <button className={button} type="button" disabled={!config.configured} onClick={() => void perform(async () => {
+                const data = await request('/avatars');
+                setAvatars(data.avatars);
+                setStatus(data.avatars.length ? `已读取 ${data.avatars.length} 个形象，点击即可选用，记得保存。` : '当前账号没有形象。');
+              })}>读取账号形象</button>
+              {avatars.length > 0 && <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {avatars.map(avatar => {
+                  const name = avatar.name || `形象 ${avatar.id.slice(-4)}`;
+                  const selected = config.avatarId === avatar.id;
+                  return <button key={avatar.id} type="button" aria-pressed={selected} onClick={() => update('avatarId', avatar.id)}
+                    className={`overflow-hidden rounded-lg border bg-zinc-950 text-left transition hover:bg-zinc-900 ${selected ? 'border-emerald-500 ring-1 ring-emerald-500' : 'border-zinc-700'}`}>
+                    {avatar.imageUrl && <img className="h-32 w-full object-cover" src={avatar.imageUrl} alt={name} loading="lazy" referrerPolicy="no-referrer" />}
+                    <span className="block p-3">
+                      <span className="block text-sm text-zinc-100">{name}</span>
+                      <span className="mt-1 block text-xs text-zinc-400">{avatar.status}</span>
+                      <span className="mt-1 block font-mono text-xs text-zinc-500">{avatar.id}</span>
+                    </span>
+                  </button>;
+                })}
+              </div>}
+            </div>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={config.idleAction} onChange={e => update('idleAction', e.target.checked)} />待机时播放自然动作</label>
           </div>
         </details>
@@ -115,8 +149,9 @@ export default function AvatarCallSettingsAdmin() {
             <label className="text-sm">新音色名<input className={input} maxLength={64} value={voiceName} onChange={e => setVoiceName(e.target.value)} placeholder="字母、数字、下划线" /></label>
             <label className="sm:col-span-2 text-sm">参考音频原文（可选）<textarea className={input} rows={2} maxLength={4096} value={transcript} onChange={e => setTranscript(e.target.value)} /></label>
             <div><button className={button} type="button" disabled={!config.configured || !audioUrl.trim() || !voiceName.trim()} onClick={() => void perform(async () => {
-              const result = await request('/voices', json('POST', { audioUrl: audioUrl.trim(), name: voiceName.trim(), transcript, voiceProvider: config.model === 'vidu-s1' ? 'qwen_omni' : config.voiceProvider }));
-              setVoices(previous => [...new Set([...previous, result.voice])]); update('voice', result.voice);
+              const provider = config.model === 'vidu-s1' ? 'qwen_omni' : config.voiceProvider;
+              const result = await request('/voices', json('POST', { audioUrl: audioUrl.trim(), name: voiceName.trim(), transcript, voiceProvider: provider }));
+              setVoices(previous => [...previous.filter(voice => voice.voice !== result.voice), { voice: result.voice, provider, shared: false }]); update('voice', result.voice);
               setAudioUrl(''); setVoiceName(''); setTranscript(''); setStatus('音色已克隆并选中，请保存通话设置。');
             })}>克隆音色（可能消耗额度）</button></div>
           </div>
