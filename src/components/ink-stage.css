@@ -42,11 +42,11 @@
   [data-theme="ink"] .ink-paper--bottom { display: none; }
   [data-theme="ink"] .ink-mountains, [data-theme="ink"] .ink-smoke { display: block; }
   [data-theme="ink"] .ink-mountains--br {
-    right: 0; bottom: 0; width: calc(560 * var(--u)); opacity: .92;
-    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 38%);
-    mask-image: linear-gradient(90deg, transparent 0, #000 38%);
+    right: 0; bottom: 0; width: calc(420 * var(--u)); opacity: .92;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 25%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 25%);
   }
-  [data-theme="ink"] .ink-mountains--left { left: calc(-20 * var(--u)); top: calc(200 * var(--u)); width: calc(240 * var(--u)); opacity: .85; }
+  [data-theme="ink"] .ink-mountains--left { left: calc(-10 * var(--u)); top: calc(217 * var(--u)); width: calc(190 * var(--u)); opacity: .6; }
   [data-theme="ink"] .ink-smoke { top: calc(10 * var(--u)); right: calc(-30 * var(--u)); width: calc(560 * var(--u)); opacity: .95; }
   /* 守护者：3DCG 立绘，边缘用墨晕渐隐融进底子。 */
   [data-theme="ink"] .ink-guardian--dark {
