@@ -4,13 +4,12 @@ import { Mic, MicOff, Phone, PhoneOff } from 'lucide-react';
 type Rtc = {
   on(name: string, handler: (...args: any[]) => void): void;
   setChannelProfile(profile: string): void | Promise<void>;
-  setDefaultPublishLocalAudioStream(enabled: boolean): void;
-  setDefaultPublishLocalVideoStream(enabled: boolean): void;
   setDefaultSubscribeAllRemoteAudioStreams(enabled: boolean): void;
   setDefaultSubscribeAllRemoteVideoStreams(enabled: boolean): void;
   joinChannel(token: string, name: string): Promise<void>;
   leaveChannel(): Promise<void>;
   publishLocalAudioStream(enabled: boolean): Promise<void>;
+  publishLocalVideoStream(enabled: boolean): Promise<void>;
   setRemoteViewConfig(video: HTMLVideoElement, user: string, stream: number): void;
   destroy(): void;
 };
@@ -135,8 +134,9 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
                 engine.on('bye', () => { if (!signal.aborted) fail('音视频连接已断开。'); });
                 await engine.setChannelProfile('communication');
                 signal.throwIfAborted();
-                engine.setDefaultPublishLocalAudioStream(true);
-                engine.setDefaultPublishLocalVideoStream(false);
+                // AliRTC 7.1.9 has no setDefaultPublish* methods; publish flags set before join become the defaults.
+                await engine.publishLocalVideoStream(false);
+                signal.throwIfAborted();
                 engine.setDefaultSubscribeAllRemoteAudioStreams(true);
                 engine.setDefaultSubscribeAllRemoteVideoStreams(true);
                 await engine.joinChannel(data.token, data.userId);
