@@ -12,6 +12,9 @@ export function InkScenery() {
     <div className="ink-scenery" aria-hidden="true">
     <img className="ink-paper ink-paper--top" src="/themes/ink/paper.webp" alt="" />
     <img className="ink-plum" src="/themes/ink/plum-corner.png" alt="" />
+    <img className="ink-mountains ink-mountains--left" src="/themes/ink/mountains-left.webp" alt="" />
+    <img className="ink-mountains ink-mountains--br" src="/themes/ink/mountains-br.webp" alt="" />
+    <img className="ink-smoke" src="/themes/ink/red-smoke.webp" alt="" />
     <img className="ink-guardian ink-guardian--light" src="/themes/ink/guardian-light.webp" alt="" />
     <img className="ink-guardian ink-guardian--dark" src="/themes/ink/guardian-dark.webp" alt="" />
     {Array.from({length:26},(_,i)=><i className="ink-mote" key={i} style={{left:`${i%2 ? 84+(i*7%15) : (i*13%31)}%`,top:`${(i*23)%99}%`,animationDelay:`-${i*.63}s`,animationDuration:`${7+i%5}s`}} />)}

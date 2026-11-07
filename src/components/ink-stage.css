@@ -27,7 +27,7 @@
     position: fixed;
     inset: 0;
     overflow: hidden;
-    background: #111;
+    background: #111 url("/themes/ink/paper-dark.webp") 0 0 / 512px repeat;
     color: var(--ink-cream);
   }
 
@@ -38,6 +38,16 @@
   /* 左上角一枝红梅，压在纸角上斜伸出来，不进入文字区。 */
   [data-theme="ink"] .ink-plum { position: absolute; left: calc(-14 * var(--u)); top: calc(-8 * var(--u)); width: calc(250 * var(--u)); z-index: 1; }
   [data-theme="ink"] .ink-paper--bottom { right: calc(-14 * var(--u)); bottom: calc(-34 * var(--u)); width: calc(320 * var(--u)); }
+  /* 右下角远山取代纸角；左侧淡墨群山衬在人物身后；朱红烟雾从右上守护者发梢斜落。 */
+  [data-theme="ink"] .ink-paper--bottom { display: none; }
+  [data-theme="ink"] .ink-mountains, [data-theme="ink"] .ink-smoke { display: block; }
+  [data-theme="ink"] .ink-mountains--br {
+    right: 0; bottom: 0; width: calc(560 * var(--u)); opacity: .8; filter: brightness(.82);
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 38%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 38%);
+  }
+  [data-theme="ink"] .ink-mountains--left { left: calc(-30 * var(--u)); top: calc(140 * var(--u)); width: calc(440 * var(--u)); opacity: .42; }
+  [data-theme="ink"] .ink-smoke { top: calc(44 * var(--u)); right: calc(50 * var(--u)); width: calc(400 * var(--u)); opacity: .9; }
   /* 守护者：3DCG 立绘，边缘用墨晕渐隐融进底子。 */
   [data-theme="ink"] .ink-guardian--dark {
     top: calc(-36 * var(--u));
