@@ -81,7 +81,7 @@ async function provider(key: string, pathname: string, body?: unknown, signal?: 
   return result;
 }
 
-const dial = (url: string) => new WebSocket(url, { handshakeTimeout: 10_000, maxPayload: 256 * 1024, followRedirects: false });
+const dial = (url: string, key: string) => new WebSocket(url, { headers: { Authorization: `Token ${key}` }, handshakeTimeout: 10_000, maxPayload: 256 * 1024, followRedirects: false });
 
 export function registerAvatarCall(app: Express, requireAdmin: RequestHandler, supabase: SupabaseClient | null,
   transport = { request: provider, dial },
@@ -264,8 +264,8 @@ export function registerAvatarCall(app: Express, requireAdmin: RequestHandler, s
       }
       liveId = session.live.id;
       rtc = { token: session.rtc.token, userId: session.rtc.user_id };
-      const query = new URLSearchParams({ live_id: liveId, conn_id: conn, authorization: key });
-      upstream = transport.dial(`wss://api.vidu.cn/live/ws/live/connect?${query}`);
+      const query = new URLSearchParams({ live_id: liveId, conn_id: conn });
+      upstream = transport.dial(`wss://api.vidu.cn/live/ws/live/connect?${query}`, key);
       const init = () => { if (upstream?.readyState === WebSocket.OPEN && !done) signal(1, { conn_init: { version: 1 } }); };
       upstream.on('open', init);
       upstream.on('pong', () => { pongs = true; });
