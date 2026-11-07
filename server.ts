@@ -1424,7 +1424,7 @@ async function startServer() {
 
   app.use(express.json({ limit: "60mb" }));
   registerToolSettings(app, requireAdmin);
-  registerAvatarCall(app, requireAdmin, supabase);
+  registerAvatarCall(app, requireAdmin, supabase, undefined, { stripSignature: stripCosSignature, sign: signCosUrl });
   registerWanchuang(app, requireAdmin);
   app.use(express.urlencoded({ limit: "60mb", extended: true }));
   app.use((_req, res, next) => {

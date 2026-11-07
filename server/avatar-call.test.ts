@@ -7,6 +7,7 @@ import test from 'node:test';
 import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
 import { registerAvatarCall } from './avatar-call';
+import { readToolSettings, writeToolSettings } from './tool-settings';
 
 test('admin can migrate the prompt and cloned voice; video session waits for cloud readiness and hangs up on disconnect', { timeout: 8000 }, async () => {
   const folder = mkdtempSync(path.join(os.tmpdir(), 'myspace-avatar-'));
@@ -92,3 +93,66 @@ test('admin can migrate the prompt and cloned voice; video session waits for clo
     delete process.env.TOOL_SETTINGS_SECRET;
   }
 });
+
+for (const ownCos of [true, false]) {
+  test(`media URLs: ${ownCos ? 'own COS signatures are refreshed' : 'third-party query strings are preserved'}`, async () => {
+    const folder = mkdtempSync(path.join(os.tmpdir(), 'myspace-avatar-media-'));
+    const previousFile = process.env.TOOL_SETTINGS_FILE;
+    const previousSecret = process.env.TOOL_SETTINGS_SECRET;
+    process.env.TOOL_SETTINGS_FILE = path.join(folder, 'test-settings.enc');
+    process.env.TOOL_SETTINGS_SECRET = 'test-only-encryption-secret-32-characters';
+    const ownOrigin = 'https://test-bucket.cos.example.com';
+    const origin = ownCos ? ownOrigin : 'https://third-party.example.com';
+    const imageUrl = `${origin}/avatar.png?q-signature=expired&custom=keep%2Bme`;
+    const audioUrl = `${origin}/reference.wav?q-signature=expired&custom=keep%2Bme`;
+    const stripSignature = (url: string) => url.startsWith(ownOrigin + '/') ? url.split('?')[0] : url;
+    const sign = (url: string) => url.startsWith(ownOrigin + '/') ? `${stripSignature(url)}?q-signature=fresh` : url;
+    const signedInputs: string[] = [];
+    const calls: { url: string; body: any }[] = [];
+    const app = express();
+    app.use(express.json());
+    registerAvatarCall(app, (_req, _res, next) => next(), null, {
+      request: async (_key, url, body) => {
+        calls.push({ url, body });
+        if (url === '/live/v1/voices/clone') return { voice: 'test_voice' };
+        // Stop before WebSocket setup; this test checks the outbound payload only.
+        return {};
+      },
+      dial: () => { throw new Error('Unexpected WebSocket connection'); },
+    }, { stripSignature, sign: url => { signedInputs.push(url); return sign(url); } });
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const headers = { 'Content-Type': 'application/json' };
+    try {
+      const settings = '/api/admin/assistant/call/settings';
+      const initial = await (await fetch(base + settings)).json();
+      const response = await fetch(base + settings, { method: 'PUT', headers, body: JSON.stringify({
+        ...initial, apiKey: 'vda_test_only', enabled: true, persona: 'test', imageUrl,
+      }) });
+      assert.equal(response.status, 200);
+      assert.equal((await response.json()).imageUrl, stripSignature(imageUrl));
+      assert.equal(readToolSettings().avatarCall?.imageUrl, stripSignature(imageUrl));
+      // Also cover legacy settings that already contain an expired signature.
+      const stored = readToolSettings();
+      stored.avatarCall!.imageUrl = imageUrl;
+      writeToolSettings(stored);
+      const clone = await fetch(base + '/api/admin/assistant/call/voices', { method: 'POST', headers,
+        body: JSON.stringify({ audioUrl, name: 'test_voice', transcript: '', voiceProvider: 'qwen_omni' }),
+      });
+      assert.equal(clone.status, 200);
+      assert.equal(calls.find(call => call.url === '/live/v1/voices/clone')?.body.audio_url, sign(audioUrl));
+      const call = await fetch(base + '/api/assistant/call', { method: 'POST' });
+      await call.text();
+      assert.equal(calls.find(call => call.url === '/live/s_avatar/realtime')?.body.avatar.image_uri, sign(imageUrl));
+      assert.deepEqual(signedInputs, [audioUrl, imageUrl]);
+      assert.equal(readToolSettings().avatarCall?.imageUrl, imageUrl, 'Signing at call time must not rewrite stored settings');
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      rmSync(folder, { recursive: true, force: true });
+      if (previousFile === undefined) delete process.env.TOOL_SETTINGS_FILE; else process.env.TOOL_SETTINGS_FILE = previousFile;
+      if (previousSecret === undefined) delete process.env.TOOL_SETTINGS_SECRET; else process.env.TOOL_SETTINGS_SECRET = previousSecret;
+    }
+  });
+}

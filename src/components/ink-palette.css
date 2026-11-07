@@ -1,0 +1,151 @@
+/* 染墨配色补层：只改颜色，不改字号、布局、媒体、纸张或装饰。
+ * html tokens 供 body portal / 原生 dialog 继承；站点自身也声明，覆盖旧主题局部值。
+ * 不使用 [class*=text-] 等子串通配：以下 [class~=...] 只匹配完整 utility token，
+ * /80 等透明度显式保留。仅限前台内容和作品弹窗，不触及 admin、歌词和 PPT 内容。
+ */
+html[data-site-theme="ink"],
+html[data-site-theme="ink"] .portfolio-site[data-theme="ink"] {
+  --portfolio-bg: #101010;
+  --portfolio-panel: #141312;
+  --portfolio-text: #e9e2d1;
+  --portfolio-muted: #aaa092;
+  --portfolio-accent: #d6bb8f;
+  --portfolio-accent-soft: #d6bb8f1f;
+  --portfolio-line: #cdbf9e2b;
+  --portfolio-line-soft: #cdbf9e19;
+  --ink-palette-raised: #1b1915;
+  --ink-palette-hover: #242019;
+  --ink-palette-on-accent: #211b13;
+  --ink-palette-danger: #9b4540;
+  --lyrics-idle: #aaa092;
+  --lyrics-accent: #f1e0bd;
+  --lyrics-glow: 214 187 143;
+}
+
+/* 栏目页眉、联系图标、作品 badge 与详情标签。诗签印章保留朱红语义。 */
+html[data-site-theme="ink"] :is(.content-panel, .work-modal__panel) :is(
+  [class~="text-emerald-200"], [class~="text-emerald-300"], [class~="text-emerald-400"],
+  [class~="text-teal-300"], [class~="text-sky-300"], [class~="text-rose-300"], [class~="text-amber-300"]
+) { color: var(--portfolio-accent) !important; }
+html[data-site-theme="ink"] :is(.content-panel, .work-modal__panel) :is(
+  [class~="text-emerald-300/80"], [class~="text-teal-300/80"],
+  [class~="text-sky-300/80"], [class~="text-rose-300/80"], [class~="text-amber-300/80"]
+) { color: rgb(214 187 143 / .8) !important; }
+
+/* 前台正文的暖灰阶；screen 限制避免侵入简历打印的白纸配色。
+ * 不匹配 bg-white、canvas、iframe、slide-player__canvas 或自定义诗签纸色。 */
+@media screen {
+  html[data-site-theme="ink"] .content-panel :is([class~="text-white"], [class~="text-zinc-100"], [class~="text-zinc-200"]),
+  html[data-site-theme="ink"] .content-panel .portfolio-card__title { color: var(--portfolio-text); }
+  html[data-site-theme="ink"] .content-panel [class~="text-zinc-300"],
+  html[data-site-theme="ink"] .content-panel .portfolio-card__description { color: #c9c0b1; }
+  html[data-site-theme="ink"] .content-panel :is([class~="text-zinc-400"], [class~="text-zinc-500"]) { color: var(--portfolio-muted); }
+  html[data-site-theme="ink"] .content-panel [class~="text-zinc-600"] { color: #82796c; }
+  html[data-site-theme="ink"] .content-panel :is([class~="bg-zinc-950"], [class~="bg-zinc-900"]) { background-color: var(--portfolio-panel); }
+  html[data-site-theme="ink"] .content-panel [class~="bg-zinc-950/60"] { background-color: rgb(20 19 18 / .6); }
+  html[data-site-theme="ink"] .content-panel [class~="bg-zinc-950/80"] { background-color: rgb(20 19 18 / .8); }
+  html[data-site-theme="ink"] .content-panel [class~="bg-zinc-900/70"] { background-color: rgb(27 25 21 / .7); }
+  html[data-site-theme="ink"] .content-panel :is(.work-card, .gallery-card) { background-color: var(--portfolio-panel); }
+}
+
+/* 只重着色已有边线与选中底色，不新增边框。 */
+html[data-site-theme="ink"] .content-panel nav[aria-label="分页"] button[aria-current="page"],
+html[data-site-theme="ink"] .content-panel button[class~="border-emerald-300/40"] {
+  border-color: rgb(214 187 143 / .4);
+  background-color: var(--portfolio-accent-soft);
+  color: var(--portfolio-accent);
+}
+html[data-site-theme="ink"] .work-card [class~="border-emerald-300/25"] {
+  border-color: rgb(214 187 143 / .25);
+  background-color: rgb(35 29 20 / .75);
+  color: var(--portfolio-accent);
+}
+/* FilterRail 没有 aria-selected，限定分类容器与完整 active utility 组合。 */
+html[data-site-theme="ink"] .content-panel :is(#module-category-options, [class~="p-1.5"]) button[class~="border-zinc-700"][class~="bg-zinc-900"] {
+  border-color: rgb(214 187 143 / .4);
+  background-color: var(--portfolio-accent-soft);
+  color: var(--portfolio-accent);
+}
+html[data-site-theme="ink"] .content-panel [class~="hover:border-amber-800"]:hover { border-color: var(--portfolio-accent); }
+html[data-site-theme="ink"] .content-panel [class~="focus-visible:ring-emerald-400/60"]:focus-visible { --tw-ring-color: rgb(214 187 143 / .6); }
+html[data-site-theme="ink"] .work-modal__panel [class~="border-emerald-300"] { border-color: var(--portfolio-accent); }
+
+/* 工具箱：包括搜索、能力卡、流程和空结果；外链应用及其品牌图片不改。 */
+html[data-site-theme="ink"] .toolbox { --tb-muted: var(--portfolio-muted); color: var(--portfolio-text); }
+html[data-site-theme="ink"] .toolbox :is(.tb-eyebrow, .tb-update, .tb-card-arrow, .tb-capability-arrow, .tb-step-arrow, .tb-capability small, .tb-journey small) { color: var(--portfolio-muted); }
+html[data-site-theme="ink"] .toolbox :is(.tb-heading h2, .tb-card-name, .tb-card-copy, .tb-no-results h3, .tb-search input) { color: var(--portfolio-text); }
+html[data-site-theme="ink"] .toolbox :is(.tb-title-icon, .tb-section-title h3 > svg, .tb-step-icon, .tb-journey em, .tb-no-results button) { color: var(--portfolio-accent); }
+html[data-site-theme="ink"] .toolbox :is(.tb-capability, .tb-journey, .tb-coming, .tb-update) {
+  background-color: var(--portfolio-panel);
+  border-color: var(--portfolio-line);
+}
+html[data-site-theme="ink"] .toolbox :is(.tb-card, .tb-capability):hover,
+html[data-site-theme="ink"] .toolbox .tb-capability:active { background-color: var(--ink-palette-hover); border-color: #a18a64; }
+html[data-site-theme="ink"] .toolbox :is(.tb-coming-icon, .tb-step-icon) { border-color: var(--portfolio-line); color: var(--portfolio-accent); }
+html[data-site-theme="ink"] .toolbox :is(.tb-capability-icon--cyan, .tb-capability-icon--violet, .tb-capability-icon--amber, .tb-amber-label) {
+  background-color: #2b251b;
+  color: var(--portfolio-accent);
+  border-color: #796548;
+}
+html[data-site-theme="ink"] .toolbox .tb-tabs button[aria-pressed="true"] { background-color: #403323; color: #f1e0bd; }
+html[data-site-theme="ink"] .toolbox .tb-search:focus-within { border-color: var(--portfolio-accent); }
+html[data-site-theme="ink"] .toolbox .tb-search input::placeholder { color: var(--portfolio-muted); }
+html[data-site-theme="ink"] .toolbox :is(button, a, .tb-heading h2):focus-visible { outline-color: var(--portfolio-accent); }
+/* 自绘插画的硬编码 presentation attributes；不覆盖 none / currentColor / url(#tb-dots)。 */
+html[data-site-theme="ink"] .toolbox .tb-illustration :is([stroke="#334947"], [stroke="#6b8580"]) { stroke: #8c806d; }
+html[data-site-theme="ink"] .toolbox .tb-illustration :is([stroke="#6ed4ee"], [stroke="#ae91e0"], [stroke="#be9cf4"], [stroke="#d7b66d"], [stroke="#e2bb68"], [stroke="#62f5ce"]) { stroke: var(--portfolio-accent); }
+html[data-site-theme="ink"] .toolbox .tb-illustration :is([fill="#0c1618"], [fill="#111d1e"], [fill="#0a1215"]) { fill: var(--ink-palette-raised); }
+html[data-site-theme="ink"] .toolbox .tb-illustration :is([fill="#102d36"], [fill="#27213b"], [fill="#322b1c"]) { fill: #30291e; }
+html[data-site-theme="ink"] .toolbox .tb-illustration [fill="#6ed4ee"] { fill: var(--portfolio-accent); }
+html[data-site-theme="ink"] .toolbox .tb-dot-field [fill="#29413d"] { fill: #625542; }
+
+/* 曲目列表与循环模式（不是歌词区域）。 */
+html[data-site-theme="ink"] .music-queue { background-color: var(--ink-palette-raised); color: var(--portfolio-text); border-color: #796548; }
+html[data-site-theme="ink"] .music-queue :is(header, .music-queue__repeat, .music-queue__repeat button + button, .music-queue__track-action) { border-color: var(--portfolio-line); }
+html[data-site-theme="ink"] .music-queue :is(header small, header button, .music-queue__number, .music-queue__text small, .music-queue__empty) { color: var(--portfolio-muted); }
+html[data-site-theme="ink"] .music-queue__cover { background-color: #30291e; }
+html[data-site-theme="ink"] .music-queue__track:hover { background-color: var(--ink-palette-hover); }
+html[data-site-theme="ink"] .music-queue header button[aria-pressed="true"],
+html[data-site-theme="ink"] .music-queue__track[data-current] { background-color: var(--portfolio-accent-soft); color: var(--portfolio-accent); }
+html[data-site-theme="ink"] .music-queue__track-action { color: var(--portfolio-text); }
+html[data-site-theme="ink"] .music-queue__track:is(:hover, [data-current]) .music-queue__track-action { border-color: #a18a64; color: var(--portfolio-accent); box-shadow: none; }
+html[data-site-theme="ink"] .music-queue__track[data-current] .music-queue__track-action { background-color: var(--portfolio-accent-soft); }
+html[data-site-theme="ink"] .music-queue button:focus-visible { outline-color: var(--portfolio-accent); }
+
+/* ImageReader：只改控制层，原图与缩略图本身保持原色。 */
+html[data-site-theme="ink"] .notes-reader :is(button, .notes-more summary) { color: var(--portfolio-muted); }
+html[data-site-theme="ink"] .notes-reader :is(button, .notes-more summary):hover { color: var(--portfolio-text); background-color: var(--portfolio-accent-soft); }
+html[data-site-theme="ink"] .notes-reader .notes-header-actions button[aria-pressed="true"],
+html[data-site-theme="ink"] .notes-reader button[aria-pressed="true"] { color: var(--portfolio-accent); background-color: var(--portfolio-accent-soft); }
+html[data-site-theme="ink"] .notes-thumbnails button[aria-pressed="true"] { border-color: var(--portfolio-accent); }
+html[data-site-theme="ink"] .notes-reader :is(.notes-zoom-select, .notes-menu button, .notes-menu a) { color: var(--portfolio-text); }
+html[data-site-theme="ink"] .notes-reader :is(.notes-zoom-select option, .notes-menu) { background-color: var(--ink-palette-raised); }
+html[data-site-theme="ink"] .notes-reader .notes-menu { border-color: var(--portfolio-line); }
+html[data-site-theme="ink"] .notes-reader :is(.notes-controls, .notes-description, .notes-shortcuts, .notes-image-dimensions) { color: var(--portfolio-muted); }
+html[data-site-theme="ink"] .notes-reader :is(button, a, summary):focus-visible { outline-color: var(--portfolio-accent); }
+
+/* SlidePlayer 仅外壳和工具条；__canvas / __page / PPT 的 DOM 不在选择范围。 */
+html[data-site-theme="ink"] .slide-player { background-color: #101010f7; color: var(--portfolio-text); }
+html[data-site-theme="ink"] .slide-player[data-fullscreen] { background-color: #000; }
+html[data-site-theme="ink"] :is(.slide-player__btn, .slide-player__select) { background-color: #1b1915cc; color: var(--portfolio-text); }
+html[data-site-theme="ink"] .slide-player__btn[aria-pressed="true"] { color: var(--portfolio-accent); background-color: var(--portfolio-accent-soft); }
+html[data-site-theme="ink"] .slide-player__select option { background-color: var(--ink-palette-raised); }
+html[data-site-theme="ink"] .slide-player__bar [class~="text-white"],
+html[data-site-theme="ink"] .slide-player__foot [class~="text-zinc-300"] { color: var(--portfolio-text); }
+html[data-site-theme="ink"] :is(.slide-player__bar, .slide-player__overlay) [class~="text-zinc-500"] { color: var(--portfolio-muted); }
+html[data-site-theme="ink"] .slide-player__overlay :is([class~="text-emerald-300"], [class~="text-amber-200"]) { color: var(--portfolio-accent); }
+html[data-site-theme="ink"] .slide-player :is(.slide-player__btn, .slide-player__select):focus-visible { outline-color: var(--portfolio-accent); }
+
+/* 助手聊天与通话：保留危险操作辨识，真实头像和通话视频不重着色。 */
+html[data-site-theme="ink"] :is(.shiba-assistant__panel, .shiba-assistant__menu) { background-color: #141312f7; }
+html[data-site-theme="ink"] .shiba-assistant__message[data-role="user"] .shiba-assistant__bubble,
+html[data-site-theme="ink"] .shiba-assistant__composer button { color: var(--ink-palette-on-accent); }
+html[data-site-theme="ink"] .shiba-assistant__suggestions button { border-color: rgb(214 187 143 / .3); }
+html[data-site-theme="ink"] .shiba-assistant__composer:focus-within { border-color: rgb(214 187 143 / .45); }
+html[data-site-theme="ink"] .assistant-video-call__stage { background-color: var(--ink-palette-raised); color: var(--portfolio-text); }
+html[data-site-theme="ink"] .assistant-video-call__state small { color: var(--portfolio-muted); }
+html[data-site-theme="ink"] .assistant-video-call__controls button { color: var(--portfolio-text); }
+html[data-site-theme="ink"] .assistant-video-call__controls button[data-primary] { background-color: var(--portfolio-accent); border-color: var(--portfolio-accent); color: var(--ink-palette-on-accent); }
+html[data-site-theme="ink"] .assistant-video-call__controls button[data-danger] { background-color: var(--ink-palette-danger); border-color: var(--ink-palette-danger); color: #fff0e0; }
+html[data-site-theme="ink"] .assistant-video-call__controls button:focus-visible { outline-color: var(--portfolio-accent); }
+html[data-site-theme="ink"] .mobile-viewing-notice { background-color: var(--ink-palette-raised); color: #c9c0b1; }

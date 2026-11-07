@@ -1,0 +1,29 @@
+/* 歌词 portal 到 body，按 html 主题定位，不依赖首页容器。 */
+html[data-site-theme="ink"] .now-playing-lyrics {
+  --lyrics-unit: min(calc(100vw / 1672), calc(100vh / 941));
+  top: calc(275 * var(--lyrics-unit));
+  left: calc(24 * var(--lyrics-unit));
+  right: auto;
+  width: calc(148 * var(--lyrics-unit));
+  color: var(--lyrics-idle, #aaa092);
+  font-family: "Ink Serif", "Noto Serif SC", STSong, serif;
+}
+html[data-site-theme="ink"] .now-playing-lyrics__body {height:calc(210 * var(--lyrics-unit));}
+html[data-site-theme="ink"] .now-playing-lyrics__list {padding:80px 3px;}
+html[data-site-theme="ink"] .now-playing-lyrics__line {color:var(--lyrics-idle,#aaa092);font-size:12px;line-height:1.8;}
+html[data-site-theme="ink"] .now-playing-lyrics__line[data-active] {
+  color:var(--lyrics-accent,#f1e0bd);
+  font-size:14px;
+  text-shadow:0 0 10px rgb(var(--lyrics-glow,214 187 143) / .18);
+}
+@media(max-width:1100px) {
+  html[data-site-theme="ink"] .now-playing-lyrics {
+    left:16px;right:auto;top:auto;bottom:18px;width:min(260px,calc(100vw - 32px));
+    padding:8px 12px;background:#101010e8;border-radius:8px;
+  }
+  html[data-site-theme="ink"] .now-playing-lyrics__body {height:96px;}
+  html[data-site-theme="ink"] .now-playing-lyrics__list {padding:28px 0;}
+}
+@media(prefers-reduced-motion:reduce) {
+  html[data-site-theme="ink"] .now-playing-lyrics__char {transform:none !important;transition:none;}
+}

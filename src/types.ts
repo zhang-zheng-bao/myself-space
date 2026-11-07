@@ -174,7 +174,7 @@ export type SectionKey = "intro" | "resume" | "works" | "cases" | "ai" | "toolbo
  * 栏目 key 的固有顺序（sectionOrder 缺省时就用它）。
  * 新栏目必须加在这里，否则 normalizeSectionOrder 会把它当未知 key 过滤掉。
  */
-export const sectionKeys: SectionKey[] = ["intro", "resume", "works", "ai", "cases", "toolbox", "prospects", "posts", "slides", "treasures", "poems", "contact"];
+export const sectionKeys: SectionKey[] = ["intro", "resume", "works", "ai", "cases", "prospects", "posts", "slides", "treasures", "poems", "contact", "toolbox"];
 
 export interface SectionMeta {
   key: SectionKey;

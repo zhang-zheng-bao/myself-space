@@ -34,6 +34,8 @@ import { isInstrumental } from "./musicMetadata";
 import TimelineArc from "./components/TimelineArc";
 import EntranceCinematic from "./components/EntranceCinematic";
 import { InkCharacter, InkScenery } from "./components/InkTheme";
+import InkIntro from "./components/InkIntro";
+import { InkArrowIcon, InkBookIcon, InkMailIcon } from "./components/InkIcons";
 import ShibaAssistant from "./components/ShibaAssistant";
 import PostFeed, { ImageReader } from "./components/PostFeed";
 import { defaultCaseWorks, casePageUrl } from "./caseStudies";
@@ -59,6 +61,7 @@ const navItems: { key: TabKey; label: string; sub: string }[] = [
   { key: "treasures", label: "我的珍藏", sub: "TREASURES" },
   { key: "poems", label: "诗与惆怅", sub: "POEMS" },
   { key: "contact", label: "联系方式", sub: "CONTACT" },
+  { key: "toolbox", label: "工具箱", sub: "TOOLBOX" },
 ];
 
 const workCategories = [
@@ -666,6 +669,26 @@ function AudioBlock({ tracks, autoplay, compact = false, onAutoplaySettled }: { 
     setTrackIndex(index);
   };
 
+  const seekMusic = async (time: number) => {
+    const audio = audioRef.current;
+    if (!audio || !currentTrack || !Number.isFinite(time)) return;
+    const nextTime = Math.max(0, Math.min(time, Number.isFinite(audio.duration) ? audio.duration : time));
+    cancelAnimationFrame(fadeFrameRef.current);
+    audio.volume = 1;
+    audio.currentTime = nextTime;
+    setCurrentTime(nextTime);
+    setPlaybackError("");
+    try {
+      await audio.play();
+      setIsPlaying(true);
+      setAutoplayBlocked(false);
+    } catch {
+      setIsPlaying(false);
+      setAutoplayBlocked(true);
+      setPlaybackError("播放失败，请点击播放重试");
+    }
+  };
+
   const seekToLyric = async (line: LyricLine) => {
     const audio = audioRef.current;
     if (!audio || !currentTrack) return;
@@ -762,7 +785,7 @@ function AudioBlock({ tracks, autoplay, compact = false, onAutoplaySettled }: { 
         <button type="button" data-track="music:previous" onClick={() => playIndex(trackIndex - 1)} disabled={playlist.length <= 1} className="hero-audio__skip" aria-label="上一首"><SkipBack size={14} /></button>
         <button type="button" data-track="music:next" onClick={() => playIndex(trackIndex + 1)} disabled={playlist.length <= 1} className="hero-audio__skip" aria-label="下一首"><SkipForward size={14} /></button>
         <button ref={queueButtonRef} type="button" data-track="music:queue" className="hero-audio__queue" aria-label="音乐列表" title="音乐列表" aria-expanded={queueOpen} onClick={() => setQueueOpen(value => !value)}><ListMusic size={17} /></button>
-        <div className="hero-audio__progress"><span style={{ width: `${playbackPercent}%` }} /><input type="range" min={0} max={duration || 0} step={0.1} value={Math.min(currentTime, duration || 0)} disabled={!duration} aria-label="音乐进度" onChange={event => { const time = Number(event.target.value); if (audioRef.current) audioRef.current.currentTime = time; setCurrentTime(time); }} /></div>
+        <div className="hero-audio__progress"><span style={{ width: `${playbackPercent}%` }} /><input type="range" min={0} max={duration || 0} step={0.1} value={Math.min(currentTime, duration || 0)} disabled={!duration} aria-label="音乐进度" onChange={event => { void seekMusic(Number(event.target.value)); }} /></div>
       </div>
       {queueOpen && <section className="music-queue" aria-label="音乐列表">
         <header><strong>音乐列表 <small>{playlist.length} 首</small></strong>
@@ -815,12 +838,12 @@ function AudioBlock({ tracks, autoplay, compact = false, onAutoplaySettled }: { 
                           className="now-playing-lyrics__char"
                           style={{
                             color: active
-                              ? `color-mix(in srgb, rgb(164 175 173) ${Math.round((1 - (charProgress[charIndex] || 0)) * 100)}%, rgb(98 245 206))`
+                              ? `color-mix(in srgb, var(--lyrics-idle, rgb(164 175 173)) ${Math.round((1 - (charProgress[charIndex] || 0)) * 100)}%, var(--lyrics-accent, rgb(98 245 206)))`
                               : index < activeLyricIndex
-                                ? "rgb(98 245 206)"
+                                ? "var(--lyrics-accent, rgb(98 245 206))"
                                 : undefined,
                             textShadow: active && (charProgress[charIndex] || 0) > 0.35
-                              ? `0 0 ${Math.round(5 + (charProgress[charIndex] || 0) * 8)}px rgba(98,245,206,${0.12 + (charProgress[charIndex] || 0) * 0.25})`
+                              ? `0 0 ${Math.round(5 + (charProgress[charIndex] || 0) * 8)}px rgb(var(--lyrics-glow, 98 245 206) / ${0.12 + (charProgress[charIndex] || 0) * 0.25})`
                               : undefined,
                             transform: active && (charProgress[charIndex] || 0) > 0 && (charProgress[charIndex] || 0) < 1
                               ? `translateY(${(1 - (charProgress[charIndex] || 0)) * 1.2}px)`
@@ -1222,15 +1245,15 @@ function WorkModal({ work, onClose, namespace = "works" }: { work: Work; onClose
   const images = work.images || [];
   const currentImage = images[imageIndex];
   return (
-    <div data-analytics-kind="work" data-analytics-key={contentIdentity(namespace, work)} data-analytics-title={work.title} className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6">
+    <div data-analytics-kind="work" data-analytics-key={contentIdentity(namespace, work)} data-analytics-title={work.title} className="work-modal fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6">
       <button className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={onClose} aria-label="关闭详情" />
-      <div className="relative flex max-h-[90vh] w-full max-w-4xl flex-col overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl md:flex-row">
+      <div className="work-modal__panel relative flex max-h-[90vh] w-full max-w-4xl flex-col overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl md:flex-row">
         <button onClick={onClose} className="absolute right-4 top-4 z-10 rounded-full border border-zinc-800 bg-zinc-900/80 p-2 text-zinc-300 hover:text-white" aria-label="关闭"><X size={16} /></button>
         <div className="flex w-full flex-col justify-center border-b border-zinc-900 bg-black md:w-1/2 md:border-b-0 md:border-r">
           {work.videoUrl ? (
             <div className="space-y-4 p-4 md:p-6">
               <span className="block font-mono text-[10px] uppercase tracking-widest text-emerald-300/80">在线放映 / VIDEO PLAYER</span>
-              <video data-analytics-key={videoIdentity(namespace, work)} data-analytics-title={work.title} src={work.videoUrl} poster={currentImage} controls playsInline className="max-h-[70vh] w-full rounded-lg border border-zinc-850 bg-black object-contain" />
+              <video data-analytics-key={videoIdentity(namespace, work)} data-analytics-title={work.title} src={work.videoUrl} poster={currentImage} controls playsInline className="work-modal__video max-h-[70vh] w-full rounded-lg border border-zinc-850 bg-black object-contain" />
               {images.length > 0 && (
                 <div className="grid grid-cols-4 gap-2">
                   {images.map((image, idx) => (
@@ -1253,7 +1276,7 @@ function WorkModal({ work, onClose, namespace = "works" }: { work: Work; onClose
               {currentImage ? (
                 /* 整张图是个按钮：点开看原图。横幅图在这块 aspect-video 里只能
                    看清轮廓，点开放大是唯一能看细节的路。 */
-                <button type="button" onClick={() => setZoomed(true)} className="group absolute inset-4 overflow-hidden rounded-lg border border-zinc-900 bg-zinc-900/40" aria-label="放大查看图片">
+                <button type="button" onClick={() => setZoomed(true)} className="work-modal__still group absolute inset-4 overflow-hidden rounded-lg border border-zinc-900 bg-zinc-900/40" aria-label="放大查看图片">
                   <img src={currentImage} alt={zhText(work.title)} className="h-full w-full object-contain" referrerPolicy="no-referrer" />
                   <span className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition group-hover:opacity-100">
                     <ZoomIn size={22} className="text-white" />
@@ -1749,7 +1772,7 @@ function GalleryPane({
           <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
             {paged.items.map((item) => (
               <button key={item.id} onClick={() => onSelect(item)} className="gallery-card group flex h-full flex-col overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/60 text-left transition-all duration-300 hover:border-zinc-700 hover:bg-zinc-950">
-                <div className="gallery-card__media relative aspect-[1.92/1] overflow-hidden bg-zinc-900">
+                <div className="gallery-card__media relative aspect-video w-full overflow-hidden bg-zinc-900">
                   {item.imageUrl ? <img src={item.imageUrl} alt={zhText(item.title)} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" referrerPolicy="no-referrer" /> : <div className="flex h-full items-center justify-center font-mono text-xs text-zinc-600">NO SCREENSHOT</div>}
                   <span className="gallery-card__category absolute left-2.5 top-2.5 z-10 rounded border border-white/15 bg-black/65 px-2 py-1 text-[10px] font-medium text-zinc-100 backdrop-blur-sm">{item.category || "应用"}</span>
                 </div>
@@ -2299,44 +2322,60 @@ function PdfFirstPage({ url }: { url: string }) {
   );
 }
 
+/**
+ * 演示文稿栏目。卡片结构与「案例分析 / 作品展示」共用 work-grid / work-card，
+ * 宽屏一行三个，两套主题的外观都跟着那套卡片样式走，不另起一套。
+ */
 function SlidesPane({ items, description = defaultPageCopy.slides }: { items: SlideDeck[]; description?: string }) {
   const [playing, setPlaying] = useState<SlideDeck | null>(null);
   const usable = items.filter((deck) => deck.pdfUrl || deck.fileUrl);
+  const paged = usePaged(usable, 6);
+  const paneRef = useRef<HTMLDivElement | null>(null);
   return (
-    <div className="space-y-8">
-      <div><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-violet-300/80">演示文稿 / SLIDES</span>{description ? <p className="mt-3 max-w-3xl text-[15px] leading-8 text-zinc-300">{zhText(description)}</p> : null}</div>
+    <div className="space-y-8" ref={paneRef}>
+      <div><span className="mb-2 block font-mono text-xs uppercase tracking-widest text-emerald-300/80">演示文稿 / SLIDES</span>{description ? <p className="mt-3 text-[15px] leading-8 text-zinc-300">{zhText(description)}</p> : null}</div>
       {usable.length > 0 ? (
-        <div className="grid gap-5 pt-2 sm:grid-cols-2">
-          {usable.map((deck) => (
-            <button
-              key={deck.id || deck.fileUrl}
-              type="button"
-              data-track={`slides:play:${deck.id}`}
-              onClick={() => setPlaying(deck)}
-              className="group overflow-hidden rounded-xl border border-zinc-900 bg-zinc-950/60 text-left transition-colors duration-300 hover:border-zinc-700"
-            >
-              <div className="relative aspect-video overflow-hidden bg-gradient-to-br from-violet-950/60 via-zinc-950 to-zinc-900">
-                {deck.cover ? (
-                  <img src={deck.cover} alt="" loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
-                ) : deck.pdfUrl ? (
-                  <PdfFirstPage url={deck.pdfUrl} />
-                ) : (
-                  <div className="flex h-full items-center justify-center font-serif text-lg tracking-widest text-zinc-500">PPTX</div>
-                )}
-                <span className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors duration-300 group-hover:bg-black/40">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white/90 px-4 py-2 text-sm font-medium text-zinc-900 opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-visible:opacity-100"><Play size={15} /> 开始演示</span>
-                </span>
-              </div>
-              <div className="p-4">
-                <h4 className="font-serif text-base font-bold tracking-wide text-white">{deck.title || "未命名演示"}</h4>
-                {deck.description ? <p className="mt-1.5 line-clamp-2 text-sm leading-6 text-zinc-400">{deck.description}</p> : null}
-                {deck.date ? <p className="mt-2 font-mono text-[11px] text-zinc-500">{deck.date}</p> : null}
-              </div>
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="work-grid grid grid-cols-1 gap-4 pt-2 md:grid-cols-2 xl:grid-cols-3">
+            {paged.items.map((deck) => (
+              <article
+                key={deck.id || deck.fileUrl}
+                role="button"
+                tabIndex={0}
+                data-track={`slides:play:${deck.id}`}
+                onClick={() => setPlaying(deck)}
+                onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setPlaying(deck); } }}
+                aria-label={`演示：${deck.title || "未命名演示"}`}
+                className="work-card group flex h-full cursor-pointer flex-col overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/60 transition-all duration-500 hover:border-zinc-700 hover:bg-zinc-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
+              >
+                <div className="work-card__media relative aspect-video overflow-hidden bg-zinc-950/60 shadow-inner">
+                  {deck.cover ? (
+                    <img src={deck.cover} alt={deck.title || ""} loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" />
+                  ) : deck.pdfUrl ? (
+                    <PdfFirstPage url={deck.pdfUrl} />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-zinc-900/20 font-mono text-xs text-zinc-600">PPTX</div>
+                  )}
+                  <span className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/5 to-black/35" />
+                  <span className="work-card__category absolute left-2.5 top-2.5 z-10 rounded border border-white/15 bg-black/65 px-2 py-1 text-[10px] font-medium text-zinc-100 backdrop-blur-sm">
+                    {deck.pdfUrl ? "PDF 演示" : "PPT 演示"}
+                  </span>
+                  {deck.date ? <span className="absolute right-2.5 top-2.5 z-10 rounded border border-white/15 bg-black/65 px-2 py-0.5 font-mono text-[10px] text-zinc-200">{deck.date}</span> : null}
+                  <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/35 opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-visible:opacity-100">
+                    <span className="inline-flex items-center gap-1.5 rounded border border-white/20 bg-black/75 px-3 py-1.5 font-serif text-[11px] text-zinc-100 shadow-lg"><Play size={12} /> 开始演示</span>
+                  </div>
+                </div>
+                <div className="flex flex-1 flex-col p-4">
+                  <h3 className="portfolio-card__title">{deck.title || "未命名演示"}</h3>
+                  <p className="portfolio-card__description">{deck.description || "点击卡片即可全屏演示，支持键盘翻页。"}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+          <Pagination page={paged.page} pageCount={paged.pageCount} onPageChange={paged.setPage} anchorRef={paneRef} />
+        </>
       ) : (
-        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂无演示文稿</p><p className="mt-3 text-sm text-zinc-400">请在后台「演示文稿」中上传 .pptx。</p></div>
+        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 p-10 text-center"><p className="font-serif text-xl text-white">暂无演示文稿</p><p className="mt-3 text-sm text-zinc-400">请在后台「演示文稿」中上传 PDF 或 .pptx。</p></div>
       )}
       {playing ? <SlidePlayer deck={playing} onClose={() => setPlaying(null)} /> : null}
     </div>
@@ -2393,21 +2432,9 @@ function ContactPane({ data }: { data: PortfolioData }) {
 }
 
 
-/** 首屏就绪后通知笔画动画收笔；后台无需展示开屏。 */
-function dismissBootLoader(animate: boolean) {
-  const loader = document.getElementById("boot-loader");
-  if (!loader || loader.dataset.leaving !== undefined || loader.dataset.completing !== undefined) return;
-  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (!animate || reduced) { loader.remove(); return; }
-  if (loader.dataset.strokeController === "ready") {
-    loader.dataset.completing = "";
-    loader.dispatchEvent(new Event("boot:complete"));
-    // A broken/interrupted animation must never trap visitors on the loading screen.
-    window.setTimeout(() => loader.remove(), 2200);
-    return;
-  }
-  loader.dataset.leaving = "";
-  window.setTimeout(() => loader.remove(), 480);
+/** 内容就绪即移除题签，不让装饰性书写动画拖延进入。 */
+function dismissBootLoader(_animate: boolean) {
+  document.getElementById("boot-loader")?.remove();
 }
 
 function preloadImage(url: string) {
@@ -2508,7 +2535,7 @@ function CareerTimeline({ experiences }: { experiences: PortfolioData["experienc
       ref={viewportRef}
       className="career-timeline"
       tabIndex={0}
-      aria-label="职业经历时间线，可滚动查看全部经历"
+      aria-label="人生经历时间线，可滚动查看全部经历"
       onMouseEnter={() => { pausedRef.current = true; }}
       onMouseLeave={() => { pausedRef.current = false; }}
       onWheel={pauseTemporarily}
@@ -2604,7 +2631,7 @@ function IntroDashboard({ data, onSelectWork, onNavigate }: {
       </section>
 
       <section className="dashboard-section">
-        <div className="section-kicker"><span />职业旅程 <b>/</b> CAREER TIMELINE</div>
+        <div className="section-kicker"><span />人生旅途 <b>/</b> LIFE JOURNEY</div>
         <CareerTimeline experiences={data.experiences} />
       </section>
 
@@ -2653,13 +2680,18 @@ function IntroDashboard({ data, onSelectWork, onNavigate }: {
 
 export default function App() {
   if (window.location.pathname.startsWith("/admin")) { dismissBootLoader(false); return <AdminApp />; }
-  const [theme, setTheme] = useState<'original' | 'ink'>(() => {
-    if (new URLSearchParams(location.search).get('theme') === 'ink') return 'ink';
-    try { return localStorage.getItem('portfolio-theme') === 'ink' ? 'ink' : 'original'; } catch { return 'original'; }
-  });
+  // 打开或刷新页面始终使用原主题；染墨只通过页面按钮手动切换。
+  const [theme, setTheme] = useState<'original' | 'ink'>('original');
+  useEffect(() => {
+    const url = new URL(location.href);
+    if (url.searchParams.has('theme')) {
+      url.searchParams.delete('theme');
+      history.replaceState(null, '', url);
+    }
+  }, []);
   const changeTheme = () => setTheme(current => {
     const next = current === 'ink' ? 'original' : 'ink';
-    try { localStorage.setItem('portfolio-theme', next); } catch { /* Theme still works without storage. */ }
+    // 每次从首页进入默认原主题，不再用本地存储把染墨设成默认。
     const url = new URL(location.href);
     url.searchParams.delete('theme');
     history.replaceState(null, '', url);
@@ -2716,6 +2748,57 @@ export default function App() {
     return () => { cancelled = true; controller.abort(); window.clearTimeout(timeout); };
   }, []);
 
+  // COS 签名不是永久链接。页面长时间打开后，主动续签并在媒体失败时重试一次。
+  // 使用最新数据更新已打开的作品弹窗，避免列表续签了、弹窗还拿着旧地址。
+  useEffect(() => {
+    let disposed = false;
+    let busy = false;
+    let lastAttempt = Date.now();
+    let activeController: AbortController | null = null;
+    const refresh = async (force = false) => {
+      if (disposed || busy || document.hidden) return;
+      const now = Date.now();
+      if (now - lastAttempt < (force ? 30_000 : 45 * 60_000)) return;
+      busy = true;
+      lastAttempt = now;
+      const controller = new AbortController();
+      activeController = controller;
+      const timeout = window.setTimeout(() => controller.abort(), 12_000);
+      try {
+        const response = await fetch("/api/portfolio", { cache: "no-store", signal: controller.signal });
+        if (!response.ok) return;
+        const next = normalizeData(await response.json());
+        if (disposed) return;
+        setData(next);
+        const works = [...next.works, ...(next.profile.pageCopy?.poemList || []).map(poemToWork)];
+        setSelectedWork(current => current ? works.find(item => item.id === current.id) || current : null);
+        setSelectedAiWork(current => current ? next.profile.pageCopy?.aiWorks?.find(item => item.id === current.id) || current : null);
+        setSelectedGallery(current => current ? next.gallery?.find(item => item.id === current.id) || current : null);
+        setSelectedTreasure(current => current ? next.treasures?.find(item => item.id === current.id) || current : null);
+      } catch {
+        // 临时断网不清空现有内容；下次回到页面或媒体报错时仍可续签。
+      } finally {
+        window.clearTimeout(timeout);
+        busy = false;
+      }
+    };
+    const visible = () => { void refresh(); };
+    const mediaError = (event: Event) => {
+      const target = event.target;
+      if (target instanceof HTMLImageElement || target instanceof HTMLMediaElement) void refresh(true);
+    };
+    const timer = window.setInterval(visible, 60_000);
+    document.addEventListener("visibilitychange", visible);
+    document.addEventListener("error", mediaError, true);
+    return () => {
+      disposed = true;
+      activeController?.abort();
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", visible);
+      document.removeEventListener("error", mediaError, true);
+    };
+  }, []);
+
   /*
    * 站点检测：每次打开前台页面记一条访问（IP/归属地由服务端补，设备与环境由
    * tracking.ts 采集），离开时补交停留时长。
@@ -2729,6 +2812,13 @@ export default function App() {
    * 失败不影响浏览：tracking 内部全部吞异常，这里不需要 try/catch 也不做 loading。
    */
   useEffect(() => startVisitTracking(), []);
+
+  // 弹窗都 portal 到 body 下，拿不到 .portfolio-site 上的 data-theme；
+  // 把主题同步到 <html> 上，弹窗的染墨样式才能命中。
+  useEffect(() => {
+    document.documentElement.dataset.siteTheme = theme;
+    return () => { delete document.documentElement.dataset.siteTheme; };
+  }, [theme]);
 
   const pageCopy = { ...defaultPageCopy, ...(data.profile.pageCopy || {}) };
   const entranceAnimationEnabled = data.profile.pageCopy?.entranceAnimationEnabled !== false;
@@ -2784,6 +2874,7 @@ export default function App() {
       <header className="site-header">
         <button type="button" data-track="navigation:brand" className="site-brand" onClick={() => setActiveTab("intro")}>
           <strong>{data.profile.name}</strong>
+          {theme === 'ink' && <em className="site-brand__slash" aria-hidden="true">/</em>}
           <span>一“页”知我</span>
           <i aria-hidden="true"><b /><b /><b /></i>
         </button>
@@ -2815,15 +2906,26 @@ export default function App() {
           {theme === 'ink' ? <InkCharacter section={activeTab} /> : <HeroArt />}
           <span className="hero-panel__veil" />
           {theme !== 'ink' && <DynamicParticles />}
-          <div className="hero-panel__aside" aria-hidden="true">HUMAN<br />×<br />AI<br />×<br />CREATIVE<br />×<br />A BETTER<br />TOMORROW</div>
+          {theme === 'ink'
+            ? <div className="hero-panel__aside" aria-hidden="true">HUMAN <i>×</i> AI <i>×</i> CREATIVE</div>
+            : <div className="hero-panel__aside" aria-hidden="true">HUMAN<br />×<br />AI<br />×<br />CREATIVE<br />×<br />A BETTER<br />TOMORROW</div>}
           <div className="hero-panel__copy">
             <span className="hero-panel__label">CREATE · SHARE · A BETTER TOMORROW</span>
             <h1>{data.profile.name}</h1>
-            <h2>{zhText(data.profile.tagline)}</h2>
+            {data.profile.tagline ? <h2>{zhText(data.profile.tagline)}</h2> : null}
             <p>{zhText(data.profile.quote)}</p>
             <div className="hero-actions">
-              <button type="button" data-track="hero:view-portfolio" className="hero-action hero-action--primary" onClick={() => setActiveTab("works")}><BriefcaseBusiness size={17} />查看作品集<ArrowRight size={15} /></button>
-              <button type="button" data-track="hero:contact" className="hero-action" onClick={() => setActiveTab("contact")}><Mail size={17} />联系我</button>
+              {theme === 'ink' ? (
+                <>
+                  <button type="button" data-track="hero:view-portfolio" className="hero-action hero-action--primary" onClick={() => setActiveTab("works")}><InkBookIcon size={40} />查看作品集<InkArrowIcon size={24} /></button>
+                  <button type="button" data-track="hero:contact" className="hero-action" onClick={() => setActiveTab("contact")}><InkMailIcon size={40} />联系我<InkArrowIcon size={24} /></button>
+                </>
+              ) : (
+                <>
+                  <button type="button" data-track="hero:view-portfolio" className="hero-action hero-action--primary" onClick={() => setActiveTab("works")}><BriefcaseBusiness size={17} />查看作品集<ArrowRight size={15} /></button>
+                  <button type="button" data-track="hero:contact" className="hero-action" onClick={() => setActiveTab("contact")}><Mail size={17} />联系我</button>
+                </>
+              )}
             </div>
           </div>
           <div className="hero-player"><AudioBlock tracks={data.musicTracks || []} autoplay={musicEntryReady && data.profile.musicAutoplay} onAutoplaySettled={completeMusicAttempt} compact /></div>
@@ -2842,7 +2944,9 @@ export default function App() {
               </div>
             ) : (
               <>
-            {activeTab === "intro" && sectionShown("intro") && <IntroDashboard data={data} onSelectWork={setSelectedWork} onNavigate={setActiveTab} />}
+            {activeTab === "intro" && sectionShown("intro") && (theme === 'ink'
+              ? <InkIntro data={data} works={[...data.works, ...((data.profile.pageCopy?.poemList || []).map(poemToWork))]} onSelectWork={setSelectedWork} onAllWorks={() => setActiveTab("works")} zhText={zhText} categoryLabel={categoryLabel} isVideoWork={isVideoWork} />
+              : <IntroDashboard data={data} onSelectWork={setSelectedWork} onNavigate={setActiveTab} />)}
             {activeTab === "toolbox" && sectionShown("toolbox") && <Toolbox description={pageCopy.toolbox} />}
             {activeTab === "cases" && sectionShown("cases") && <WorksPane items={data.profile.pageCopy?.caseWorks ?? defaultCaseWorks} description={pageCopy.cases} onSelect={(work) => { const url = casePageUrl(work.pageUrl); if (url) window.location.assign(url); }} eyebrow="案例分析 / CASE STUDIES" emptyTitle="暂无案例" emptyDescription="案例将在发布后展示。" />}
             {activeTab === "works" && sectionShown("works") && <WorksPane items={[...data.works, ...((data.profile.pageCopy?.poemList || []).map(poemToWork))]} description={pageCopy.works} onSelect={setSelectedWork} categoryOrder={workCategories} />}

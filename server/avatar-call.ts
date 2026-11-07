@@ -84,7 +84,8 @@ async function provider(key: string, pathname: string, body?: unknown, signal?: 
 const dial = (url: string) => new WebSocket(url, { handshakeTimeout: 10_000, maxPayload: 256 * 1024, followRedirects: false });
 
 export function registerAvatarCall(app: Express, requireAdmin: RequestHandler, supabase: SupabaseClient | null,
-  transport = { request: provider, dial }) {
+  transport = { request: provider, dial },
+  mediaUrls = { stripSignature: (url: string) => url, sign: (url: string) => url }) {
   let busy = false;
   let lastCall = 0;
   let lastClone = 0;
@@ -106,7 +107,7 @@ export function registerAvatarCall(app: Express, requireAdmin: RequestHandler, s
       if (next.enabled && (!keyFrom(stored) || !next.persona || (!next.avatarId && !next.imageUrl))) {
         return res.status(400).json({ error: '启用前请填写 API Key、人设和形象。' });
       }
-      stored.avatarCall = { ...next, updatedAt: new Date().toISOString() };
+      stored.avatarCall = { ...next, imageUrl: mediaUrls.stripSignature(next.imageUrl), updatedAt: new Date().toISOString() };
       writeToolSettings(stored);
       res.set('Cache-Control', 'no-store').json(masked(stored));
     } catch { res.status(500).json({ error: '保存失败，请配置应用加密密钥并检查目录权限。' }); }
@@ -132,7 +133,7 @@ export function registerAvatarCall(app: Express, requireAdmin: RequestHandler, s
       if (Date.now() - lastClone < 35_000) return res.status(429).json({ error: '请稍后再发起下一次克隆。' });
       lastClone = Date.now();
       const body = await transport.request(key, '/live/v1/voices/clone', {
-        audio_url: audioUrl, voice: name, language: 'zh', provider: voiceProvider, ...(transcript.trim() ? { text: transcript.trim() } : {}),
+        audio_url: mediaUrls.sign(audioUrl), voice: name, language: 'zh', provider: voiceProvider, ...(transcript.trim() ? { text: transcript.trim() } : {}),
       });
       if (!short(body.voice, 128) || !body.voice) throw new ServiceError('未收到新音色，请先刷新云端音色列表确认结果。');
       res.json({ voice: body.voice });
@@ -212,7 +213,9 @@ export function registerAvatarCall(app: Express, requireAdmin: RequestHandler, s
       res.write(': keepalive\n\n');
     }, 10_000);
     try {
-      const session = await transport.request(key, '/live/s_avatar/realtime', avatarCreateBody(config), abort.signal);
+      const session = await transport.request(key, '/live/s_avatar/realtime', avatarCreateBody({
+        ...config, imageUrl: config.avatarId ? config.imageUrl : mediaUrls.sign(config.imageUrl),
+      }), abort.signal);
       if (done) return;
       // The documented ID is a string. Refuse lossy numeric identifiers.
       if (typeof session.live?.id !== 'string' || !session.live.id || typeof session.rtc?.token !== 'string' || !session.rtc.token || typeof session.rtc?.user_id !== 'string' || !session.rtc.user_id) {
