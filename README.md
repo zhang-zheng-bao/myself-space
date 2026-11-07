@@ -178,7 +178,7 @@ npx tsx --test server/speech-duration.test.ts server/speech-scope.test.ts server
 首次启用时：
 
 1. 在 Supabase SQL Editor 重新执行 `supabase/schema.sql`。
-2. 在 Dify 导入 `dify/小柴-访客长期记忆.yml`，检查模型和知识库后发布该版本。
+2. 在 Dify 导入本地保存的应用导出文件（例如 `dify/小柴-访客长期记忆.yml`，该目录已加入 `.gitignore`，不随仓库发布），检查模型和知识库后发布该版本。
 3. 将该应用的 API Key 写入服务端 `DIFY_API_KEY`，并按需设置 `DIFY_MEMORY_RETENTION_DAYS`。默认保留 180 天，设为 `0` 可关闭长期记忆。
 
 每轮回答完成后，服务端按浏览器中的匿名 `visitor_key` 保存一轮问答。新问题到来时只选取最近四轮和最多四轮相关旧对话，限制为约 5500 字后传入 Dify 的 `visitor_memory` 输入，避免把全部历史反复放进上下文。记忆检索不额外调用 Embedding；Dify 内最近十轮的短期记忆仍照常工作。
