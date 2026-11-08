@@ -46,6 +46,7 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
   const [audioControlBusy, setAudioControlBusy] = useState(false);
   const [captions, setCaptions] = useState<{ id: number; role: 'user' | 'assistant'; text: string }[]>([]);
   const [micLevel, setMicLevel] = useState(0);
+  const [captionsEnabled, setCaptionsEnabled] = useState(true);
   const [availability, setAvailability] = useState<'checking' | 'ready' | 'preview' | 'disabled' | 'error'>('checking');
   const captionId = useRef(0);
   const captionBox = useRef<HTMLDivElement>(null);
@@ -64,7 +65,10 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
         }
         if (!response.ok) throw new Error('读取通话状态失败');
         const status = await response.json();
-        if (!controller.signal.aborted) setAvailability(status.enabled === true ? 'ready' : 'disabled');
+        if (!controller.signal.aborted) {
+          setAvailability(status.enabled === true ? 'ready' : 'disabled');
+          setCaptionsEnabled(status.captions !== false);
+        }
       } catch {
         if (!controller.signal.aborted) setAvailability('error');
       }
@@ -212,7 +216,7 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
         <strong>{phase === 'idle' ? '数字人通话' : '正在连接画面…'}</strong>
         {phase === 'idle' && <small>{{
           checking: '正在检查通话状态…',
-          ready: '通话使用麦克风，双方说话会显示字幕。',
+          ready: captionsEnabled ? '通话使用麦克风，双方说话会显示字幕。' : '语音视频通话，使用麦克风。',
           preview: '当前为管理员预览，请先登录后台。',
           disabled: '请在后台应用配置中启用数字人通话。',
           error: '暂时无法读取通话状态，请返回后重试。',
