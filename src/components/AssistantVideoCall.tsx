@@ -48,6 +48,11 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
   const [micLevel, setMicLevel] = useState(0);
   const [availability, setAvailability] = useState<'checking' | 'ready' | 'preview' | 'disabled' | 'error'>('checking');
   const captionId = useRef(0);
+  const captionBox = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const box = captionBox.current;
+    if (box) box.scrollTop = box.scrollHeight;
+  }, [captions]);
   useEffect(() => {
     const controller = new AbortController();
     async function checkAvailability() {
@@ -213,7 +218,7 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
           error: '暂时无法读取通话状态，请返回后重试。',
         }[availability]}</small>}
       </div>}
-      {phase !== 'idle' && captions.length > 0 && <div className="assistant-video-call__captions" aria-live="polite">
+      {phase !== 'idle' && captions.length > 0 && <div ref={captionBox} className="assistant-video-call__captions" aria-live="polite">
         {captions.map(caption => <p key={caption.id} className="assistant-video-call__caption" data-role={caption.role}>
           <strong>{caption.role === 'user' ? '你：' : '小柴：'}</strong>{caption.text}
         </p>)}
