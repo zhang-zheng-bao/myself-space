@@ -19,7 +19,11 @@ test('admin can migrate the prompt and cloned voice; video session waits for clo
   const hangup = Promise.withResolvers<any>();
   rtc.on('connection', socket => socket.on('message', raw => {
     const signal = JSON.parse(raw.toString());
-    if (signal.type === 1) socket.send(JSON.stringify({ type: 2, payload: { conn_init_ack: { success: true } } }));
+    if (signal.type === 1) {
+      socket.send(JSON.stringify({ type: 2, payload: { conn_init_ack: { success: true } } }));
+      socket.send(JSON.stringify({ type: 10, payload: { text_msg: { content: '你好呀' } } }));
+      socket.send(JSON.stringify({ type: 9, payload: { text_msg: { content: '介绍一下你自己' } } }));
+    }
     if (signal.type === 5) hangup.resolve(signal);
   }));
   const calls: { url: string; body: any }[] = [];
@@ -96,16 +100,19 @@ test('admin can migrate the prompt and cloned voice; video session waits for clo
     const response = await fetch(url + '/api/assistant/call', { method: 'POST', headers: admin, signal: controller.signal });
     const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
     let events = '';
-    while (!events.includes('short-lived-rtc')) {
+    while (!events.includes('"role":"assistant","text":"你好呀"') || !events.includes('"role":"user","text":"介绍一下你自己"')) {
       const next = await reader.read();
       assert.equal(next.done, false);
       events += next.value;
     }
     assert.match(events, /"type":"ready"/);
+    assert.ok(events.includes('"type":"caption","data":{"role":"assistant","text":"你好呀"}'));
+    assert.ok(events.includes('"type":"caption","data":{"role":"user","text":"介绍一下你自己"}'));
     assert.doesNotMatch(events, /vda_test_only|测试角色提示词/);
     assert.equal(calls.at(-1)?.body.avatar.persona, '测试角色提示词');
     assert.equal(calls.at(-1)?.body.avatar.voice, 'original_voice');
     assert.equal(calls.at(-1)?.body.avatar.id, 'existing-avatar');
+    assert.equal(calls.at(-1)?.body.audio.enable_transcription, true);
     assert.equal((await fetch(url + '/api/assistant/call', { method: 'POST', headers: admin })).status, 429);
     await reader.cancel();
     const message = await Promise.race([hangup.promise, new Promise((_, reject) => {

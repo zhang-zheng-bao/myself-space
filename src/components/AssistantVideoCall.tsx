@@ -6,6 +6,7 @@ type Rtc = {
   setChannelProfile(profile: string): void | Promise<void>;
   setDefaultSubscribeAllRemoteAudioStreams(enabled: boolean): void;
   setDefaultSubscribeAllRemoteVideoStreams(enabled: boolean): void;
+  enableAudioVolumeIndication(interval: number): void;
   joinChannel(token: string, name: string): Promise<void>;
   leaveChannel(): Promise<void>;
   publishLocalAudioStream(enabled: boolean): Promise<void>;
@@ -43,7 +44,10 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
   const [message, setMessage] = useState('');
   const [hasPicture, setHasPicture] = useState(false);
   const [audioControlBusy, setAudioControlBusy] = useState(false);
+  const [captions, setCaptions] = useState<{ id: number; role: 'user' | 'assistant'; text: string }[]>([]);
+  const [micLevel, setMicLevel] = useState(0);
   const [availability, setAvailability] = useState<'checking' | 'ready' | 'preview' | 'disabled' | 'error'>('checking');
+  const captionId = useRef(0);
   useEffect(() => {
     const controller = new AbortController();
     async function checkAvailability() {
@@ -83,7 +87,7 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
     const element = video.current;
     const clearMediaTimeout = () => window.clearTimeout(mediaTimeout);
     element?.addEventListener('playing', clearMediaTimeout);
-    setPhase('connecting'); setMessage(''); setMuted(false); setHasPicture(false);
+    setPhase('connecting'); setMessage(''); setMuted(false); setHasPicture(false); setCaptions([]); setMicLevel(0);
     const fail = (text: string) => { failure = text; controller.abort(); };
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('当前页面无法使用麦克风，请用 HTTPS 或本地浏览器打开。');
@@ -111,12 +115,20 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
           for (const frame of frames) {
             if (!frame.startsWith('data: ')) continue;
             const { type, data } = JSON.parse(frame.slice(6));
-            if (type === 'error') { failure = data; remoteEnd = true; break; }
+            if (type === 'error') { failure = data; remoteEnd = true; setCaptions([]); break; }
             if (type === 'end') {
               remoteEnd = true;
+              setCaptions([]);
               if (data === 'time_limit') setMessage('本次通话已到时长上限。');
               else setMessage('本次通话已结束。');
               break;
+            }
+            if (type === 'caption') {
+              if ((data.role === 'user' || data.role === 'assistant') && typeof data.text === 'string') {
+                const caption = { id: ++captionId.current, role: data.role, text: data.text };
+                setCaptions(previous => [...previous, caption].slice(-4));
+              }
+              continue;
             }
             if (type === 'ready' && !setup) {
               mediaTimeout = window.setTimeout(() => fail('接收通话画面超时，请稍后重试。'), 25_000);
@@ -132,6 +144,10 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
                   } else if (next === 1) setHasPicture(false);
                 });
                 engine.on('bye', () => { if (!signal.aborted) fail('音视频连接已断开。'); });
+                engine.on('audioVolume', (speakers: { userId: string; volume: number }[]) => {
+                  const local = speakers.find(speaker => speaker.userId === '');
+                  if (!signal.aborted && local && Number.isFinite(local.volume)) setMicLevel(Math.max(0, Math.min(100, local.volume)));
+                });
                 await engine.setChannelProfile('communication');
                 signal.throwIfAborted();
                 // AliRTC 7.1.9 has no setDefaultPublish* methods; publish flags set before join become the defaults.
@@ -139,6 +155,7 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
                 signal.throwIfAborted();
                 engine.setDefaultSubscribeAllRemoteAudioStreams(true);
                 engine.setDefaultSubscribeAllRemoteVideoStreams(true);
+                engine.enableAudioVolumeIndication(200);
                 await engine.joinChannel(data.token, data.userId);
                 signal.throwIfAborted();
                 await engine.publishLocalAudioStream(true);
@@ -166,7 +183,7 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
       }
       rtc.current = null;
       active.current = null;
-      if (mounted.current) { setPhase('idle'); setHasPicture(false); if (failure) setMessage(failure); }
+      if (mounted.current) { setPhase('idle'); setHasPicture(false); setCaptions([]); setMicLevel(0); if (failure) setMessage(failure); }
     }
   }
 
@@ -190,15 +207,25 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
         <strong>{phase === 'idle' ? '数字人通话' : '正在连接画面…'}</strong>
         {phase === 'idle' && <small>{{
           checking: '正在检查通话状态…',
-          ready: '通话仅使用麦克风。',
+          ready: '通话使用麦克风，双方说话会显示字幕。',
           preview: '当前为管理员预览，请先登录后台。',
           disabled: '请在后台应用配置中启用数字人通话。',
           error: '暂时无法读取通话状态，请返回后重试。',
         }[availability]}</small>}
       </div>}
+      {phase !== 'idle' && captions.length > 0 && <div className="assistant-video-call__captions" aria-live="polite">
+        {captions.map(caption => <p key={caption.id} className="assistant-video-call__caption" data-role={caption.role}>
+          <strong>{caption.role === 'user' ? '你：' : '小柴：'}</strong>{caption.text}
+        </p>)}
+      </div>}
     </div>
     {message && <p role="status" className="assistant-video-call__message">{message}</p>}
     <div className="assistant-video-call__controls">
+      {phase === 'connected' && <div className="assistant-video-call__mic-level" role="meter" aria-label="麦克风"
+        aria-valuemin={0} aria-valuemax={100} aria-valuenow={micLevel} aria-valuetext={`${micLevel}%`}>
+        <span>麦克风</span>
+        <span className="assistant-video-call__mic-level-track"><span style={{ width: `${micLevel}%` }} /></span>
+      </div>}
       {phase === 'connected' && <button type="button" onClick={() => void toggleMute()} disabled={audioControlBusy} aria-pressed={muted}>
         {muted ? <MicOff size={16} /> : <Mic size={16} />}{muted ? '取消静音' : '静音'}
       </button>}

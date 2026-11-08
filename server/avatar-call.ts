@@ -56,6 +56,7 @@ export function avatarCreateBody(config: AvatarCallSettings) {
       idle_action: config.idleAction, persona_enhance: config.personaEnhance,
     },
     ...(config.model === 'vidu-s2' ? { voice_model: { provider: config.voiceProvider } } : {}),
+    audio: { enable_transcription: true },
     vad: { type: config.interruption, silence_duration_ms: config.silenceMs },
     llm: { temperature: config.temperature },
     idle_timeout_seconds: config.idleSeconds,
@@ -283,6 +284,11 @@ export function registerAvatarCall(app: Express, requireAdmin: RequestHandler, s
             event('ready', rtc);
           } else if (ack.error_code === 'NOT_READY') retry = setTimeout(init, 2000);
           else finish('handshake_rejected', '数字人未能就绪，请检查后台配置。');
+        } else if (readyAt && (message?.type === 9 || message?.type === 10)) {
+          const content = message.payload?.text_msg?.content;
+          if (typeof content === 'string' && content.trim()) {
+            event('caption', { role: message.type === 9 ? 'user' : 'assistant', text: content.trim().slice(0, 500) });
+          }
         } else if (message?.type === 6) finish('remote_ended');
       });
       upstream.on('close', () => finish('connection_lost', '通话连接已断开。'));
