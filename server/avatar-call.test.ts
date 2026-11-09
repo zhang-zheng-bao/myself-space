@@ -6,8 +6,22 @@ import path from 'node:path';
 import test from 'node:test';
 import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
-import { registerAvatarCall } from './avatar-call';
+import { avatarCreateBody, parseAvatarSettings, registerAvatarCall, type AvatarCallSettings } from './avatar-call';
 import { readToolSettings, writeToolSettings } from './tool-settings';
+
+test('captions setting controls transcription and must be boolean', () => {
+  const validSettings: AvatarCallSettings = {
+    enabled: false, model: 'vidu-s2', persona: 'test', greeting: '', avatarId: 'avatar', imageUrl: '',
+    voice: '', voiceProvider: 'qwen_omni', idleSeconds: 60, maxSeconds: 300, interruption: 'semantic',
+    silenceMs: 400, temperature: 0.7, idleAction: false, personaEnhance: false, captions: true,
+  };
+  assert.equal(avatarCreateBody({ ...validSettings, captions: false }).audio, undefined);
+  assert.equal(avatarCreateBody({ ...validSettings, captions: true }).audio?.enable_transcription, true);
+  assert.equal(parseAvatarSettings(validSettings)?.captions, true);
+  const { captions: _captions, ...withoutCaptions } = validSettings;
+  assert.equal(parseAvatarSettings(withoutCaptions), null);
+  assert.equal(parseAvatarSettings({ ...validSettings, captions: 'yes' }), null);
+});
 
 test('admin can migrate the prompt and cloned voice; video session waits for cloud readiness and hangs up on disconnect', { timeout: 8000 }, async () => {
   const folder = mkdtempSync(path.join(os.tmpdir(), 'myspace-avatar-'));
@@ -19,7 +33,11 @@ test('admin can migrate the prompt and cloned voice; video session waits for clo
   const hangup = Promise.withResolvers<any>();
   rtc.on('connection', socket => socket.on('message', raw => {
     const signal = JSON.parse(raw.toString());
-    if (signal.type === 1) socket.send(JSON.stringify({ type: 2, payload: { conn_init_ack: { success: true } } }));
+    if (signal.type === 1) {
+      socket.send(JSON.stringify({ type: 2, payload: { conn_init_ack: { success: true } } }));
+      socket.send(JSON.stringify({ type: 10, payload: { text_msg: { content: '你好呀' } } }));
+      socket.send(JSON.stringify({ type: 9, payload: { text_msg: { content: '介绍一下你自己' } } }));
+    }
     if (signal.type === 5) hangup.resolve(signal);
   }));
   const calls: { url: string; body: any }[] = [];
@@ -64,14 +82,20 @@ test('admin can migrate the prompt and cloned voice; video session waits for clo
   try {
     assert.equal((await fetch(url + '/api/assistant/call', { method: 'POST' })).status, 401);
     const initial = await (await fetch(url + settings, { headers: admin })).json();
+    assert.equal(initial.captions, true);
     const update = await fetch(url + settings, { method: 'PUT', headers: admin, body: JSON.stringify({
-      ...initial, apiKey: 'vda_test_only', enabled: true, persona: '测试角色提示词', avatarId: 'existing-avatar', voice: 'original_voice',
-    }) });
+      ...initial, captions: true, apiKey: 'vda_test_only', enabled: true, persona: '测试角色提示词', avatarId: 'existing-avatar', voice: 'original_voice',
+      }) });
     assert.equal(update.status, 200);
     const saved = await update.json();
     assert.equal(saved.persona, '测试角色提示词');
     assert.equal(saved.configured, true);
     assert.doesNotMatch(JSON.stringify(saved), /vda_test_only/);
+    const legacy = readToolSettings();
+    delete legacy.avatarCall!.captions;
+    writeToolSettings(legacy);
+    assert.equal((await (await fetch(url + settings, { headers: admin })).json()).captions, true);
+    assert.deepEqual(await (await fetch(url + '/api/assistant/call/status', { headers: admin })).json(), { enabled: true, captions: true });
     assert.deepEqual(await (await fetch(url + '/api/admin/assistant/call/voices', { headers: admin })).json(), { voices: [
       { voice: 'original_voice', provider: 'qwen_omni', shared: false },
       { voice: 'vidu-xiaoya', provider: 'qwen_omni', shared: true },
@@ -96,16 +120,19 @@ test('admin can migrate the prompt and cloned voice; video session waits for clo
     const response = await fetch(url + '/api/assistant/call', { method: 'POST', headers: admin, signal: controller.signal });
     const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
     let events = '';
-    while (!events.includes('short-lived-rtc')) {
+    while (!events.includes('"role":"assistant","text":"你好呀"') || !events.includes('"role":"user","text":"介绍一下你自己"')) {
       const next = await reader.read();
       assert.equal(next.done, false);
       events += next.value;
     }
     assert.match(events, /"type":"ready"/);
+    assert.ok(events.includes('"type":"caption","data":{"role":"assistant","text":"你好呀"}'));
+    assert.ok(events.includes('"type":"caption","data":{"role":"user","text":"介绍一下你自己"}'));
     assert.doesNotMatch(events, /vda_test_only|测试角色提示词/);
     assert.equal(calls.at(-1)?.body.avatar.persona, '测试角色提示词');
     assert.equal(calls.at(-1)?.body.avatar.voice, 'original_voice');
     assert.equal(calls.at(-1)?.body.avatar.id, 'existing-avatar');
+    assert.equal(calls.at(-1)?.body.audio.enable_transcription, true);
     assert.equal((await fetch(url + '/api/assistant/call', { method: 'POST', headers: admin })).status, 429);
     await reader.cancel();
     const message = await Promise.race([hangup.promise, new Promise((_, reject) => {
@@ -159,7 +186,7 @@ for (const ownCos of [true, false]) {
       const settings = '/api/admin/assistant/call/settings';
       const initial = await (await fetch(base + settings)).json();
       const response = await fetch(base + settings, { method: 'PUT', headers, body: JSON.stringify({
-        ...initial, apiKey: 'vda_test_only', enabled: true, persona: 'test', imageUrl,
+        ...initial, captions: true, apiKey: 'vda_test_only', enabled: true, persona: 'test', imageUrl,
       }) });
       assert.equal(response.status, 200);
       assert.equal((await response.json()).imageUrl, stripSignature(imageUrl));

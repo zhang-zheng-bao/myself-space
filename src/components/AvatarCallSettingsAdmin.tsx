@@ -149,6 +149,7 @@ export default function AvatarCallSettingsAdmin() {
             </div>
             {config.model === 'vidu-s2' && <label className="text-sm">原音色所属服务<select className={input} value={config.voiceProvider} onChange={e => update('voiceProvider', e.target.value as Config['voiceProvider'])}><option value="qwen_omni">Qwen Omni（默认）</option><option value="doubao">豆包</option></select></label>}
             <datalist id="assistant-avatar-voices">{voices.map(voice => <option key={voice.voice} value={voice.voice} label={`${voice.shared ? '公共' : '克隆'} · ${voice.provider}`} />)}</datalist>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={config.captions} onChange={e => update('captions', e.target.checked)} />通话时显示双方字幕</label>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={config.idleAction} onChange={e => update('idleAction', e.target.checked)} />待机时播放自然动作</label>
           </div>
         </details>

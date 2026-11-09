@@ -8,12 +8,12 @@ export type AvatarCallSettings = {
   enabled: boolean; model: 'vidu-s1' | 'vidu-s2'; persona: string; greeting: string;
   avatarId: string; imageUrl: string; voice: string; voiceProvider: 'qwen_omni' | 'doubao'; idleSeconds: number; maxSeconds: number;
   interruption: 'server' | 'semantic'; silenceMs: number; temperature: number;
-  idleAction: boolean; personaEnhance: boolean; updatedAt?: string;
+  idleAction: boolean; personaEnhance: boolean; captions: boolean; updatedAt?: string;
 };
 const defaults: AvatarCallSettings = {
   enabled: false, model: 'vidu-s2', persona: '', greeting: '', avatarId: '', imageUrl: '',
   voice: '', voiceProvider: 'qwen_omni', idleSeconds: 60, maxSeconds: 300, interruption: 'semantic', silenceMs: 400,
-  temperature: 0.7, idleAction: false, personaEnhance: false,
+  temperature: 0.7, idleAction: false, personaEnhance: false, captions: true,
 };
 const base = 'https://api.vidu.cn';
 const adminPath = '/api/admin/assistant/call';
@@ -31,7 +31,7 @@ const safeOrigin: RequestHandler = (req, res, next) => {
 export function parseAvatarSettings(body: any): AvatarCallSettings | null {
   if (!body || !['vidu-s1', 'vidu-s2'].includes(body.model) || !['server', 'semantic'].includes(body.interruption)
     || !['qwen_omni', 'doubao'].includes(body.voiceProvider)
-    || ['enabled', 'idleAction', 'personaEnhance'].some(key => typeof body[key] !== 'boolean')
+    || ['enabled', 'idleAction', 'personaEnhance', 'captions'].some(key => typeof body[key] !== 'boolean')
     || !short(body.persona, 8000) || !short(body.greeting, 1000) || !short(body.avatarId, 160)
     || !short(body.imageUrl, 2048) || !short(body.voice, 128)
     || (body.imageUrl.trim() && !httpsUrl(body.imageUrl.trim()))
@@ -39,10 +39,10 @@ export function parseAvatarSettings(body: any): AvatarCallSettings | null {
     || !within(body.maxSeconds, 30, 600) || !Number.isInteger(body.maxSeconds) || body.idleSeconds > body.maxSeconds
     || !within(body.silenceMs, 200, 1500) || !Number.isInteger(body.silenceMs)
     || !within(body.temperature, 0, 1.5)) return null;
-  const { enabled, model, persona, greeting, avatarId, imageUrl, voice, voiceProvider, idleSeconds, maxSeconds, interruption, silenceMs, temperature, idleAction, personaEnhance } = body;
+  const { enabled, model, persona, greeting, avatarId, imageUrl, voice, voiceProvider, idleSeconds, maxSeconds, interruption, silenceMs, temperature, idleAction, personaEnhance, captions } = body;
   return { enabled, model, persona: persona.trim(), greeting: greeting.trim(), avatarId: avatarId.trim(),
     imageUrl: imageUrl.trim(), voice: voice.trim(), voiceProvider, idleSeconds, maxSeconds, interruption, silenceMs,
-    temperature, idleAction, personaEnhance };
+    temperature, idleAction, personaEnhance, captions };
 }
 
 export function avatarCreateBody(config: AvatarCallSettings) {
@@ -56,6 +56,7 @@ export function avatarCreateBody(config: AvatarCallSettings) {
       idle_action: config.idleAction, persona_enhance: config.personaEnhance,
     },
     ...(config.model === 'vidu-s2' ? { voice_model: { provider: config.voiceProvider } } : {}),
+    ...(config.captions ? { audio: { enable_transcription: true } } : {}),
     vad: { type: config.interruption, silence_duration_ms: config.silenceMs },
     llm: { temperature: config.temperature },
     idle_timeout_seconds: config.idleSeconds,
@@ -187,8 +188,9 @@ export function registerAvatarCall(app: Express, requireAdmin: RequestHandler, s
     res.set('Cache-Control', 'no-store');
     try {
       const stored = readToolSettings();
-      res.json({ enabled: Boolean(current(stored).enabled && keyFrom(stored)) });
-    } catch { res.json({ enabled: false }); }
+      const config = current(stored);
+      res.json({ enabled: Boolean(config.enabled && keyFrom(stored)), captions: config.captions });
+    } catch { res.json({ enabled: false, captions: false }); }
   });
   app.post(callPath, safeOrigin, requireAdmin, async (_req, res) => {
     let stored;
@@ -283,6 +285,11 @@ export function registerAvatarCall(app: Express, requireAdmin: RequestHandler, s
             event('ready', rtc);
           } else if (ack.error_code === 'NOT_READY') retry = setTimeout(init, 2000);
           else finish('handshake_rejected', '数字人未能就绪，请检查后台配置。');
+        } else if (config.captions && readyAt && (message?.type === 9 || message?.type === 10)) {
+          const content = message.payload?.text_msg?.content;
+          if (typeof content === 'string' && content.trim()) {
+            event('caption', { role: message.type === 9 ? 'user' : 'assistant', text: content.trim().slice(0, 500) });
+          }
         } else if (message?.type === 6) finish('remote_ended');
       });
       upstream.on('close', () => finish('connection_lost', '通话连接已断开。'));
