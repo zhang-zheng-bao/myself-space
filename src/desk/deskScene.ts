@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { HDRLoader } from "three/examples/jsm/loaders/HDRLoader.js";
 
 /**
  * 书桌场景：全部用代码建模（几何体 + Canvas 贴图），不依赖外部模型文件。
@@ -23,7 +25,7 @@ export type DeskScene = {
   setPower(on: boolean): void;
   setMusic(playing: boolean): void;
   pressKeys(): void;
-  setIdentity(name: string, tagline: string): void;
+  setIdentity(name: string, tagline: string, avatar?: string): void;
   dispose(): void;
 };
 
@@ -159,6 +161,53 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
     return m;
   };
 
+  /* 真实素材来自 Poly Haven（CC0），放在 public/desk。全部加载完（或超时）再显示画面。 */
+  let disposed = false;
+  let assetsReady = false;
+  const manager = new THREE.LoadingManager();
+  manager.onLoad = () => { assetsReady = true; };
+  const readyTimer = window.setTimeout(() => { assetsReady = true; }, 12000);
+  const gltfLoader = new GLTFLoader(manager);
+  const textureLoader = new THREE.TextureLoader(manager);
+  const trackMaterial = (material: THREE.Material) => {
+    disposables.push(material);
+    for (const value of Object.values(material)) if (value instanceof THREE.Texture) disposables.push(value);
+  };
+  const loadModel = (id: string, onLoad: (model: THREE.Group) => void) => {
+    gltfLoader.load(`/desk/models/${id}/${id}.gltf`, gltf => {
+      if (disposed) return;
+      gltf.scene.traverse(child => {
+        const item = child as THREE.Mesh;
+        if (!item.isMesh) return;
+        item.castShadow = true;
+        item.receiveShadow = true;
+        disposables.push(item.geometry);
+        (Array.isArray(item.material) ? item.material : [item.material]).forEach(trackMaterial);
+      });
+      onLoad(gltf.scene);
+    }, undefined, () => { /* 素材缺失时保留其余场景 */ });
+  };
+  const pbrMaps = (name: string, repeatX: number, repeatY: number) => {
+    const load = (suffix: string, srgb = false) => {
+      const texture = textureLoader.load(`/desk/textures/${name}_${suffix}_1k.jpg`);
+      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(repeatX, repeatY);
+      texture.anisotropy = 8;
+      if (srgb) texture.colorSpace = THREE.SRGBColorSpace;
+      return track(texture);
+    };
+    const arm = load("arm");
+    return { map: load("Diffuse", true), normalMap: load("nor_gl"), roughnessMap: arm, aoMap: arm };
+  };
+  new HDRLoader(manager).load("/desk/hdri/comfy_cafe_1k.hdr", hdr => {
+    if (disposed) { hdr.dispose(); return; }
+    hdr.mapping = THREE.EquirectangularReflectionMapping;
+    const env = pmrem.fromEquirectangular(hdr).texture;
+    hdr.dispose();
+    disposables.push(env);
+    scene.environment = env;
+  });
+
   const hotspots = new Map<DeskHotspot, THREE.Object3D>();
   const measureTargets = new Map<DeskHotspot, THREE.Object3D>();
   const hoverables: Hoverable[] = [];
@@ -170,18 +219,11 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   };
 
   /* ---------------- 房间 ---------------- */
-  const floorTex = woodTexture("#8a6646", "#3b2414", 11, 6);
-  floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
-  floorTex.repeat.set(3, 3);
-  track(floorTex);
-  const floor = mesh(track(new THREE.PlaneGeometry(10, 10)), std({ map: floorTex, roughness: 0.62 }), false);
+  const floor = mesh(track(new THREE.PlaneGeometry(10, 10)), std({ ...pbrMaps("wooden_floor_02", 5, 5), color: 0xb08868 }), false);
   floor.rotation.x = -Math.PI / 2;
   scene.add(floor);
 
-  const wallTex = track(noiseTexture("#cdb89c", "#6b5236", 3));
-  wallTex.wrapS = wallTex.wrapT = THREE.RepeatWrapping;
-  wallTex.repeat.set(4, 2);
-  const wallMat = std({ map: wallTex, roughness: 0.95 });
+  const wallMat = std({ ...pbrMaps("white_plaster_02", 5, 1.7), color: 0xe6d3b8 });
   const backWall = mesh(track(new THREE.PlaneGeometry(10, 3.4)), wallMat, false);
   backWall.position.set(0, 1.7, -0.62);
   scene.add(backWall);
@@ -309,7 +351,7 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
 
   /* ---------------- 书桌 ---------------- */
   const deskTex = track(woodTexture("#6e4a30", "#2a160b", 5, 1));
-  const deskMat = std({ map: deskTex, roughness: 0.48, metalness: 0 });
+  const deskMat = std({ ...pbrMaps("wood_table_001", 1.4, 0.7), color: 0xb89a80, roughness: 1 });
   const deskTop = mesh(rbox(1.7, 0.04, 0.86, 0.012), deskMat);
   deskTop.position.set(0, DESK_Y - 0.02, -0.17);
   scene.add(deskTop);
@@ -657,70 +699,47 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   scene.add(notebook);
   addHotspot("notebook", notebook, topCover, 0.01);
 
-  /* ---------------- 台灯 ---------------- */
+  /* ---------------- 台灯（Poly Haven 模型） ---------------- */
   const lamp = new THREE.Group();
-  lamp.position.set(-0.66, DESK_Y, -0.38);
-  const lampMat = std({ color: 0x2d4a3e, metalness: 0.55, roughness: 0.35 });
-  const lampBase = mesh(track(new THREE.CylinderGeometry(0.07, 0.078, 0.02, 48)), lampMat);
-  lampBase.position.y = 0.01;
-  lamp.add(lampBase);
-  const lampButton = mesh(track(new THREE.CylinderGeometry(0.009, 0.009, 0.008, 20)), std({ color: 0xc9a45c, metalness: 1, roughness: 0.3 }));
-  lampButton.position.set(0.035, 0.024, 0.03);
-  lamp.add(lampButton);
-  const brass = std({ color: 0xc9a45c, metalness: 1, roughness: 0.28 });
-  const p0 = new THREE.Vector3(0, 0.02, 0);
-  const p1 = new THREE.Vector3(0.04, 0.37, 0.03);
-  const p2 = new THREE.Vector3(0.25, 0.44, 0.17);
-  const arm = (a: THREE.Vector3, b: THREE.Vector3) => {
-    const length = a.distanceTo(b);
-    const rod = mesh(track(new THREE.CylinderGeometry(0.0065, 0.0065, length, 16)), lampMat);
-    rod.position.copy(a).add(b).multiplyScalar(0.5);
-    rod.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-    lamp.add(rod);
-  };
-  arm(p0, p1);
-  arm(p1, p2);
-  for (const p of [p1, p2]) {
-    const joint = mesh(track(new THREE.SphereGeometry(0.013, 20, 14)), brass);
-    joint.position.copy(p);
-    lamp.add(joint);
-  }
-  const lampTargetWorld = new THREE.Vector3(-0.2, DESK_Y, -0.02);
-  const head = new THREE.Group();
-  head.position.copy(p2);
-  const headDir = lampTargetWorld.clone().sub(lamp.position.clone().add(p2)).normalize();
-  head.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), headDir);
-  const shadeProfile = [new THREE.Vector2(0.016, 0.02), new THREE.Vector2(0.03, 0.0), new THREE.Vector2(0.055, -0.06), new THREE.Vector2(0.068, -0.105)];
-  const shadeGeo = track(new THREE.LatheGeometry(shadeProfile, 48));
-  const shadeOuter = mesh(shadeGeo, std({ color: 0x2d4a3e, metalness: 0.5, roughness: 0.35, side: THREE.FrontSide }));
-  head.add(shadeOuter);
-  const shadeInnerMat = std({ color: 0xf3e6cf, roughness: 0.6, side: THREE.BackSide, emissive: new THREE.Color(0xffc27a), emissiveIntensity: 0.25 });
-  const shadeInner = new THREE.Mesh(shadeGeo, shadeInnerMat);
-  head.add(shadeInner);
-  const bulbMat = std({ color: 0xfff4e0, emissive: new THREE.Color(0xffd29a), emissiveIntensity: 3 });
-  const bulb = new THREE.Mesh(track(new THREE.SphereGeometry(0.022, 24, 16)), bulbMat);
-  bulb.position.y = -0.05;
-  head.add(bulb);
-  lamp.add(head);
+  lamp.position.set(-0.64, DESK_Y, -0.36);
   scene.add(lamp);
-  addHotspot("lamp", lamp, head, 0);
-
-  lamp.updateMatrixWorld(true);
-  const bulbWorld = bulb.getWorldPosition(new THREE.Vector3());
-  const spot = new THREE.SpotLight(0xffc68a, 6, 3.2, 0.82, 0.75, 1.6);
-  spot.position.copy(bulbWorld);
+  addHotspot("lamp", lamp, lamp, 0);
+  const lampTargetWorld = new THREE.Vector3(-0.18, DESK_Y, -0.02);
+  const lampEmissive: THREE.MeshStandardMaterial[] = [];
+  const spot = new THREE.SpotLight(0xffc68a, 6, 3.2, 0.8, 0.75, 1.6);
+  spot.position.set(-0.55, DESK_Y + 0.42, -0.26);
   spot.target.position.copy(lampTargetWorld);
   spot.castShadow = true;
   spot.shadow.mapSize.set(mobile ? 1024 : 2048, mobile ? 1024 : 2048);
   spot.shadow.bias = -0.0004;
   spot.shadow.normalBias = 0.015;
   spot.shadow.radius = 4;
-  spot.shadow.camera.near = 0.05;
+  spot.shadow.camera.near = 0.03;
   spot.shadow.camera.far = 2.5;
   scene.add(spot, spot.target);
   const lampGlow = new THREE.PointLight(0xffb36b, 0.8, 2.2, 2);
-  lampGlow.position.copy(bulbWorld).add(new THREE.Vector3(0, 0.05, -0.04));
+  lampGlow.position.copy(spot.position);
   scene.add(lampGlow);
+  loadModel("desk_lamp_arm_01", model => {
+    model.scale.setScalar(0.62);
+    // 模型的灯罩朝本地 -z，转过来对准桌面中间。
+    model.rotation.y = Math.atan2(-(lampTargetWorld.x - lamp.position.x), -(lampTargetWorld.z - lamp.position.z));
+    lamp.add(model);
+    lamp.updateMatrixWorld(true);
+    model.traverse(child => {
+      const item = child as THREE.Mesh;
+      if (!item.isMesh) return;
+      const material = item.material as THREE.MeshStandardMaterial;
+      if (!material.name.includes("light")) return;
+      item.castShadow = false;
+      material.emissive = new THREE.Color(0xffd6a0);
+      material.emissiveIntensity = 2.5;
+      lampEmissive.push(material);
+      const bulb = new THREE.Box3().setFromObject(item).getCenter(new THREE.Vector3());
+      spot.position.copy(bulb).add(new THREE.Vector3(0, -0.025, 0));
+      lampGlow.position.copy(bulb).add(new THREE.Vector3(0, 0.04, -0.03));
+    });
+  });
 
   const hemi = new THREE.HemisphereLight(0xffe2c4, 0x2a1a10, 0.42);
   scene.add(hemi);
@@ -783,6 +802,7 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   const speaker = new THREE.Group();
   speaker.position.set(0.66, DESK_Y, -0.33);
   speaker.rotation.y = -0.45;
+  const brass = std({ color: 0xc9a45c, metalness: 1, roughness: 0.28 });
   const speakerWood = std({ map: deskTex, color: 0xa88a74, roughness: 0.5 });
   const speakerBody = mesh(rbox(0.12, 0.165, 0.1, 0.014), speakerWood);
   speakerBody.position.y = 0.0825;
@@ -800,68 +820,133 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   scene.add(speaker);
   addHotspot("speaker", speaker, speakerBody, 0.006);
 
-  /* ---------------- 插线板和电线 ---------------- */
+  /* ---------------- 插线板（国标五孔）、插头、充电器和电线 ---------------- */
   const socket = new THREE.Group();
   socket.position.set(0.2, DESK_Y, -0.45);
-  const stripBody = mesh(rbox(0.27, 0.034, 0.058, 0.01), whitePlastic);
+  const stripBody = mesh(rbox(0.32, 0.034, 0.068, 0.012), whitePlastic);
   stripBody.position.y = 0.017;
   socket.add(stripBody);
-  const outletMat = std({ color: 0xd8d6d0, roughness: 0.5 });
-  const holeMat = std({ color: 0x1a1a1a, roughness: 0.8 });
-  for (let i = 0; i < 3; i += 1) {
-    const outlet = mesh(rbox(0.045, 0.004, 0.04, 0.008), outletMat, false);
-    outlet.position.set(-0.07 + i * 0.06, 0.0345, 0);
-    socket.add(outlet);
-    for (const dx of [-0.007, 0.007]) {
-      const hole = new THREE.Mesh(track(new THREE.BoxGeometry(0.002, 0.002, 0.008)), holeMat);
-      hole.position.set(-0.07 + i * 0.06 + dx, 0.0366, 0);
-      hole.rotation.y = dx > 0 ? 0.5 : -0.5;
-      socket.add(hole);
-    }
+  const plateMat = std({ color: 0xf6f5f1, roughness: 0.32 });
+  const holeMat = std({ color: 0x0b0b0b, roughness: 0.9 });
+  const slotGeo = track(new THREE.BoxGeometry(1, 1, 1));
+  const slot = (x: number, z: number, length: number, angle: number) => {
+    const hole = new THREE.Mesh(slotGeo, holeMat);
+    hole.scale.set(0.0019, 0.0016, length);
+    hole.position.set(x, 0.0358, z);
+    hole.rotation.y = angle;
+    socket.add(hole);
+  };
+  const outletX = [-0.105, -0.025, 0.055];
+  for (const cx of outletX) {
+    const plate = mesh(rbox(0.068, 0.003, 0.058, 0.006), plateMat, false);
+    plate.position.set(cx, 0.0345, 0);
+    socket.add(plate);
+    slot(cx - 0.0065, 0.016, 0.0068, 0);
+    slot(cx + 0.0065, 0.016, 0.0068, 0);
+    slot(cx, -0.018, 0.0078, 0);
+    slot(cx - 0.009, -0.004, 0.0078, -0.52);
+    slot(cx + 0.009, -0.004, 0.0078, 0.52);
   }
   const switchMat = std({ color: 0xc23a2b, emissive: new THREE.Color(0xff3b2b), emissiveIntensity: 1.4, roughness: 0.4 });
-  const rocker = mesh(rbox(0.024, 0.008, 0.03, 0.004), switchMat, false);
-  rocker.position.set(0.105, 0.037, 0);
+  const rocker = mesh(rbox(0.022, 0.008, 0.03, 0.004), switchMat, false);
+  rocker.position.set(0.128, 0.037, 0);
   socket.add(rocker);
+  const plugMat = std({ color: 0x1c1c1e, roughness: 0.45 });
+  const plug = (cx: number) => {
+    const body = mesh(rbox(0.026, 0.03, 0.019, 0.005), plugMat);
+    body.position.set(cx, 0.036 + 0.015, 0.016);
+    socket.add(body);
+  };
+  plug(outletX[0]);
+  plug(outletX[2]);
+  // 电脑充电器：插头一体的白色适配器，插在中间两孔上。
+  const charger = mesh(rbox(0.048, 0.034, 0.044, 0.008), whitePlastic);
+  charger.position.set(outletX[1], 0.036 + 0.017, 0.012);
+  socket.add(charger);
   scene.add(socket);
   addHotspot("socket", socket, stripBody, 0.004);
 
   const cableMat = std({ color: 0x18181a, roughness: 0.6 });
-  const cable = (points: [number, number, number][]) => {
+  const whiteCableMat = std({ color: 0xf0efeb, roughness: 0.45 });
+  const cable = (points: [number, number, number][], material = cableMat, radius = 0.0032) => {
     const curve = new THREE.CatmullRomCurve3(points.map(([x, y, z]) => new THREE.Vector3(x, y, z)));
-    const tube = mesh(track(new THREE.TubeGeometry(curve, 64, 0.0032, 8, false)), cableMat);
-    scene.add(tube);
+    scene.add(mesh(track(new THREE.TubeGeometry(curve, 96, radius, 8, false)), material));
   };
   const cy = DESK_Y + 0.0032;
-  cable([[0.08, cy + 0.01, -0.45], [-0.1, cy, -0.42], [-0.4, cy, -0.44], [-0.62, cy, -0.4]]);
-  cable([[0.09, cy + 0.012, -0.44], [0.0, cy, -0.36], [-0.05, cy, -0.3], [-0.12, cy + 0.004, -0.28]]);
-  cable([[0.33, cy + 0.01, -0.45], [0.48, cy, -0.42], [0.62, cy, -0.39]]);
-  cable([[0.33, cy + 0.006, -0.46], [0.36, cy, -0.56], [0.36, DESK_Y - 0.08, -0.62], [0.4, 0.15, -0.6], [0.5, 0.02, -0.55]]);
+  const sx = socket.position.x;
+  const sz = socket.position.z;
+  const plugTop = DESK_Y + 0.066;
+  cable([[sx + outletX[0], plugTop, sz + 0.016], [sx + outletX[0], plugTop + 0.012, sz + 0.004], [sx + outletX[0] - 0.01, DESK_Y + 0.02, sz - 0.055], [sx - 0.25, cy, sz - 0.06], [-0.5, cy, -0.47], [-0.64, cy, -0.4]]);
+  cable([[sx + outletX[2], plugTop, sz + 0.016], [sx + outletX[2], plugTop + 0.012, sz + 0.004], [sx + outletX[2] + 0.01, DESK_Y + 0.02, sz - 0.055], [0.42, cy, -0.5], [0.58, cy, -0.42], [0.63, cy + 0.01, -0.37]]);
+  cable([[sx + 0.16, DESK_Y + 0.017, sz], [sx + 0.2, cy, sz - 0.04], [sx + 0.24, DESK_Y - 0.01, -0.6], [sx + 0.26, 0.35, -0.61], [sx + 0.3, 0.02, -0.57]]);
+  // USB-C 线：从充电器前面落到桌面，接到电脑右侧的接口。
+  const portX = -0.02 + 0.17;
+  const portZ = -0.22;
+  cable([[sx + outletX[1], DESK_Y + 0.03, sz + 0.035], [sx + outletX[1], DESK_Y + 0.012, sz + 0.06], [sx + outletX[1] - 0.005, cy, sz + 0.1], [0.2, cy, -0.28], [0.19, cy + 0.002, portZ], [portX + 0.02, DESK_Y + 0.006, portZ]], whiteCableMat, 0.0024);
+  const usbHead = mesh(rbox(0.02, 0.006, 0.009, 0.002), std({ color: 0xe8e8e6, roughness: 0.4 }));
+  usbHead.position.set(portX + 0.01, DESK_Y + 0.006, portZ);
+  scene.add(usbHead);
 
-  /* ---------------- 绿植 ---------------- */
+  /* ---------------- 绿植、笔筒、相框、闹钟（Poly Haven 模型） ---------------- */
   const plant = new THREE.Group();
   plant.position.set(-0.3, DESK_Y, -0.42);
-  const pot = mesh(track(new THREE.CylinderGeometry(0.045, 0.034, 0.075, 32)), std({ color: 0xb8664a, roughness: 0.85 }));
-  pot.position.y = 0.0375;
-  plant.add(pot);
-  const soil = new THREE.Mesh(track(new THREE.CircleGeometry(0.041, 24)), std({ color: 0x2d1d12, roughness: 1 }));
-  soil.rotation.x = -Math.PI / 2;
-  soil.position.y = 0.07;
-  plant.add(soil);
-  const leafGeo = track(new THREE.SphereGeometry(1, 16, 12));
-  const leafMat = std({ color: 0x4d7a41, roughness: 0.55 });
-  const leafRand = seeded(4);
-  for (let i = 0; i < 11; i += 1) {
-    const leaf = mesh(leafGeo, leafMat);
-    const angle = (i / 11) * Math.PI * 2 + leafRand() * 0.4;
-    const tilt = 0.35 + leafRand() * 0.5;
-    leaf.scale.set(0.012, 0.06 + leafRand() * 0.03, 0.005);
-    leaf.position.set(Math.cos(angle) * 0.02, 0.1 + leafRand() * 0.02, Math.sin(angle) * 0.02);
-    leaf.rotation.set(Math.sin(angle) * tilt, -angle, -Math.cos(angle) * tilt);
-    plant.add(leaf);
-  }
   scene.add(plant);
-  addHotspot("plant", plant, pot, 0.006);
+  addHotspot("plant", plant, plant, 0.006);
+  loadModel("potted_plant_04", model => { model.scale.setScalar(0.85); plant.add(model); });
+
+  loadModel("stationery_supplies", model => {
+    const cup = model.getObjectByName("stationery_supplies_pencilcup");
+    if (!cup) return;
+    const holder = new THREE.Group();
+    holder.position.set(-0.7, DESK_Y, -0.12);
+    cup.position.set(0, 0.037, 0);
+    holder.add(cup);
+    ["stationery_supplies_pen_blue", "stationery_supplies_pencil_new_a", "stationery_supplies_pen_fancy", "stationery_supplies_pencil_used"].forEach((name, i) => {
+      const item = model.getObjectByName(name);
+      if (!item) return;
+      const angle = (i / 4) * Math.PI * 2 + 0.4;
+      item.position.set(Math.cos(angle) * 0.014, 0.088, Math.sin(angle) * 0.014);
+      item.rotation.set(0, angle, Math.PI / 2 - 0.13);
+      holder.add(item);
+    });
+    const eraser = model.getObjectByName("stationery_supplies_eraser");
+    if (eraser) { eraser.position.set(0.055, 0.005, 0.03); eraser.rotation.set(0, 0.6, 0); holder.add(eraser); }
+    scene.add(holder);
+  });
+
+  let artwork: THREE.MeshStandardMaterial | null = null;
+  let pendingAvatar = "";
+  const applyAvatar = () => {
+    if (!artwork || !pendingAvatar) return;
+    const url = pendingAvatar;
+    const target = artwork;
+    textureLoader.load(url, texture => {
+      if (disposed) { texture.dispose(); return; }
+      texture.flipY = false;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      disposables.push(texture);
+      target.map = texture;
+      target.needsUpdate = true;
+    });
+  };
+  const frame = new THREE.Group();
+  frame.position.set(0.44, DESK_Y, -0.47);
+  frame.rotation.y = -Math.PI / 2 + 0.45;
+  scene.add(frame);
+  loadModel("standing_picture_frame_01", model => {
+    frame.add(model);
+    model.traverse(child => {
+      const item = child as THREE.Mesh;
+      if (item.isMesh && (item.material as THREE.Material).name.includes("artwork")) artwork = item.material as THREE.MeshStandardMaterial;
+    });
+    applyAvatar();
+  });
+
+  const clockGroup = new THREE.Group();
+  clockGroup.position.set(0.6, DESK_Y, -0.13);
+  clockGroup.rotation.y = -Math.PI / 2 + 0.7;
+  scene.add(clockGroup);
+  loadModel("alarm_clock_01", model => clockGroup.add(model));
 
   /* ---------------- 交互 ---------------- */
   const raycaster = new THREE.Raycaster();
@@ -1028,8 +1113,7 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
     musicLevel = damp(musicLevel, musicOn && powerOn ? 1 : 0, 5, dt);
     spot.intensity = 6 * lampLevel;
     lampGlow.intensity = 0.8 * lampLevel;
-    bulbMat.emissiveIntensity = 3 * lampLevel;
-    shadeInnerMat.emissiveIntensity = 0.25 * lampLevel;
+    lampEmissive.forEach(material => { material.emissiveIntensity = 2.5 * lampLevel; });
     hemi.intensity = 0.06 + 0.26 * lampLevel;
     warmFill.intensity = 0.04 + 0.5 * lampLevel;
     scene.environmentIntensity = 0.08 + 0.16 * lampLevel;
@@ -1061,7 +1145,7 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
     }
 
     renderer.render(scene, camera);
-    if (!readySent) {
+    if (!readySent && assetsReady) {
       readySent = true;
       options.onReady?.();
     }
@@ -1099,13 +1183,18 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
     setPower(on) { powerOn = on; },
     setMusic(playing) { musicOn = playing; },
     pressKeys() { keyPress = 0.9; },
-    setIdentity(name, tagline) {
+    setIdentity(name, tagline, avatar) {
+      // 相框里放头像；只接受站内地址，跨域图片没有 CORS 头时会污染 WebGL 贴图。
+      const sameOrigin = avatar && (avatar.startsWith("/") || avatar.startsWith(location.origin));
+      if (sameOrigin && avatar !== pendingAvatar) { pendingAvatar = avatar; applyAvatar(); }
       posterName = name;
       posterTagline = tagline;
       drawPoster();
       drawLaptop();
     },
     dispose() {
+      disposed = true;
+      window.clearTimeout(readyTimer);
       cancelAnimationFrame(raf);
       resizeObserver.disconnect();
       canvas.removeEventListener("pointermove", onPointerMove);

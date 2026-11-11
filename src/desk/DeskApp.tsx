@@ -1,5 +1,5 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { ArrowLeft, ArrowUp, ChevronLeft, ChevronRight, ExternalLink, Pause, Play, SkipForward, X } from "lucide-react";
+import { Aperture, ArrowLeft, ChevronLeft, ChevronRight, CirclePlus, Compass, Ellipsis, ExternalLink, MessageCircle, Mic, Newspaper, Pause, Play, Search, SkipForward, Smile, Tag, User, UserPlus, Users, X } from "lucide-react";
 import type { PortfolioData, Work } from "../types";
 import { getVisitorKey } from "../tracking";
 import { createDeskScene, type DeskHotspot, type DeskScene } from "./deskScene";
@@ -551,107 +551,208 @@ function useShibaChat(active: boolean) {
   return { config, messages, streaming, send };
 }
 
-function WeChat({ data, onBack, origin }: { data: PortfolioData; onBack(): void; origin: string }) {
-  const [view, setView] = useState<"chats" | "contacts" | "shibaCard" | "ownerCard" | "chat">("chats");
+type WxPage = "chat" | "shiba" | "owner" | "moments";
+type WxTab = "chats" | "contacts" | "discover" | "me";
+
+function WxNav({ title, onBack, tone = "gray", right }: { title?: string; onBack?(): void; tone?: "gray" | "white" | "clear"; right?: ReactNode }) {
+  return (
+    <header className={`desk-wx__nav desk-wx__nav--${tone}`}>
+      <span className="desk-wx__nav-side">{onBack && <button type="button" aria-label="返回" onClick={onBack}><ChevronLeft size={26} strokeWidth={2} /></button>}</span>
+      <strong>{title}</strong>
+      <span className="desk-wx__nav-side desk-wx__nav-side--right">{right}</span>
+    </header>
+  );
+}
+
+function WxAvatar({ src, name, size = 48 }: { src?: string; name: string; size?: number }) {
+  const style = { width: size, height: size };
+  return src ? <img className="desk-wx__avatar" style={style} src={src} alt="" loading="lazy" referrerPolicy="no-referrer" />
+    : <span className="desk-wx__avatar desk-wx__avatar--text" style={style}>{name.slice(-2)}</span>;
+}
+
+function WeChat({ data, origin }: { data: PortfolioData; onBack(): void; origin: string }) {
+  const [tab, setTab] = useState<WxTab>("chats");
+  const [stack, setStack] = useState<WxPage[]>([]);
+  const [direction, setDirection] = useState<"push" | "pop">("push");
   const chat = useShibaChat(true);
   const [input, setInput] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { const list = listRef.current; if (list) list.scrollTop = list.scrollHeight; }, [chat.messages, view]);
-  const lastMessage = [...chat.messages].reverse().find(m => stripThinking(m.content));
-  const preview = lastMessage ? stripThinking(lastMessage.content).slice(0, 18) : chat.config?.opening?.slice(0, 18) || "来聊聊吧～";
+  const top = stack[stack.length - 1];
+  useEffect(() => { const list = listRef.current; if (list) list.scrollTop = list.scrollHeight; }, [chat.messages, top]);
   const owner = data.profile.name || "主人";
-  const offline = chat.config && !chat.config.enabled;
+  const ownerAvatar = data.profile.avatar;
+  const pageCopy = data.profile.pageCopy || {};
+  const offline = Boolean(chat.config && !chat.config.enabled);
+  const lastMessage = [...chat.messages].reverse().find(m => stripThinking(m.content));
+  const preview = lastMessage ? stripThinking(lastMessage.content) : chat.config?.opening || "来聊聊吧～";
+  const unread = !chat.messages.length;
+  const moments = [
+    ...(pageCopy.postList || []).map(post => ({ id: post.id, text: post.text || post.title, images: post.images, date: post.date || "" })),
+    ...(!(pageCopy.postList || []).length ? data.works.map(work => ({ id: work.id, text: `${work.title}\n${work.description || ""}`.trim(), images: work.images || [], date: work.tags?.join(" · ") || "" })) : []),
+  ];
+  const push = (page: WxPage) => { setDirection("push"); setStack(current => [...current, page]); };
+  const pop = () => { setDirection("pop"); setStack(current => current.slice(0, -1)); };
+  const submit = () => { if (!input.trim() || offline) return; void chat.send(input); setInput(""); };
+  const now = clock();
 
-  const back = () => {
-    if (view === "chat" || view === "shibaCard" || view === "ownerCard") return setView(view === "chat" ? "chats" : "contacts");
-    onBack();
+  const tabs: [WxTab, string, typeof MessageCircle][] = [["chats", "微信", MessageCircle], ["contacts", "通讯录", Users], ["discover", "发现", Compass], ["me", "我", User]];
+  const row = (key: string, avatar: ReactNode, title: string, sub?: string, extra?: ReactNode, onClick?: () => void, pinned = false) => (
+    <li key={key}><button type="button" className={`desk-wx__row${pinned ? " is-pinned" : ""}`} onClick={onClick}>
+      {avatar}
+      <span className="desk-wx__row-main"><strong>{title}</strong>{sub !== undefined && <small>{sub}</small>}</span>
+      {extra}
+    </button></li>
+  );
+  const icon = (color: string, glyph: ReactNode) => <span className="desk-wx__icon" style={{ background: color }}>{glyph}</span>;
+
+  const main = (
+    <div className="desk-wx__main">
+      {tab === "chats" && <>
+        <WxNav title={unread ? "微信(1)" : "微信"} right={<CirclePlus size={22} strokeWidth={1.6} />} />
+        <div className="desk-wx__scroll">
+          <div className="desk-wx__search"><Search size={15} />搜索</div>
+          <ul className="desk-wx__list">
+            {row("shiba", <span className="desk-wx__badge-wrap"><WxAvatar src={SHIBA_AVATAR} name="小柴" />{unread && <i className="desk-wx__badge">1</i>}</span>, "小柴", preview, <time>{now}</time>, () => push("chat"), true)}
+            {row("owner", <WxAvatar src={ownerAvatar} name={owner} />, owner, "[名片] 想认识我，可以先看看这里", <time>昨天</time>, () => push("owner"))}
+          </ul>
+        </div>
+      </>}
+      {tab === "contacts" && <>
+        <WxNav title="通讯录" right={<UserPlus size={21} strokeWidth={1.6} />} />
+        <div className="desk-wx__scroll">
+          <div className="desk-wx__search"><Search size={15} />搜索</div>
+          <ul className="desk-wx__list">
+            {row("new", icon("#fa9d3b", <UserPlus size={20} />), "新的朋友")}
+            {row("tag", icon("#2782d7", <Tag size={18} />), "标签")}
+            {row("oa", icon("#2782d7", <Newspaper size={18} />), "公众号")}
+          </ul>
+          <p className="desk-wx__section">星标朋友</p>
+          <ul className="desk-wx__list">
+            {row("c-shiba", <WxAvatar src={SHIBA_AVATAR} name="小柴" size={40} />, "小柴", undefined, undefined, () => push("shiba"))}
+            {row("c-owner", <WxAvatar src={ownerAvatar} name={owner} size={40} />, owner, undefined, undefined, () => push("owner"))}
+          </ul>
+          <p className="desk-wx__count">2个朋友</p>
+        </div>
+      </>}
+      {tab === "discover" && <>
+        <WxNav title="发现" />
+        <div className="desk-wx__scroll">
+          <ul className="desk-wx__list desk-wx__list--gap">
+            {row("moments", icon("linear-gradient(135deg,#f5b33f,#e8554e 45%,#4d8af0 75%,#47c66a)", <Aperture size={18} />), "朋友圈", undefined, <span className="desk-wx__chev"><ChevronRight size={18} /></span>, () => push("moments"))}
+          </ul>
+        </div>
+      </>}
+      {tab === "me" && <>
+        <div className="desk-wx__scroll desk-wx__scroll--white-top">
+          <div className="desk-wx__me">
+            <WxAvatar src={ownerAvatar} name={owner} size={64} />
+            <div><strong>{owner}</strong>{data.contact?.wechat && <small>微信号：{data.contact.wechat}</small>}</div>
+          </div>
+          <ul className="desk-wx__list desk-wx__list--gap">
+            {row("me-moments", icon("linear-gradient(135deg,#f5b33f,#e8554e 45%,#4d8af0 75%,#47c66a)", <Aperture size={18} />), "朋友圈", undefined, <span className="desk-wx__chev"><ChevronRight size={18} /></span>, () => push("moments"))}
+          </ul>
+        </div>
+      </>}
+      <nav className="desk-wx__tabs">
+        {tabs.map(([id, label, Icon]) => (
+          <button key={id} type="button" aria-current={tab === id} onClick={() => setTab(id)}>
+            <span className="desk-wx__badge-wrap"><Icon size={24} strokeWidth={1.6} fill={tab === id ? "currentColor" : "none"} />{id === "chats" && unread && <i className="desk-wx__badge desk-wx__badge--tab">1</i>}</span>
+            {label}
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
+
+  const profile = (who: "shiba" | "owner") => (
+    <div className="desk-wx__page-inner desk-wx__page-inner--profile">
+      <WxNav onBack={pop} tone="white" right={<Ellipsis size={22} />} />
+      <div className="desk-wx__scroll">
+        <div className="desk-wx__profile">
+          <WxAvatar src={who === "shiba" ? SHIBA_AVATAR : ownerAvatar} name={who === "shiba" ? "小柴" : owner} size={62} />
+          <div>
+            <strong>{who === "shiba" ? "小柴" : owner}</strong>
+            {who === "shiba" ? <small>AI 数字分身 · {owner}的助理</small> : data.contact?.wechat ? <small>微信号：{data.contact.wechat}</small> : null}
+            {who === "owner" && data.profile.tagline && <small>{data.profile.tagline}</small>}
+          </div>
+        </div>
+        <ul className="desk-wx__list desk-wx__list--gap">
+          {who === "shiba"
+            ? row("sign", <span />, "个性签名", "熟悉他的作品、经历和想法，有问题随时问我。")
+            : row("p-moments", <span />, "朋友圈", undefined, <span className="desk-wx__thumbs">{moments.flatMap(m => m.images).slice(0, 4).map(url => <img key={url} src={url} alt="" referrerPolicy="no-referrer" />)}</span>, () => push("moments"))}
+        </ul>
+        {who === "owner" && <ContactList contact={data.contact} />}
+        <ul className="desk-wx__list desk-wx__list--gap">
+          <li><button type="button" className="desk-wx__action" onClick={() => push("chat")}><MessageCircle size={18} />{who === "shiba" ? "发消息" : "先和小柴聊聊"}</button></li>
+        </ul>
+      </div>
+    </div>
+  );
+
+  const pages: Record<WxPage, ReactNode> = {
+    chat: (
+      <div className="desk-wx__page-inner desk-wx__page-inner--chat">
+        <WxNav title="小柴" onBack={pop} right={<Ellipsis size={22} />} />
+        <div className="desk-wx__messages" ref={listRef}>
+          <p className="desk-wx__time">{now}</p>
+          {offline && <p className="desk-wx__system">小柴暂时不在线，晚点再来找她吧。</p>}
+          {!chat.messages.length && !offline && (
+            <div className="desk-wx__msg desk-wx__msg--assistant"><WxAvatar src={SHIBA_AVATAR} name="小柴" size={40} /><p className="desk-wx__bubble">{chat.config?.opening || `你好，我是小柴，${owner}的 AI 助理。想了解他的什么？`}</p></div>
+          )}
+          {chat.messages.map((message, i) => {
+            const content = stripThinking(message.content);
+            const pending = message.role === "assistant" && !content && chat.streaming && i === chat.messages.length - 1;
+            return (
+              <div key={i} className={`desk-wx__msg desk-wx__msg--${message.role}`}>
+                {message.role === "assistant" && <WxAvatar src={SHIBA_AVATAR} name="小柴" size={40} />}
+                <p className={`desk-wx__bubble${message.error ? " is-error" : ""}`}>{pending ? <span className="desk-typing"><i /><i /><i /></span> : content}</p>
+                {message.role === "user" && <span className="desk-wx__me-avatar" aria-hidden="true"><User size={22} /></span>}
+              </div>
+            );
+          })}
+          {!chat.messages.length && !offline && chat.config?.suggestions?.length ? (
+            <div className="desk-chat__suggest">{chat.config.suggestions.map(item => <button key={item} type="button" onClick={() => void chat.send(item)}>{item}</button>)}</div>
+          ) : null}
+        </div>
+        <form className="desk-wx__input" onSubmit={event => { event.preventDefault(); submit(); }}>
+          <span className="desk-wx__round" aria-hidden="true"><Mic size={17} /></span>
+          <input value={input} onChange={event => setInput(event.target.value)} disabled={offline} maxLength={800} aria-label="给小柴发消息" />
+          <Smile size={27} strokeWidth={1.4} aria-hidden="true" />
+          {input.trim() ? <button type="submit" className="desk-wx__send" disabled={chat.streaming}>发送</button> : <CirclePlus size={27} strokeWidth={1.4} aria-hidden="true" />}
+        </form>
+      </div>
+    ),
+    shiba: profile("shiba"),
+    owner: profile("owner"),
+    moments: (
+      <div className="desk-wx__page-inner desk-wx__page-inner--moments">
+        <WxNav onBack={pop} tone="clear" right={<Aperture size={20} />} />
+        <div className="desk-wx__scroll desk-wx__scroll--flush">
+          <div className="desk-wx__cover" style={{ backgroundImage: moments[0]?.images[0] ? `url("${moments[0].images[0]}")` : undefined }}>
+            <span>{owner}</span>
+            <WxAvatar src={ownerAvatar} name={owner} size={64} />
+          </div>
+          {moments.length ? moments.map(item => (
+            <article key={item.id} className="desk-wx__moment">
+              <WxAvatar src={ownerAvatar} name={owner} size={42} />
+              <div>
+                <strong>{owner}</strong>
+                {paragraphs(item.text).slice(0, 4).map((line, i) => <p key={i}>{line}</p>)}
+                {item.images.length ? <div className={`desk-wx__grid desk-wx__grid--${Math.min(item.images.length, 3)}`}>{item.images.slice(0, 9).map(url => <img key={url} src={url} alt="" loading="lazy" referrerPolicy="no-referrer" />)}</div> : null}
+                {item.date && <time>{item.date}</time>}
+              </div>
+            </article>
+          )) : <Empty>朋友圈还没有内容。</Empty>}
+        </div>
+      </div>
+    ),
   };
-  const submit = () => { if (!input.trim()) return; void chat.send(input); setInput(""); };
-  const title = view === "chat" ? "小柴" : view === "contacts" ? "通讯录" : view === "shibaCard" || view === "ownerCard" ? "" : "微信";
 
   return (
-    <AppView title={title} origin={origin} onBack={back} tone="light">
-      <div className={`desk-wechat desk-wechat--${view}`}>
-        {view === "chats" && (
-          <ul className="desk-wechat__list">
-            <li><button type="button" onClick={() => setView("chat")}>
-              <Img className="desk-wechat__avatar" src={SHIBA_AVATAR} alt="" />
-              <span><strong>小柴</strong><small>{preview}</small></span>
-              <time>刚刚</time>
-            </button></li>
-            <li><button type="button" onClick={() => setView("ownerCard")}>
-              <span className="desk-wechat__avatar desk-wechat__avatar--text">{owner.slice(-2)}</span>
-              <span><strong>{owner}</strong><small>想认识我？看看我的名片</small></span>
-              <time>昨天</time>
-            </button></li>
-          </ul>
-        )}
-        {view === "contacts" && (
-          <ul className="desk-wechat__list">
-            <li className="desk-wechat__section">AI 助理</li>
-            <li><button type="button" onClick={() => setView("shibaCard")}><Img className="desk-wechat__avatar" src={SHIBA_AVATAR} alt="" /><span><strong>小柴</strong><small>{owner}的 AI 数字分身</small></span></button></li>
-            <li className="desk-wechat__section">好友</li>
-            <li><button type="button" onClick={() => setView("ownerCard")}><span className="desk-wechat__avatar desk-wechat__avatar--text">{owner.slice(-2)}</span><span><strong>{owner}</strong><small>{data.profile.tagline || "本机主人"}</small></span></button></li>
-          </ul>
-        )}
-        {view === "shibaCard" && (
-          <div className="desk-wechat__card">
-            <Img className="desk-wechat__card-avatar" src={SHIBA_AVATAR} alt="小柴" />
-            <h3>小柴</h3>
-            <p>{owner}的 AI 数字分身，熟悉他的作品、经历和想法。</p>
-            <dl><div><dt>备注</dt><dd>AI 助理</dd></div><div><dt>来源</dt><dd>书桌上的手机</dd></div></dl>
-            <button type="button" className="desk-wechat__primary" onClick={() => setView("chat")}>发消息</button>
-          </div>
-        )}
-        {view === "ownerCard" && (
-          <div className="desk-wechat__card">
-            {data.profile.avatar ? <Img className="desk-wechat__card-avatar" src={data.profile.avatar} alt={owner} /> : <span className="desk-wechat__card-avatar desk-wechat__avatar--text">{owner.slice(-2)}</span>}
-            <h3>{owner}</h3>
-            {data.profile.tagline && <p>{data.profile.tagline}</p>}
-            <ContactList contact={data.contact} />
-            <button type="button" className="desk-wechat__primary" onClick={() => setView("chat")}>先和小柴聊聊</button>
-          </div>
-        )}
-        {view === "chat" && (
-          <div className="desk-chat">
-            <div className="desk-chat__list" ref={listRef}>
-              {offline && <p className="desk-chat__system">小柴暂时不在线，晚点再来找她吧。</p>}
-              {!chat.messages.length && !offline && (
-                <div className="desk-chat__row desk-chat__row--assistant">
-                  <Img className="desk-chat__avatar" src={SHIBA_AVATAR} alt="" />
-                  <p className="desk-chat__bubble">{chat.config?.opening || `你好，我是小柴，${owner}的 AI 助理。想了解他的什么？`}</p>
-                </div>
-              )}
-              {chat.messages.map((message, i) => {
-                const content = stripThinking(message.content);
-                const pending = message.role === "assistant" && !content && chat.streaming && i === chat.messages.length - 1;
-                return (
-                  <div key={i} className={`desk-chat__row desk-chat__row--${message.role}`}>
-                    {message.role === "assistant" && <Img className="desk-chat__avatar" src={SHIBA_AVATAR} alt="" />}
-                    <p className={`desk-chat__bubble${message.error ? " is-error" : ""}`}>{pending ? <span className="desk-typing"><i /><i /><i /></span> : content}</p>
-                  </div>
-                );
-              })}
-              {!chat.messages.length && !offline && chat.config?.suggestions?.length ? (
-                <div className="desk-chat__suggest">
-                  {chat.config.suggestions.map(item => <button key={item} type="button" onClick={() => void chat.send(item)}>{item}</button>)}
-                </div>
-              ) : null}
-            </div>
-            <form className="desk-chat__input" onSubmit={event => { event.preventDefault(); submit(); }}>
-              <input value={input} onChange={event => setInput(event.target.value)} placeholder={offline ? "小柴暂时不在线" : "发消息"} disabled={Boolean(offline)} maxLength={800} aria-label="给小柴发消息" />
-              <button type="submit" disabled={!input.trim() || chat.streaming || Boolean(offline)} aria-label="发送"><ArrowUp size={16} /></button>
-            </form>
-          </div>
-        )}
-      </div>
-      {(view === "chats" || view === "contacts") && (
-        <nav className="desk-wechat__tabs">
-          <button type="button" aria-current={view === "chats"} onClick={() => setView("chats")}>微信</button>
-          <button type="button" aria-current={view === "contacts"} onClick={() => setView("contacts")}>通讯录</button>
-        </nav>
-      )}
-    </AppView>
+    <section className="desk-app desk-wx" style={{ transformOrigin: origin }}>
+      {main}
+      {top && <div key={stack.length} className={`desk-wx__page desk-wx__page--${direction}`}>{pages[top]}</div>}
+    </section>
   );
 }
 
@@ -932,7 +1033,7 @@ export default function DeskApp() {
     return () => { scene.dispose(); sceneRef.current = null; };
   }, [select]);
 
-  useEffect(() => { sceneRef.current?.setIdentity(data.profile.name, data.profile.tagline); }, [data, ready]);
+  useEffect(() => { sceneRef.current?.setIdentity(data.profile.name, data.profile.tagline, data.profile.avatar); }, [data, ready]);
   useEffect(() => { sceneRef.current?.setLamp(lampOn); }, [lampOn, ready]);
   useEffect(() => {
     sceneRef.current?.setPower(powerOn);

@@ -141,9 +141,7 @@
 }
 .desk-device[data-phase="measure"], .desk-device[data-phase="from"] { transition: none; }
 .desk-device[data-phase="leave"] { transition-duration: 520ms; transition-timing-function: cubic-bezier(.5, 0, .2, 1); }
-.desk-device__content { width: 100%; height: 100%; opacity: 0; transition: opacity 260ms ease 120ms; }
-.desk-device[data-phase="open"] .desk-device__content { opacity: 1; }
-.desk-device[data-phase="leave"] .desk-device__content { opacity: 0; transition-delay: 0ms; transition-duration: 180ms; }
+.desk-device__content { width: 100%; height: 100%; }
 
 .desk-device--laptop { width: min(1040px, 94vw); height: min(660px, 84vh); border-radius: 14px; background: #f5efe7; }
 .desk-device--tablet { width: min(900px, 94vw); height: min(640px, 80vh); border-radius: 30px; background: #1f4e5f; border: 10px solid #121316; }
@@ -288,16 +286,6 @@
 .desk-notify small { font-size: .82rem; color: #444; }
 
 /* ---------- 微信 ---------- */
-.desk-wechat { min-height: 100%; margin: -16px; background: #ededed; color: #111; }
-.desk-wechat__list { list-style: none; margin: 0; padding: 0; background: #fff; }
-.desk-wechat__list li + li button { border-top: 1px solid #eee; }
-.desk-wechat__list button { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 16px; border: 0; background: #fff; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.desk-wechat__list button:active { background: #f2f2f2; }
-.desk-wechat__list span { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.desk-wechat__list strong { font-size: .95rem; font-weight: 500; }
-.desk-wechat__list small { color: #999; font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.desk-wechat__list time { align-self: flex-start; color: #b2b2b2; font-size: .7rem; }
-.desk-wechat__section { padding: 6px 16px; background: #ededed; color: #888; font-size: .75rem; }
 .desk-wechat__avatar { width: 44px; height: 44px; flex: none; border-radius: 6px; object-fit: cover; background: #f4d9b0; }
 .desk-wechat__avatar--text { display: grid; place-items: center; background: linear-gradient(140deg, #c2502f, #e9905f); color: #fff; font-size: .85rem; font-weight: 600; }
 .desk-wechat__card { padding: 26px 20px; text-align: center; background: #fff; min-height: 100%; animation: desk-fade-up 320ms cubic-bezier(.2, .9, .22, 1); }
@@ -310,31 +298,93 @@
 .desk-wechat__card dd { margin: 0; }
 .desk-wechat__card .desk-contact { grid-template-columns: 1fr; text-align: left; margin-bottom: 1rem; }
 .desk-wechat__primary { width: 100%; padding: .75rem; border: 0; border-radius: 8px; background: #07c160; color: #fff; font: inherit; font-size: .95rem; cursor: pointer; }
-.desk-wechat__tabs { flex: none; display: grid; grid-template-columns: 1fr 1fr; padding: 6px 0 22px; background: #f7f7f7; border-top: 1px solid #e5e5e5; }
-.desk-wechat__tabs button { border: 0; background: none; color: #555; font: inherit; font-size: .78rem; padding: 6px; cursor: pointer; }
-.desk-wechat__tabs button[aria-current="true"] { color: #07c160; font-weight: 600; }
-.desk-app:has(.desk-wechat) { background: #ededed; }
-.desk-app:has(.desk-wechat--chat) .desk-app__body { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
-.desk-wechat--chat { flex: 1; min-height: 0; margin: 0; display: flex; flex-direction: column; }
-.desk-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.desk-chat__list { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 12px; display: flex; flex-direction: column; gap: 12px; overscroll-behavior: contain; }
-.desk-chat__row { display: flex; align-items: flex-start; gap: 8px; animation: desk-fade-up 260ms ease; }
-.desk-chat__row--user { justify-content: flex-end; }
-.desk-chat__avatar { width: 36px; height: 36px; flex: none; border-radius: 5px; object-fit: cover; }
-.desk-chat__bubble { position: relative; max-width: 74%; margin: 0; padding: 9px 12px; border-radius: 6px; background: #fff; font-size: .9rem; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
-.desk-chat__row--user .desk-chat__bubble { background: #95ec69; }
-.desk-chat__bubble.is-error { color: #b4442e; }
-.desk-chat__system { align-self: center; margin: 0; padding: 4px 10px; border-radius: 6px; background: rgba(0, 0, 0, .08); color: #666; font-size: .75rem; }
-.desk-chat__suggest { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 44px; }
-.desk-chat__suggest button { padding: .35rem .7rem; border: 1px solid #d6d6d6; border-radius: 999px; background: #fff; color: #333; font: inherit; font-size: .78rem; cursor: pointer; }
-.desk-chat__input { flex: none; display: flex; gap: 8px; padding: 8px 10px 26px; background: #f7f7f7; border-top: 1px solid #e2e2e2; }
-.desk-chat__input input { flex: 1; min-width: 0; padding: .55rem .7rem; border: 0; border-radius: 6px; background: #fff; color: #111; font: inherit; font-size: .9rem; outline: none; }
-.desk-chat__input button { width: 38px; flex: none; border: 0; border-radius: 6px; display: grid; place-items: center; background: #07c160; color: #fff; cursor: pointer; transition: opacity 200ms ease; }
-.desk-chat__input button:disabled { opacity: .4; cursor: default; }
 .desk-typing { display: inline-flex; gap: 4px; padding: 4px 0; }
 .desk-typing i { width: 6px; height: 6px; border-radius: 50%; background: #aaa; animation: desk-dot 1s ease-in-out infinite; }
 .desk-typing i:nth-child(2) { animation-delay: .15s; }
 .desk-typing i:nth-child(3) { animation-delay: .3s; }
+
+
+/* ---------- 微信（按 iOS 版微信的比例还原） ---------- */
+.desk-wx { background: #ededed; color: #191919; font-size: 16px; overflow: hidden; }
+.desk-wx__main, .desk-wx__page-inner { position: absolute; inset: 0; display: flex; flex-direction: column; background: #ededed; }
+.desk-wx__page { position: absolute; inset: 0; z-index: 2; }
+.desk-wx__page--push { animation: desk-wx-push 360ms cubic-bezier(.2, .9, .22, 1); box-shadow: -8px 0 24px rgba(0, 0, 0, .12); }
+.desk-wx__page--pop { animation: desk-wx-pop 300ms cubic-bezier(.2, .9, .22, 1); }
+.desk-wx__nav { flex: none; display: grid; grid-template-columns: 64px 1fr 64px; align-items: center; height: 44px; margin-top: 44px; padding: 0 6px; background: #ededed; }
+.desk-wx__page-inner--profile .desk-wx__nav, .desk-wx__nav--white { background: #fff; }
+.desk-wx__nav--clear { position: absolute; z-index: 3; left: 0; right: 0; background: transparent; color: #fff; }
+.desk-wx__nav strong { text-align: center; font-size: 17px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.desk-wx__nav-side { display: flex; align-items: center; color: inherit; }
+.desk-wx__nav-side--right { justify-content: flex-end; padding-right: 8px; }
+.desk-wx__nav-side button { display: grid; place-items: center; padding: 4px; border: 0; background: none; color: inherit; cursor: pointer; }
+.desk-wx__scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.desk-wx__scroll--white-top { background: linear-gradient(#fff 0 180px, #ededed 180px); padding-top: 44px; }
+.desk-wx__scroll--flush { background: #fff; }
+.desk-wx__search { display: flex; align-items: center; justify-content: center; gap: 6px; height: 36px; margin: 0 8px 8px; border-radius: 6px; background: #fff; color: #b2b2b2; font-size: 15px; }
+.desk-wx__list { list-style: none; margin: 0; padding: 0; background: #fff; }
+.desk-wx__list--gap { margin-top: 8px; }
+.desk-wx__row { width: 100%; display: flex; align-items: center; gap: 12px; padding: 0 16px; min-height: 56px; border: 0; background: #fff; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.desk-wx__row.is-pinned { background: #f7f7f7; }
+.desk-wx__row:active { background: #e5e5e5; }
+.desk-wx__row-main { flex: 1; min-width: 0; align-self: stretch; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 12px 0; border-bottom: .5px solid #e5e5e5; }
+.desk-wx__list li:last-child .desk-wx__row-main { border-bottom: 0; }
+.desk-wx__row-main strong { font-size: 17px; font-weight: 400; color: #191919; }
+.desk-wx__row-main small { font-size: 14px; color: #b2b2b2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.desk-wx__row time { align-self: flex-start; margin-top: 14px; font-size: 12px; color: #b2b2b2; }
+.desk-wx__chev { color: #c7c7c7; display: flex; }
+.desk-wx__avatar { flex: none; border-radius: 6px; object-fit: cover; background: #f2d5ab; }
+.desk-wx__avatar--text { display: grid; place-items: center; background: linear-gradient(140deg, #c2502f, #e9905f); color: #fff; font-size: 15px; font-weight: 600; }
+.desk-wx__icon { flex: none; width: 40px; height: 40px; border-radius: 6px; display: grid; place-items: center; color: #fff; }
+.desk-wx__badge-wrap { position: relative; display: inline-flex; flex: none; }
+.desk-wx__badge { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #fa5151; color: #fff; font-size: 12px; font-style: normal; line-height: 18px; text-align: center; }
+.desk-wx__badge--tab { top: -3px; right: -10px; }
+.desk-wx__section { margin: 0; padding: 8px 16px 4px; color: #7f7f7f; font-size: 13px; }
+.desk-wx__count { margin: 0; padding: 14px; text-align: center; color: #9a9a9a; font-size: 14px; }
+.desk-wx__tabs { flex: none; display: grid; grid-template-columns: repeat(4, 1fr); padding: 6px 0 24px; background: #f7f7f7; border-top: .5px solid #d9d9d9; }
+.desk-wx__tabs button { display: flex; flex-direction: column; align-items: center; gap: 2px; border: 0; background: none; color: #191919; font: inherit; font-size: 10px; cursor: pointer; }
+.desk-wx__tabs button[aria-current="true"] { color: #07c160; }
+.desk-wx__me { display: flex; align-items: center; gap: 18px; padding: 36px 24px 40px; background: #fff; }
+.desk-wx__me strong, .desk-wx__profile strong { display: block; font-size: 21px; font-weight: 600; }
+.desk-wx__me small, .desk-wx__profile small { display: block; margin-top: 4px; color: #7f7f7f; font-size: 14px; }
+.desk-wx__profile { display: flex; align-items: flex-start; gap: 18px; padding: 8px 24px 28px; background: #fff; }
+.desk-wx__thumbs { display: flex; gap: 4px; }
+.desk-wx__thumbs img { width: 48px; height: 48px; object-fit: cover; }
+.desk-wx__page-inner .desk-contact { margin: 8px 0 0; padding: 12px 16px; background: #fff; grid-template-columns: 1fr; }
+.desk-wx__action { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 56px; border: 0; background: #fff; color: #576b95; font: inherit; font-size: 17px; cursor: pointer; }
+.desk-wx__messages { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 16px; overscroll-behavior: contain; }
+.desk-wx__time { align-self: center; margin: 4px 0 0; color: #b2b2b2; font-size: 13px; }
+.desk-wx__system { align-self: center; margin: 0; padding: 4px 8px; border-radius: 4px; background: #dadada; color: #fff; font-size: 13px; }
+.desk-wx__msg { display: flex; align-items: flex-start; gap: 10px; animation: desk-fade-up 240ms ease; }
+.desk-wx__msg--user { justify-content: flex-end; }
+.desk-wx__bubble { position: relative; max-width: calc(100% - 110px); margin: 0; padding: 10px 12px; border-radius: 4px; background: #fff; color: #191919; font-size: 16px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.desk-wx__bubble::before { content: ""; position: absolute; top: 14px; width: 0; height: 0; border: 6px solid transparent; }
+.desk-wx__msg--assistant .desk-wx__bubble::before { left: -11px; border-right-color: #fff; }
+.desk-wx__msg--user .desk-wx__bubble { background: #95ec69; }
+.desk-wx__msg--user .desk-wx__bubble::before { right: -11px; border-left-color: #95ec69; }
+.desk-wx__bubble.is-error { color: #fa5151; }
+.desk-wx__me-avatar { flex: none; width: 40px; height: 40px; border-radius: 6px; display: grid; place-items: center; background: #c9d4e0; color: #fff; }
+.desk-wx__input { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 10px 26px; background: #f7f7f7; border-top: .5px solid #d9d9d9; color: #191919; }
+.desk-wx__round { flex: none; width: 27px; height: 27px; border: 1.4px solid #191919; border-radius: 50%; display: grid; place-items: center; }
+.desk-wx__input input { flex: 1; min-width: 0; height: 38px; padding: 0 10px; border: 0; border-radius: 4px; background: #fff; color: #191919; font: inherit; font-size: 16px; outline: none; }
+.desk-wx__send { flex: none; height: 32px; padding: 0 12px; border: 0; border-radius: 4px; background: #07c160; color: #fff; font: inherit; font-size: 15px; cursor: pointer; }
+.desk-wx__send:disabled { opacity: .5; }
+.desk-wx__cover { position: relative; height: 300px; margin-bottom: 44px; background: linear-gradient(135deg, #47596e, #a07a62) center / cover; }
+.desk-wx__cover span { position: absolute; right: 96px; bottom: -6px; color: #fff; font-size: 18px; font-weight: 600; text-shadow: 0 1px 4px rgba(0, 0, 0, .5); }
+.desk-wx__cover .desk-wx__avatar { position: absolute; right: 16px; bottom: -24px; border-radius: 8px; }
+.desk-wx__moment { display: flex; gap: 10px; padding: 14px 16px; border-bottom: .5px solid #eee; }
+.desk-wx__moment > div { flex: 1; min-width: 0; }
+.desk-wx__moment strong { color: #576b95; font-size: 16px; font-weight: 600; }
+.desk-wx__moment p { margin: 4px 0; font-size: 15px; line-height: 1.5; }
+.desk-wx__moment time { display: block; margin-top: 8px; color: #b2b2b2; font-size: 12px; }
+.desk-wx__grid { display: grid; gap: 4px; margin-top: 8px; max-width: 250px; }
+.desk-wx__grid--1 { grid-template-columns: 1fr; max-width: 180px; }
+.desk-wx__grid--2 { grid-template-columns: repeat(2, 1fr); max-width: 170px; }
+.desk-wx__grid--3 { grid-template-columns: repeat(3, 1fr); }
+.desk-wx__grid img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+.desk-wx__grid--1 img { aspect-ratio: auto; max-height: 220px; }
+.desk-phone:has(.desk-wx__page-inner--moments) .desk-phone__status { color: #fff; }
+@keyframes desk-wx-push { from { transform: translateX(100%); } }
+@keyframes desk-wx-pop { from { transform: translateX(-28%); opacity: .7; } }
 
 /* ---------- 纸质笔记本 ---------- */
 .desk-book { position: relative; height: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 0; padding: 14px; perspective: 1600px; }
