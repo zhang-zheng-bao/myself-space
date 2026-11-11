@@ -6,17 +6,88 @@ type Rtc = {
   setChannelProfile(profile: string): void | Promise<void>;
   setDefaultSubscribeAllRemoteAudioStreams(enabled: boolean): void;
   setDefaultSubscribeAllRemoteVideoStreams(enabled: boolean): void;
-  enableAudioVolumeIndication(interval: number): void;
   joinChannel(token: string, name: string): Promise<void>;
   leaveChannel(): Promise<void>;
   publishLocalAudioStream(enabled: boolean): Promise<void>;
+  switchMicrophone(deviceId: string): Promise<void>;
+  setRecordingVolume(volume: number): void;
   publishLocalVideoStream(enabled: boolean): Promise<void>;
   setRemoteViewConfig(video: HTMLVideoElement, user: string, stream: number): void;
   destroy(): void;
 };
 type RtcSDK = { isSupported(): Promise<{ support: boolean }>; getInstance(): Rtc };
 const sdkUrl = 'https://g.alicdn.com/apsara-media-box/imp-web-rtc/7.1.9/aliyun-rtc-sdk.js';
+const microphoneStorageKey = 'assistant-call-mic';
+const microphoneGainStorageKey = 'assistant-call-mic-gain';
+const microphoneGains = [100, 150, 200, 300] as const;
+type MicrophoneGain = typeof microphoneGains[number];
+type LevelMonitorCallbacks = {
+  onLevel(level: number): void;
+  onReady?(): void;
+  onError?(error: unknown): void;
+  onRequest?(request: Promise<MediaStream>): void;
+};
 let sdkPromise: Promise<RtcSDK> | undefined;
+function readStoredMicrophone() {
+  if (typeof window === 'undefined') return '';
+  try { return window.localStorage.getItem(microphoneStorageKey) || ''; }
+  catch { return ''; }
+}
+function readStoredMicrophoneGain(): MicrophoneGain {
+  if (typeof window === 'undefined') return 100;
+  try {
+    const gain = Number(window.localStorage.getItem(microphoneGainStorageKey));
+    return microphoneGains.includes(gain as MicrophoneGain) ? gain as MicrophoneGain : 100;
+  } catch { return 100; }
+}
+function displayMicrophoneLevel(rawLevel: number) {
+  return Math.round(Math.sqrt(Math.max(0, Math.min(100, rawLevel)) / 100) * 100);
+}
+function startLevelMonitor(deviceId: string, callbacks: LevelMonitorCallbacks) {
+  let stream: MediaStream | null = null;
+  let context: AudioContext | null = null;
+  let interval: number | null = null;
+  let disposed = false;
+  const dispose = () => {
+    disposed = true;
+    if (interval !== null) window.clearInterval(interval);
+    interval = null;
+    stream?.getTracks().forEach(track => track.stop());
+    stream = null;
+    const activeContext = context;
+    context = null;
+    if (activeContext && activeContext.state !== 'closed') void activeContext.close().catch(() => {});
+  };
+  const start = async () => {
+    try {
+      const request = navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: deviceId ? { exact: deviceId } : undefined, echoCancellation: true },
+      });
+      callbacks.onRequest?.(request);
+      stream = await request;
+      if (disposed) { stream.getTracks().forEach(track => track.stop()); stream = null; return; }
+      callbacks.onReady?.();
+      context = new AudioContext();
+      await context.resume();
+      if (disposed) { dispose(); return; }
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 256;
+      context.createMediaStreamSource(stream).connect(analyser);
+      const samples = new Uint8Array(analyser.frequencyBinCount);
+      interval = window.setInterval(() => {
+        if (disposed) return;
+        analyser.getByteFrequencyData(samples);
+        callbacks.onLevel(Math.min(100, Math.round(samples.reduce((total, sample) => total + sample, 0) / samples.length)));
+      }, 80);
+    } catch (error) {
+      const wasDisposed = disposed;
+      dispose();
+      if (!wasDisposed) callbacks.onError?.(error);
+    }
+  };
+  void start();
+  return dispose;
+}
 function loadSdk() {
   const sdk = () => (window as Window & { AliRtcEngine?: RtcSDK }).AliRtcEngine;
   if (sdk()) return Promise.resolve(sdk()!);
@@ -48,12 +119,174 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
   const [micLevel, setMicLevel] = useState(0);
   const [captionsEnabled, setCaptionsEnabled] = useState(true);
   const [availability, setAvailability] = useState<'checking' | 'ready' | 'preview' | 'disabled' | 'error'>('checking');
+  const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
+  const [microphoneId, setMicrophoneId] = useState(readStoredMicrophone);
+  const [microphoneGain, setMicrophoneGain] = useState(readStoredMicrophoneGain);
+  const [microphoneTestActive, setMicrophoneTestActive] = useState(false);
+  const [microphoneDeviceChangeVersion, setMicrophoneDeviceChangeVersion] = useState(0);
+  const [silenceHint, setSilenceHint] = useState(false);
   const captionId = useRef(0);
   const captionBox = useRef<HTMLDivElement>(null);
+  const microphoneIdRef = useRef(microphoneId);
+  const microphoneGainRef = useRef(microphoneGain);
+  const phaseRef = useRef(phase);
+  const microphoneTest = useRef<(() => void) | null>(null);
+  const microphoneTestRequest = useRef<Promise<MediaStream> | null>(null);
+  const microphoneTestGeneration = useRef(0);
+  const callMicrophoneMonitor = useRef<(() => void) | null>(null);
+  const silenceTimer = useRef<number | null>(null);
+
+  function saveMicrophoneId(deviceId: string) {
+    microphoneIdRef.current = deviceId;
+    setMicrophoneId(deviceId);
+    try {
+      if (deviceId) window.localStorage.setItem(microphoneStorageKey, deviceId);
+      else window.localStorage.removeItem(microphoneStorageKey);
+    } catch { /* storage may be unavailable */ }
+  }
+  function saveMicrophoneGain(gain: MicrophoneGain) {
+    microphoneGainRef.current = gain;
+    setMicrophoneGain(gain);
+    try { window.localStorage.setItem(microphoneGainStorageKey, String(gain)); }
+    catch { /* storage may be unavailable */ }
+  }
+  function resolveMicrophoneId(deviceId: string, devices = microphones) {
+    if (deviceId) return deviceId;
+    return devices.find(device => device.deviceId === 'default')?.deviceId || devices[0]?.deviceId || '';
+  }
+  function disposeMicrophoneTest() {
+    microphoneTestGeneration.current++;
+    const dispose = microphoneTest.current;
+    microphoneTest.current = null;
+    dispose?.();
+  }
+  function stopMicrophoneTest() {
+    disposeMicrophoneTest();
+    setMicrophoneTestActive(false);
+    setMicLevel(0);
+  }
+  async function refreshMicrophones() {
+    try {
+      const devices = (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === 'audioinput');
+      setMicrophones(devices);
+      const selected = microphoneIdRef.current;
+      if (selected && !devices.some(device => device.deviceId === selected)) {
+        stopMicrophoneTest();
+        saveMicrophoneId('');
+        const engine = rtc.current;
+        if (phaseRef.current === 'connected' && engine) {
+          const fallback = resolveMicrophoneId('', devices);
+          if (fallback) {
+            try { await engine.switchMicrophone(fallback); }
+            catch { if (rtc.current === engine) setMessage('切换麦克风失败，请重试。'); }
+          } else setMessage('切换麦克风失败，请重试。');
+        }
+      }
+      return devices;
+    } catch { return []; }
+  }
+  async function selectMicrophone(deviceId: string) {
+    stopMicrophoneTest();
+    saveMicrophoneId(deviceId);
+    const engine = rtc.current;
+    if (phaseRef.current !== 'connected' || !engine) return;
+    const targetId = resolveMicrophoneId(deviceId);
+    if (!targetId) { setMessage('切换麦克风失败，请重试。'); return; }
+    try { await engine.switchMicrophone(targetId); }
+    catch { if (rtc.current === engine) setMessage('切换麦克风失败，请重试。'); }
+  }
+  async function selectMicrophoneGain(value: string) {
+    const gain = Number(value);
+    if (!microphoneGains.includes(gain as MicrophoneGain)) return;
+    saveMicrophoneGain(gain as MicrophoneGain);
+    const engine = rtc.current;
+    if (phaseRef.current !== 'connected' || !engine) return;
+    try { await engine.setRecordingVolume(gain); }
+    catch { if (rtc.current === engine) setMessage('调整麦克风增益失败，请重试。'); }
+  }
+  async function toggleMicrophoneTest() {
+    if (microphoneTestActive) { stopMicrophoneTest(); return; }
+    const generation = ++microphoneTestGeneration.current;
+    const selected = microphoneIdRef.current;
+    setMicrophoneTestActive(true);
+    setMicLevel(0);
+    setMessage('');
+    microphoneTest.current = startLevelMonitor(selected, {
+      onRequest: request => {
+        microphoneTestRequest.current = request;
+        void request.then(() => {
+          if (microphoneTestRequest.current === request) microphoneTestRequest.current = null;
+        }, () => {
+          if (microphoneTestRequest.current === request) microphoneTestRequest.current = null;
+        });
+      },
+      onReady: () => { void refreshMicrophones(); },
+      onLevel: level => {
+        if (generation === microphoneTestGeneration.current) setMicLevel(level);
+      },
+      onError: error => {
+        if (generation !== microphoneTestGeneration.current) return;
+        setMicrophoneTestActive(false);
+        setMicLevel(0);
+        setMessage(error instanceof Error ? error.message : '无法试用麦克风，请检查权限和设备。');
+      },
+    });
+  }
+
   useEffect(() => {
     const box = captionBox.current;
     if (box) box.scrollTop = box.scrollHeight;
   }, [captions]);
+  useEffect(() => {
+    const mediaDevices = navigator.mediaDevices;
+    const onDeviceChange = () => {
+      stopMicrophoneTest();
+      setMicrophoneDeviceChangeVersion(version => version + 1);
+      void refreshMicrophones();
+    };
+    void refreshMicrophones();
+    mediaDevices?.addEventListener('devicechange', onDeviceChange);
+    return () => {
+      mediaDevices?.removeEventListener('devicechange', onDeviceChange);
+      disposeMicrophoneTest();
+    };
+  }, []);
+  useEffect(() => {
+    if (phase !== 'connected' || muted) {
+      callMicrophoneMonitor.current?.();
+      callMicrophoneMonitor.current = null;
+      setMicLevel(0);
+      return;
+    }
+    setMicLevel(0);
+    const dispose = startLevelMonitor(microphoneId, {
+      onReady: () => { void refreshMicrophones(); },
+      onLevel: level => {
+        if (phaseRef.current === 'connected' && !muted) setMicLevel(level);
+      },
+      onError: () => { setMicLevel(0); },
+    });
+    callMicrophoneMonitor.current = dispose;
+    return () => {
+      dispose();
+      if (callMicrophoneMonitor.current === dispose) callMicrophoneMonitor.current = null;
+    };
+  }, [phase, muted, microphoneId, microphoneDeviceChangeVersion]);
+  useEffect(() => {
+    if (phase !== 'connected' || muted || micLevel >= 2) {
+      if (silenceTimer.current !== null) window.clearTimeout(silenceTimer.current);
+      silenceTimer.current = null;
+      setSilenceHint(false);
+    } else if (!silenceHint && silenceTimer.current === null) {
+      silenceTimer.current = window.setTimeout(() => {
+        silenceTimer.current = null;
+        setSilenceHint(true);
+      }, 6000);
+    }
+  }, [phase, muted, micLevel, silenceHint]);
+  useEffect(() => () => {
+    if (silenceTimer.current !== null) window.clearTimeout(silenceTimer.current);
+  }, []);
   useEffect(() => {
     const controller = new AbortController();
     async function checkAvailability() {
@@ -85,6 +318,9 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
 
   async function connect() {
     if (active.current || availability !== 'ready') return;
+    const selectedMicrophoneId = microphoneIdRef.current;
+    const selectedMicrophoneGain = microphoneGainRef.current;
+    stopMicrophoneTest();
     const controller = new AbortController();
     active.current = controller;
     const { signal } = controller;
@@ -96,16 +332,31 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
     const element = video.current;
     const clearMediaTimeout = () => window.clearTimeout(mediaTimeout);
     element?.addEventListener('playing', clearMediaTimeout);
+    phaseRef.current = 'connecting';
     setPhase('connecting'); setMessage(''); setMuted(false); setHasPicture(false); setCaptions([]); setMicLevel(0);
     const fail = (text: string) => { failure = text; controller.abort(); };
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('当前页面无法使用麦克风，请用 HTTPS 或本地浏览器打开。');
+      const pendingMicrophoneTest = microphoneTestRequest.current;
+      if (pendingMicrophoneTest) await pendingMicrophoneTest.catch(() => {});
+      signal.throwIfAborted();
       // Request permission before starting a billable session. The SDK owns the actual call track.
       const [sdk] = await Promise.all([
         loadSdk(),
-        navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true }, video: false }).then(stream => {
+        navigator.mediaDevices.getUserMedia({
+          audio: { deviceId: selectedMicrophoneId ? { exact: selectedMicrophoneId } : undefined, echoCancellation: true },
+          video: false,
+        }).then(async stream => {
           stream.getTracks().forEach(track => track.stop());
-        }, () => { throw new Error('无法使用麦克风，请检查浏览器权限和输入设备。'); }),
+          await refreshMicrophones();
+        }, error => {
+          const name = (error as { name?: string } | null)?.name;
+          if (name === 'OverconstrainedError' || name === 'NotFoundError') {
+            saveMicrophoneId('');
+            throw new Error('所选麦克风不可用，请重新选择。');
+          }
+          throw new Error('无法使用麦克风，请检查浏览器权限和输入设备。');
+        }),
       ]);
       signal.throwIfAborted();
       if (!(await sdk.isSupported()).support) throw new Error('当前浏览器不支持音视频通话，请用 Chrome 或 Edge 重试。');
@@ -153,10 +404,6 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
                   } else if (next === 1) setHasPicture(false);
                 });
                 engine.on('bye', () => { if (!signal.aborted) fail('音视频连接已断开。'); });
-                engine.on('audioVolume', (speakers: { userId: string; volume: number }[]) => {
-                  const local = speakers.find(speaker => speaker.userId === '');
-                  if (!signal.aborted && local && Number.isFinite(local.volume)) setMicLevel(Math.max(0, Math.min(100, local.volume)));
-                });
                 await engine.setChannelProfile('communication');
                 signal.throwIfAborted();
                 // AliRTC 7.1.9 has no setDefaultPublish* methods; publish flags set before join become the defaults.
@@ -164,11 +411,16 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
                 signal.throwIfAborted();
                 engine.setDefaultSubscribeAllRemoteAudioStreams(true);
                 engine.setDefaultSubscribeAllRemoteVideoStreams(true);
-                engine.enableAudioVolumeIndication(200);
                 await engine.joinChannel(data.token, data.userId);
                 signal.throwIfAborted();
                 await engine.publishLocalAudioStream(true);
-                if (!signal.aborted) setPhase('connected');
+                if (selectedMicrophoneId) {
+                  try { await engine.switchMicrophone(selectedMicrophoneId); }
+                  catch { if (!signal.aborted) setMessage('切换麦克风失败，请重试。'); }
+                }
+                try { await engine.setRecordingVolume(selectedMicrophoneGain); }
+                catch { if (!signal.aborted) setMessage('调整麦克风增益失败，请重试。'); }
+                if (!signal.aborted) { phaseRef.current = 'connected'; setPhase('connected'); }
               })().catch(() => { if (!signal.aborted) fail('无法加入音视频通话，请检查网络和麦克风权限。'); });
             }
           }
@@ -180,6 +432,8 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
       if (!signal.aborted) failure = error instanceof Error && error.name !== 'TypeError' ? error.message : '通话连接已断开，请稍后重试。';
     } finally {
       controller.abort();
+      callMicrophoneMonitor.current?.();
+      callMicrophoneMonitor.current = null;
       window.clearTimeout(mediaTimeout);
       element?.removeEventListener('playing', clearMediaTimeout);
       // Destroy the SDK instance even if joinChannel did not settle.
@@ -192,7 +446,7 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
       }
       rtc.current = null;
       active.current = null;
-      if (mounted.current) { setPhase('idle'); setHasPicture(false); setCaptions([]); setMicLevel(0); if (failure) setMessage(failure); }
+      if (mounted.current) { phaseRef.current = 'idle'; setPhase('idle'); setHasPicture(false); setCaptions([]); setMicLevel(0); if (failure) setMessage(failure); }
     }
   }
 
@@ -223,25 +477,55 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
         }[availability]}</small>}
       </div>}
       {phase !== 'idle' && captions.length > 0 && <div ref={captionBox} className="assistant-video-call__captions" aria-live="polite">
-        {captions.map(caption => <p key={caption.id} className="assistant-video-call__caption" data-role={caption.role}>
-          <strong>{caption.role === 'user' ? '你：' : '小柴：'}</strong>{caption.text}
+        {captions.map(caption => <p key={caption.id} className="assistant-video-call__caption" data-role={caption.role}
+          aria-label={caption.role === 'user' ? '你说' : '小柴说'}>
+          {caption.text}
         </p>)}
       </div>}
     </div>
     {message && <p role="status" className="assistant-video-call__message">{message}</p>}
     <div className="assistant-video-call__controls">
-      {phase === 'connected' && <div className="assistant-video-call__mic-level" role="meter" aria-label="麦克风"
-        aria-valuemin={0} aria-valuemax={100} aria-valuenow={micLevel} aria-valuetext={`${micLevel}%`}>
-        <span>麦克风</span>
-        <span className="assistant-video-call__mic-level-track"><span style={{ width: `${micLevel}%` }} /></span>
+      {phase !== 'connecting' && <div className="assistant-video-call__mic-settings">
+        <label htmlFor="assistant-call-mic-select">麦克风</label>
+        <select id="assistant-call-mic-select" value={microphoneId} onChange={event => void selectMicrophone(event.target.value)}>
+          <option value="">系统默认</option>
+          {microphones.map((device, index) => <option key={`${device.deviceId}-${index}`} value={device.deviceId}>
+            {device.label || `麦克风 ${index + 1}`}
+          </option>)}
+        </select>
+        <label htmlFor="assistant-call-gain-select">麦克风增益</label>
+        <select id="assistant-call-gain-select" value={microphoneGain} onChange={event => void selectMicrophoneGain(event.target.value)}>
+          {microphoneGains.map(gain => <option key={gain} value={gain}>{gain}%</option>)}
+        </select>
+        {phase === 'idle' && <button type="button" onClick={() => void toggleMicrophoneTest()}>
+          {microphoneTestActive ? '停止试音' : '试一下麦克风'}
+        </button>}
+        {(phase === 'connected' || microphoneTestActive) && <div className="assistant-video-call__mic-meter" data-phase={phase}>
+          <div className="assistant-video-call__mic-level" role="meter" aria-label="麦克风"
+            aria-valuemin={0} aria-valuemax={100} aria-valuenow={displayMicrophoneLevel(micLevel)}
+            aria-valuetext={`${displayMicrophoneLevel(micLevel)}%`} data-raw-level={micLevel}>
+            <span>麦克风</span>
+            <span className="assistant-video-call__mic-level-track"><span style={{ width: `${displayMicrophoneLevel(micLevel)}%` }} /></span>
+          </div>
+        </div>}
+        {phase === 'connected' && !muted && silenceHint && <small className="assistant-video-call__silence-hint">
+          没有检测到麦克风声音，请检查系统输入音量，或换一个麦克风。
+        </small>}
       </div>}
-      {phase === 'connected' && <button type="button" onClick={() => void toggleMute()} disabled={audioControlBusy} aria-pressed={muted}>
-        {muted ? <MicOff size={16} /> : <Mic size={16} />}{muted ? '取消静音' : '静音'}
-      </button>}
-      {phase === 'idle'
-        ? <button type="button" data-primary disabled={availability !== 'ready'} onClick={() => void connect()}><Phone size={16} />开始通话</button>
-        : <button type="button" data-danger onClick={() => active.current?.abort()}><PhoneOff size={16} />{phase === 'connecting' ? '取消' : '挂断'}</button>}
-      <button type="button" onClick={close}>返回聊天</button>
+      <div className="assistant-video-call__actions">
+        {phase === 'connected' && <button type="button" onClick={() => void toggleMute()} disabled={audioControlBusy} aria-pressed={muted}>
+          {muted ? <MicOff size={16} /> : <Mic size={16} />}{muted ? '取消静音' : '静音'}
+        </button>}
+        {phase === 'idle'
+          ? <button type="button" data-primary disabled={availability !== 'ready'} onClick={() => void connect()}><Phone size={16} />开始通话</button>
+        : <button type="button" data-danger onClick={() => {
+          callMicrophoneMonitor.current?.();
+          callMicrophoneMonitor.current = null;
+          setMicLevel(0);
+          active.current?.abort();
+        }}><PhoneOff size={16} />{phase === 'connecting' ? '取消' : '挂断'}</button>}
+        <button type="button" onClick={close}>返回聊天</button>
+      </div>
     </div>
   </div>;
 }
