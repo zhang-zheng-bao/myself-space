@@ -462,14 +462,14 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   mouse.position.set(0.31, DESK_Y, 0.14);
   mouse.rotation.y = -0.12;
   // 前端（滚轮一侧）朝 -z。轮廓是超椭圆，前端略窄；顶面从边缘向中间拱起，最高点在中间偏后。
-  const mouseLen = 0.056, mouseWid = 0.029, mouseEdge = 0.006, mouseTop = 0.0215, mouseExp = 3.3;
+  const mouseLen = 0.056, mouseWid = 0.029, mouseEdge = 0.006, mouseTop = 0.0178, mouseExp = 3.3;
   const mouseHalfW = (z: number) => mouseWid * (0.95 + 0.05 * THREE.MathUtils.smoothstep((z + mouseLen) / (2 * mouseLen), 0, 0.6));
   const mouseY = (x: number, z: number) => {
     const t = (z + mouseLen) / (2 * mouseLen);
     const d = t < 0.58 ? (0.58 - t) / 0.58 : (t - 0.58) / 0.42;
     const crown = mouseEdge + (mouseTop - mouseEdge) * (1 - (t < 0.58 ? 0.58 : 0.42) * d * d);
     const r = Math.min(1, Math.pow(Math.pow(Math.abs(x) / mouseHalfW(z), mouseExp) + Math.pow(Math.abs(z) / mouseLen, mouseExp), 1 / mouseExp));
-    return mouseEdge + (crown - mouseEdge) * Math.pow(1 - Math.pow(r, 5.5), 0.5);
+    return mouseEdge + (crown - mouseEdge) * Math.pow(1 - Math.pow(r, 9), 0.5);
   };
   const mouseOutline = (angle: number, r: number) => {
     const c = Math.cos(angle), sn = Math.sin(angle);
@@ -533,18 +533,18 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   const mouseKeyMat = std({ color: 0xeceded, roughness: 0.45, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
   const wheelZ = -mouseLen + 0.19 * 2 * mouseLen, dpiZ = -mouseLen + 0.325 * 2 * mouseLen, ledZ = -mouseLen + 0.455 * 2 * mouseLen;
   const seam = () => 0.00026;
-  mouseDecal(-mouseLen * 0.992, wheelZ - 0.0056, seam, mouseInk, 0.0001);
-  mouseDecal(wheelZ + 0.0056, dpiZ - 0.0042, seam, mouseInk, 0.0001);
+  mouseDecal(-mouseLen * 0.992, wheelZ - 0.0066, seam, mouseInk, 0.0001);
+  mouseDecal(wheelZ + 0.0066, dpiZ - 0.0042, seam, mouseInk, 0.0001);
   mouseDecal(dpiZ + 0.0042, ledZ - 0.0008, seam, mouseInk, 0.0001);
-  mouseDecal(wheelZ - 0.006, wheelZ + 0.006, mousePill(wheelZ, 0.006, 0.0047, 0.0028), mouseInk, 0.0001);
+  mouseDecal(wheelZ - 0.007, wheelZ + 0.007, mousePill(wheelZ, 0.007, 0.0038, 0.0038), mouseInk, 0.0001);
   mouseDecal(dpiZ - 0.0046, dpiZ + 0.0046, mousePill(dpiZ, 0.0046, 0.0019, 0.0019), mouseInk, 0.0001);
   mouseDecal(dpiZ - 0.0041, dpiZ + 0.0041, mousePill(dpiZ, 0.0041, 0.0014, 0.0014), mouseKeyMat, 0.0004);
   mouseDecal(ledZ - 0.0011, ledZ + 0.0011, mousePill(ledZ, 0.0011, 0.0011, 0.0011), mouseInk, 0.0001);
   mouseDecal(ledZ - 0.0007, ledZ + 0.0007, mousePill(ledZ, 0.0007, 0.0007, 0.0007), mouseKeyMat, 0.0002);
   const wheelTex = track(canvasTexture(64, 64, (ctx, w, h) => {
-    ctx.fillStyle = "#55575c";
+    ctx.fillStyle = "#7b7d83";
     ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = "#2c2d31";
+    ctx.strokeStyle = "#4a4c51";
     ctx.lineWidth = 1;
     for (let i = -h; i < w + h; i += 6) {
       ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i + h, h); ctx.stroke();
@@ -554,7 +554,7 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   wheelTex.wrapS = wheelTex.wrapT = THREE.RepeatWrapping;
   wheelTex.repeat.set(3, 14);
   // 滚轮：边缘倒圆的鼓形，大半埋在槽里，只露出顶上一小段
-  const wheelR = 0.0072, wheelHalf = 0.0036, wheelBevel = 0.0014;
+  const wheelR = 0.0072, wheelHalf = 0.0029, wheelBevel = 0.0013;
   const mouseWheel = mesh(track(new THREE.LatheGeometry([
     new THREE.Vector2(0, -wheelHalf), new THREE.Vector2(wheelR - wheelBevel, -wheelHalf), new THREE.Vector2(wheelR - 0.0004, -wheelHalf + 0.0006),
     new THREE.Vector2(wheelR, -wheelHalf + wheelBevel), new THREE.Vector2(wheelR, wheelHalf - wheelBevel), new THREE.Vector2(wheelR - 0.0004, wheelHalf - 0.0006),
