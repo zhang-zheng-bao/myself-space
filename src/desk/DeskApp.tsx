@@ -1,6 +1,8 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Aperture, ArrowLeft, ChevronLeft, ChevronRight, CirclePlus, Compass, Ellipsis, ExternalLink, MessageCircle, Mic, Newspaper, Pause, Play, Search, SkipForward, Smile, Tag, User, UserPlus, Users, X } from "lucide-react";
-import type { PortfolioData, Work } from "../types";
+import { isSectionVisible, type PortfolioData, type ResumeProfile, type SectionKey, type SlideDeck, type Work } from "../types";
+import { defaultCaseWorks } from "../caseStudies";
+import SlidePlayer from "../components/SlidePlayer";
 import { getVisitorKey } from "../tracking";
 import { createDeskScene, type DeskHotspot, type DeskScene } from "./deskScene";
 import "./desk.css";
@@ -41,18 +43,59 @@ const isVideo = (work: Work) => Boolean(work.videoUrl) && !/\.(mp3|wav|m4a|aac|f
 const paragraphs = (text = "") => text.split(/\n+/).map(line => line.trim()).filter(Boolean);
 const clock = () => new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
 
-async function loadPortfolio(): Promise<PortfolioData> {
-  let data: PortfolioData = emptyData;
+/**
+ * 和经典版主页用同一套规则：后台隐藏的栏目不出现在书桌上，
+ * 案例没配置时用默认案例，简历列表一旦配置过就完全以后台为准。
+ */
+function visibleData(data: PortfolioData): PortfolioData {
+  const pageCopy = data.profile.pageCopy || {};
+  const shown = (key: SectionKey) => isSectionVisible(pageCopy, key);
+  const legacyPdfs = pageCopy.resumePdfs || {};
+  const resumeProfiles: ResumeProfile[] = pageCopy.resumeProfiles
+    ? pageCopy.resumeProfiles.filter(item => item?.visible !== false)
+    : [
+        { id: "productManager", position: "产品经理", name: "PRODUCT MANAGER", url: legacyPdfs.productManager || data.profile.resumePdfUrl || "" },
+        { id: "newMedia", position: "新媒体运营", name: "NEW MEDIA OPS", url: legacyPdfs.newMedia || "" },
+      ];
+  return {
+    ...data,
+    works: shown("works") ? data.works : [],
+    gallery: shown("prospects") ? data.gallery : [],
+    treasures: shown("treasures") ? data.treasures : [],
+    poems: shown("poems") ? data.poems : [],
+    contact: shown("contact") ? data.contact : emptyData.contact,
+    profile: {
+      ...data.profile,
+      pageCopy: {
+        ...pageCopy,
+        caseWorks: shown("cases") ? pageCopy.caseWorks ?? defaultCaseWorks : [],
+        aiWorks: shown("ai") ? pageCopy.aiWorks : [],
+        postList: shown("posts") ? pageCopy.postList : [],
+        slideList: shown("slides") ? pageCopy.slideList : [],
+        poemList: shown("poems") ? pageCopy.poemList : [],
+        resumeProfiles: shown("resume") ? resumeProfiles.filter(item => item.url?.trim()) : [],
+      },
+    },
+  };
+}
+
+/** 读不到接口时返回 null，调用方保留手上已有的内容。 */
+async function loadPortfolio(): Promise<PortfolioData | null> {
+  let data: PortfolioData | null = null;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 12_000);
   try {
-    const response = await fetch("/api/portfolio", { cache: "no-store" });
+    const response = await fetch("/api/portfolio", { cache: "no-store", signal: controller.signal });
     if (response.ok) data = { ...emptyData, ...(await response.json()) };
-  } catch { /* 读不到就用空数据，各个应用显示空状态 */ }
+  } catch { /* 读不到就保持空状态，各个应用显示空提示 */ } finally {
+    window.clearTimeout(timeout);
+  }
   // 本地开发时数据库常常是空的，用仓库里的示例数据把桌面铺起来；线上永远以接口为准。
-  if (import.meta.env.DEV && !data.profile?.name && !data.works?.length) {
+  if (import.meta.env.DEV && !data?.profile?.name && !data?.works?.length) {
     const sample = (await import("../data/portfolio.json")).default as unknown as PortfolioData;
     data = { ...emptyData, ...sample };
   }
-  return data;
+  return data ? visibleData(data) : null;
 }
 
 /* ======================================================================
@@ -243,10 +286,9 @@ function LaptopWindow({ data }: { data: PortfolioData }) {
   const { profile, experiences, prospects, contact } = data;
   const pageCopy = profile.pageCopy || {};
   const works = useMemo(() => [...data.works, ...(pageCopy.caseWorks || []), ...(pageCopy.aiWorks || [])], [data]);
-  const resumes = [
-    ...(pageCopy.resumeProfiles || []).filter(item => item.visible !== false && item.url).map(item => ({ label: item.position, sub: item.name || "PDF 简历", url: item.url })),
-    ...(profile.resumePdfUrl ? [{ label: "简历", sub: "PDF", url: profile.resumePdfUrl }] : []),
-  ];
+  const resumes = (pageCopy.resumeProfiles || []).map(item => ({ label: item.position, sub: item.name || "PDF 简历", url: item.url }));
+  // 内容续签后，已经点开的作品也换成新地址
+  const openWork = work && (works.find(item => item.id === work.id) || work);
   const tabs: [LaptopTab, string][] = [["about", "关于我"], ["experience", "经历"], ["plan", "规划"], ["works", "作品"], ["resume", "简历"]];
   return (
     <div className="desk-mac" data-screen>
@@ -264,7 +306,7 @@ function LaptopWindow({ data }: { data: PortfolioData }) {
             <button key={id} type="button" aria-current={tab === id} onClick={() => { setTab(id); setWork(null); }}>{label}</button>
           ))}
         </nav>
-        <main className="desk-mac__main" key={`${tab}-${work?.id || ""}`}>
+        <main className="desk-mac__main" key={`${tab}-${openWork?.id || ""}`}>
           {tab === "about" && (
             <section className="desk-about">
               <div className="desk-about__head">
@@ -301,10 +343,10 @@ function LaptopWindow({ data }: { data: PortfolioData }) {
               </section>
             ) : <Empty>规划还没填写。</Empty>
           )}
-          {tab === "works" && (work ? (
+          {tab === "works" && (openWork ? (
             <>
               <button type="button" className="desk-back" onClick={() => setWork(null)}><ArrowLeft size={15} />全部作品</button>
-              <WorkDetail work={work} />
+              <WorkDetail work={openWork} />
             </>
           ) : <WorkCards works={works} onPick={setWork} />)}
           {tab === "resume" && (
@@ -358,6 +400,7 @@ function TabletScreen({ data }: { data: PortfolioData }) {
   const [work, setWork] = useState<Work | null>(null);
   const [photo, setPhoto] = useState<number | null>(null);
   const [post, setPost] = useState<number | null>(null);
+  const [deck, setDeck] = useState<SlideDeck | null>(null);
   const [time, setTime] = useState(clock);
   useEffect(() => { const timer = window.setInterval(() => setTime(clock()), 20_000); return () => window.clearInterval(timer); }, []);
   const pageCopy = data.profile.pageCopy || {};
@@ -373,6 +416,8 @@ function TabletScreen({ data }: { data: PortfolioData }) {
     return list.filter(item => (seen.has(item.url) ? false : (seen.add(item.url), true)));
   }, [data, allWorks]);
   const videos = allWorks.filter(isVideo);
+  // 内容续签后，已经点开的作品也换成新地址
+  const openWork = work && (allWorks.find(item => item.id === work.id) || work);
   const posts = pageCopy.postList || [];
   const slides = pageCopy.slideList || [];
   const icons: AppIcon[] = [
@@ -383,7 +428,7 @@ function TabletScreen({ data }: { data: PortfolioData }) {
     { id: "slides", label: "演示", color: "linear-gradient(145deg,#d29bff,#8a3ee6)", glyph: "▤" },
   ];
   const back = () => {
-    if (work) return setWork(null);
+    if (openWork) return setWork(null);
     if (photo !== null) return setPhoto(null);
     if (post !== null) return setPost(null);
     nav.home();
@@ -400,7 +445,7 @@ function TabletScreen({ data }: { data: PortfolioData }) {
         </div>
       )}
       {nav.app && (
-        <AppView title={work?.title || titles[nav.app]} origin={nav.origin} onBack={back}>
+        <AppView title={openWork?.title || titles[nav.app]} origin={nav.origin} onBack={back}>
           {nav.app === "photos" && (photo === null ? (
             photos.length ? (
               <div className="desk-photos">
@@ -415,8 +460,8 @@ function TabletScreen({ data }: { data: PortfolioData }) {
               <button type="button" className="desk-work__nav desk-work__nav--next" aria-label="下一张" onClick={() => setPhoto((photo + 1) % photos.length)}><ChevronRight size={18} /></button>
             </figure>
           ))}
-          {nav.app === "videos" && (work ? <WorkDetail work={work} /> : videos.length ? <WorkCards works={videos} onPick={setWork} /> : <Empty>还没有视频作品。</Empty>)}
-          {nav.app === "works" && (work ? <WorkDetail work={work} /> : <WorkCards works={allWorks} onPick={setWork} />)}
+          {nav.app === "videos" && (openWork ? <WorkDetail work={openWork} /> : videos.length ? <WorkCards works={videos} onPick={setWork} /> : <Empty>还没有视频作品。</Empty>)}
+          {nav.app === "works" && (openWork ? <WorkDetail work={openWork} /> : <WorkCards works={allWorks} onPick={setWork} />)}
           {nav.app === "posts" && (post === null ? (
             posts.length ? (
               <div className="desk-cards">
@@ -438,15 +483,16 @@ function TabletScreen({ data }: { data: PortfolioData }) {
           ))}
           {nav.app === "slides" && (slides.length ? (
             <div className="desk-resumes">
-              {slides.map(deck => (
-                <a key={deck.id} className="desk-resume" href={deck.pdfUrl || deck.fileUrl} target="_blank" rel="noreferrer">
-                  <strong>{deck.title}</strong><span>{deck.description || deck.date || "演示文稿"}</span><ExternalLink size={15} />
-                </a>
+              {slides.map(item => (
+                <button key={item.id} type="button" className="desk-resume" onClick={() => setDeck(item)}>
+                  <strong>{item.title}</strong><span>{item.description || item.date || "演示文稿"}</span><Play size={15} />
+                </button>
               ))}
             </div>
           ) : <Empty>还没有演示文稿。</Empty>)}
         </AppView>
       )}
+      {deck && <SlidePlayer deck={slides.find(item => item.id === deck.id) || deck} onClose={() => setDeck(null)} />}
       <button type="button" className="desk-homebar" aria-label={nav.app ? "回到主屏" : "收起平板"} onClick={() => (nav.app ? (setWork(null), setPhoto(null), setPost(null), nav.home()) : close())} />
     </div>
   );
@@ -868,32 +914,55 @@ function useMusic(tracks: NonNullable<PortfolioData["musicTracks"]>): MusicContr
   const audio = useRef<HTMLAudioElement | null>(null);
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const live = useRef({ tracks, index });
+  live.current = { tracks, index };
+  const retried = useRef(false);
   useEffect(() => {
     const element = new Audio();
     element.preload = "none";
     element.addEventListener("play", () => setPlaying(true));
     element.addEventListener("pause", () => setPlaying(false));
+    element.addEventListener("playing", () => { retried.current = false; });
     audio.current = element;
-    return () => { element.pause(); element.src = ""; };
+    // 挂到文档里，加载失败的 error 事件才能被页面的续签监听捕获到
+    document.body.appendChild(element);
+    return () => { element.pause(); element.removeAttribute("src"); element.remove(); };
   }, []);
   useEffect(() => {
     const element = audio.current;
     if (!element) return;
-    const onEnded = () => setIndex(current => (tracks.length ? (current + 1) % tracks.length : 0));
+    // 播完时浏览器会先触发 pause，这里要自己接着放下一首（只有一首就循环）。
+    const onEnded = () => {
+      const { tracks: list, index: current } = live.current;
+      if (!list.length) return;
+      const next = (current + 1) % list.length;
+      setIndex(next);
+      start(next);
+    };
     element.addEventListener("ended", onEnded);
     return () => element.removeEventListener("ended", onEnded);
-  }, [tracks.length]);
+  }, []);
   const start = (next: number) => {
     const element = audio.current;
-    const track = tracks[next];
+    const track = live.current.tracks[next];
     if (!element || !track?.audioUrl) return;
-    if (element.dataset.track !== track.id) {
+    // 地址过期导致加载失败时，换上续签后的新地址
+    if (element.dataset.track !== track.id || element.error) {
       element.src = track.audioUrl;
       element.dataset.track = track.id;
+      element.dataset.url = track.audioUrl;
     }
     void element.play().catch(() => setPlaying(false));
   };
   useEffect(() => { if (playing) start(index); }, [index]);
+  // 放到一半地址过期：续签拿到新地址后自动重试一次
+  useEffect(() => {
+    const element = audio.current;
+    const track = tracks[index];
+    if (!element?.error || retried.current || !track?.audioUrl || element.dataset.track !== track.id || element.dataset.url === track.audioUrl) return;
+    retried.current = true;
+    start(index);
+  }, [tracks]);
   return {
     tracks,
     index,
@@ -1006,8 +1075,36 @@ export default function DeskApp() {
 
   useEffect(() => {
     let alive = true;
-    void loadPortfolio().then(next => { if (alive) setData(next); });
-    return () => { alive = false; };
+    let busy = false;
+    let lastAttempt = Date.now();
+    // 素材地址是带签名的临时链接：每 45 分钟续签一次，图片或音视频加载失败时也立刻续签。
+    const refresh = async (force = false) => {
+      if (!alive || busy || document.hidden) return;
+      const now = Date.now();
+      if (now - lastAttempt < (force ? 30_000 : 45 * 60_000)) return;
+      busy = true;
+      lastAttempt = now;
+      try {
+        const next = await loadPortfolio();
+        if (alive && next) setData(next);
+      } finally {
+        busy = false;
+      }
+    };
+    const visible = () => { void refresh(); };
+    const mediaError = (event: Event) => {
+      if (event.target instanceof HTMLImageElement || event.target instanceof HTMLMediaElement) void refresh(true);
+    };
+    void loadPortfolio().then(next => { if (alive && next) setData(next); });
+    const timer = window.setInterval(visible, 60_000);
+    document.addEventListener("visibilitychange", visible);
+    document.addEventListener("error", mediaError, true);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", visible);
+      document.removeEventListener("error", mediaError, true);
+    };
   }, []);
 
   useEffect(() => {

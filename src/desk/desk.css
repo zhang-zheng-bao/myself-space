@@ -269,6 +269,7 @@
 .desk-resumes { display: grid; gap: 10px; max-width: 520px; }
 .desk-resume { justify-content: space-between; padding: .9rem 1rem; }
 .desk-resume span { flex: 1; color: #85868b; font-size: .8rem; }
+button.desk-resume { font: inherit; font-size: .85rem; text-align: left; cursor: pointer; }
 
 /* ---------- 平板 / 手机主屏 ---------- */
 .desk-tablet, .desk-phone { position: relative; height: 100%; overflow: hidden; color: #fff; }
