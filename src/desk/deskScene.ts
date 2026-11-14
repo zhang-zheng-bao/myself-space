@@ -457,18 +457,112 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   scene.add(keyboard);
   addHotspot("keyboard", keyboard, keyboard, 0.004);
 
-  /* ---------------- 鼠标（白色妙控鼠标样式） ---------------- */
+  /* ---------------- 鼠标（银色超薄无线鼠标，按实拍图比例建模：112 × 58 × 24 mm） ---------------- */
   const mouse = new THREE.Group();
   mouse.position.set(0.31, DESK_Y, 0.14);
   mouse.rotation.y = -0.12;
-  const mouseBody = mesh(track(new THREE.SphereGeometry(1, 40, 24, 0, Math.PI * 2, 0, Math.PI / 2)), phys({ color: 0xfbfbfa, roughness: 0.14, clearcoat: 1, clearcoatRoughness: 0.08 }));
-  mouseBody.scale.set(0.0285, 0.0185, 0.0565);
-  mouseBody.position.y = 0.0025;
+  // 前端（滚轮一侧）朝 -z。轮廓是超椭圆，前端略窄；顶面从边缘向中间拱起，最高点在中间偏后。
+  const mouseLen = 0.056, mouseWid = 0.029, mouseEdge = 0.006, mouseTop = 0.0215, mouseExp = 3.3;
+  const mouseHalfW = (z: number) => mouseWid * (0.95 + 0.05 * THREE.MathUtils.smoothstep((z + mouseLen) / (2 * mouseLen), 0, 0.6));
+  const mouseY = (x: number, z: number) => {
+    const t = (z + mouseLen) / (2 * mouseLen);
+    const d = t < 0.58 ? (0.58 - t) / 0.58 : (t - 0.58) / 0.42;
+    const crown = mouseEdge + (mouseTop - mouseEdge) * (1 - (t < 0.58 ? 0.58 : 0.42) * d * d);
+    const r = Math.min(1, Math.pow(Math.pow(Math.abs(x) / mouseHalfW(z), mouseExp) + Math.pow(Math.abs(z) / mouseLen, mouseExp), 1 / mouseExp));
+    return mouseEdge + (crown - mouseEdge) * Math.pow(1 - Math.pow(r, 5.5), 0.5);
+  };
+  const mouseOutline = (angle: number, r: number) => {
+    const c = Math.cos(angle), sn = Math.sin(angle);
+    const z = mouseLen * r * Math.sign(sn) * Math.pow(Math.abs(sn), 2 / mouseExp);
+    const x = mouseHalfW(z) * r * Math.sign(c) * Math.pow(Math.abs(c), 2 / mouseExp);
+    return [x, z] as const;
+  };
+  const mouseLoft = (rows: number, segments: number, vertex: (row: number, angle: number) => [number, number, number]) => {
+    const positions: number[] = [];
+    const indices: number[] = [];
+    for (let i = 0; i <= rows; i++) for (let j = 0; j < segments; j++) positions.push(...vertex(i, (j / segments) * Math.PI * 2));
+    for (let i = 0; i < rows; i++) for (let j = 0; j < segments; j++) {
+      const a = i * segments + j, b = (i + 1) * segments + j, c = i * segments + (j + 1) % segments, d = (i + 1) * segments + (j + 1) % segments;
+      indices.push(a, c, b, b, c, d);
+    }
+    const geometry = track(new THREE.BufferGeometry());
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    return geometry;
+  };
+  const mouseShellMat = phys({ color: 0xc3c4c9, metalness: 0.6, roughness: 0.42, clearcoat: 0.15, clearcoatRoughness: 0.5, envMapIntensity: 0.9 });
+  const mouseBody = mesh(mouseLoft(34, 96, (row, angle) => {
+    const [x, z] = mouseOutline(angle, 1 - Math.pow(1 - row / 34, 1.8));
+    return [x, mouseY(x, z), z];
+  }), mouseShellMat);
   mouse.add(mouseBody);
-  const mouseFoot = mesh(track(new THREE.CylinderGeometry(1, 1, 1, 40)), aluminium);
-  mouseFoot.scale.set(0.0285, 0.003, 0.0565);
-  mouseFoot.position.y = 0.0015;
-  mouse.add(mouseFoot);
+  // 上盖下面一圈深色腰线，向下收窄
+  mouse.add(mesh(mouseLoft(1, 96, (row, angle) => {
+    const [x, z] = mouseOutline(angle, row === 0 ? 0.985 : 0.93);
+    return [x, row === 0 ? mouseEdge + 0.0006 : 0, z];
+  }), std({ color: 0x8b8d93, metalness: 0.45, roughness: 0.5 })));
+  // 贴在顶面上的细节：分缝、滚轮槽、长条按键、指示灯
+  const mouseDecal = (z0: number, z1: number, halfWidth: (z: number) => number, material: THREE.Material, lift: number) => {
+    const rows = 20, cols = 6;
+    const positions: number[] = [];
+    const indices: number[] = [];
+    for (let i = 0; i <= rows; i++) {
+      const z = THREE.MathUtils.lerp(z0, z1, i / rows);
+      const hw = halfWidth(z);
+      for (let k = 0; k <= cols; k++) {
+        const x = hw * ((k / cols) * 2 - 1);
+        positions.push(x, mouseY(x, z) + lift, z);
+      }
+    }
+    for (let i = 0; i < rows; i++) for (let k = 0; k < cols; k++) {
+      const a = i * (cols + 1) + k, b = a + cols + 1;
+      indices.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+    const geometry = track(new THREE.BufferGeometry());
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    mouse.add(mesh(geometry, material, false));
+  };
+  const mousePill = (center: number, halfLen: number, halfWid: number, radius: number) => (z: number) => {
+    const over = Math.abs(z - center) - (halfLen - radius);
+    return over <= 0 ? halfWid : halfWid - radius + Math.sqrt(Math.max(0, radius * radius - over * over));
+  };
+  const mouseInk = std({ color: 0x232427, roughness: 0.7, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  const mouseKeyMat = std({ color: 0xeceded, roughness: 0.45, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+  const wheelZ = -mouseLen + 0.19 * 2 * mouseLen, dpiZ = -mouseLen + 0.325 * 2 * mouseLen, ledZ = -mouseLen + 0.455 * 2 * mouseLen;
+  const seam = () => 0.00026;
+  mouseDecal(-mouseLen * 0.992, wheelZ - 0.0056, seam, mouseInk, 0.0001);
+  mouseDecal(wheelZ + 0.0056, dpiZ - 0.0042, seam, mouseInk, 0.0001);
+  mouseDecal(dpiZ + 0.0042, ledZ - 0.0008, seam, mouseInk, 0.0001);
+  mouseDecal(wheelZ - 0.006, wheelZ + 0.006, mousePill(wheelZ, 0.006, 0.0047, 0.0028), mouseInk, 0.0001);
+  mouseDecal(dpiZ - 0.0046, dpiZ + 0.0046, mousePill(dpiZ, 0.0046, 0.0019, 0.0019), mouseInk, 0.0001);
+  mouseDecal(dpiZ - 0.0041, dpiZ + 0.0041, mousePill(dpiZ, 0.0041, 0.0014, 0.0014), mouseKeyMat, 0.0004);
+  mouseDecal(ledZ - 0.0011, ledZ + 0.0011, mousePill(ledZ, 0.0011, 0.0011, 0.0011), mouseInk, 0.0001);
+  mouseDecal(ledZ - 0.0007, ledZ + 0.0007, mousePill(ledZ, 0.0007, 0.0007, 0.0007), mouseKeyMat, 0.0002);
+  const wheelTex = track(canvasTexture(64, 64, (ctx, w, h) => {
+    ctx.fillStyle = "#55575c";
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = "#2c2d31";
+    ctx.lineWidth = 1;
+    for (let i = -h; i < w + h; i += 6) {
+      ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i + h, h); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(i + h, 0); ctx.lineTo(i, h); ctx.stroke();
+    }
+  }));
+  wheelTex.wrapS = wheelTex.wrapT = THREE.RepeatWrapping;
+  wheelTex.repeat.set(3, 14);
+  // 滚轮：边缘倒圆的鼓形，大半埋在槽里，只露出顶上一小段
+  const wheelR = 0.0072, wheelHalf = 0.0036, wheelBevel = 0.0014;
+  const mouseWheel = mesh(track(new THREE.LatheGeometry([
+    new THREE.Vector2(0, -wheelHalf), new THREE.Vector2(wheelR - wheelBevel, -wheelHalf), new THREE.Vector2(wheelR - 0.0004, -wheelHalf + 0.0006),
+    new THREE.Vector2(wheelR, -wheelHalf + wheelBevel), new THREE.Vector2(wheelR, wheelHalf - wheelBevel), new THREE.Vector2(wheelR - 0.0004, wheelHalf - 0.0006),
+    new THREE.Vector2(wheelR - wheelBevel, wheelHalf), new THREE.Vector2(0, wheelHalf),
+  ], 48)), std({ map: wheelTex, roughness: 0.85 }));
+  mouseWheel.rotation.z = Math.PI / 2;
+  mouseWheel.position.set(0, mouseY(0, wheelZ) - wheelR + 0.0015, wheelZ);
+  mouse.add(mouseWheel);
   scene.add(mouse);
   addHotspot("mouse", mouse, mouseBody, 0.006);
 
