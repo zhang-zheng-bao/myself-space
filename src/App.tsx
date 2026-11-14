@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   AppWindow,
@@ -2678,8 +2678,11 @@ function IntroDashboard({ data, onSelectWork, onNavigate }: {
   );
 }
 
+const DeskApp = lazy(() => import("./desk/DeskApp"));
+
 export default function App() {
   if (window.location.pathname.startsWith("/admin")) { dismissBootLoader(false); return <AdminApp />; }
+  if (window.location.pathname.startsWith("/desk")) return <Suspense fallback={null}><DeskApp /></Suspense>;
   // 打开或刷新页面始终使用原主题；染墨只通过页面按钮手动切换。
   const [theme, setTheme] = useState<'original' | 'ink'>('original');
   useEffect(() => {
