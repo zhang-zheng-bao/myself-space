@@ -291,8 +291,8 @@ function WorkCards({ works, onPick }: { works: Work[]; onPick(work: Work): void 
 function WorkDetail({ work }: { work: Work }) {
   const [index, setIndex] = useState(0);
   const images = work.images?.filter(Boolean) || [];
-  // 后台内容每 30 秒同步一次，COS 签名地址每次都不同；播放中换 src 会从头加载，所以只在换了文件或加载失败后才换新地址。
-  const videoFile = `${work.id}|${work.videoUrl?.split("?")[0]}`;
+  // 后台内容每 30 秒同步一次，COS 签名地址每次都不同；播放中换 src 会从头加载，所以只在换了文件或加载失败后才换新地址。外链视频的查询参数可能就是视频本身，只忽略 COS 签名。
+  const videoFile = `${work.id}|${/[?&]q-signature=/.test(work.videoUrl || "") ? work.videoUrl?.split("?")[0] : work.videoUrl}`;
   const video = useRef({ file: videoFile, url: work.videoUrl, failed: false });
   if (video.current.file !== videoFile || (video.current.failed && video.current.url !== work.videoUrl)) video.current = { file: videoFile, url: work.videoUrl, failed: false };
   return (
