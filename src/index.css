@@ -1306,7 +1306,7 @@ input[type="range"]::-moz-range-thumb:hover {
  * 演示文稿播放器
  * ------------------------------------------------------------------------ */
 .slide-player {
-  position: fixed; inset: 0; z-index: 70;
+  position: fixed; inset: 0; z-index: 70; pointer-events: auto;
   display: flex; flex-direction: column;
   background: rgba(3, 6, 8, 0.97);
   color: var(--portfolio-text);
