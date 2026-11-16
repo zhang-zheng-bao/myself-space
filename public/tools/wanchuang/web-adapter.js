@@ -1,4 +1,22 @@
 (() => {
+  const sourceLink = document.getElementById('sourcePageLink');
+  const safeSource = (value) => {
+    if (!value) return null;
+    try {
+      const url = new URL(value, location.origin);
+      if (url.origin !== location.origin || url.pathname.startsWith('/tools/wanchuang')) return null;
+      return url.pathname + url.search + url.hash;
+    } catch { return null; }
+  };
+  if (sourceLink) {
+    sourceLink.href = safeSource(new URLSearchParams(location.search).get('returnTo'))
+      || safeSource(document.referrer) || '/desk';
+    sourceLink.addEventListener('click', () => {
+      const url = new URL(sourceLink.href);
+      try { sessionStorage.setItem('tool-return-to', url.pathname + url.search + url.hash); } catch {}
+    });
+  }
+
   const base='/api/tools/wanchuang';
   const listeners={jobs:new Set(),voice:new Set(),cookies:new Set()};
   let timer, polling=false, current;

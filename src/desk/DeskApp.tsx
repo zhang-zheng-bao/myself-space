@@ -1,11 +1,18 @@
+import ThemePicker from "../components/ThemePicker";
+import WeChatComposer, { type LocalMessage } from './WeChatComposer';
 import { Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { Aperture, ArrowLeft, ChevronLeft, ChevronRight, CirclePlus, Compass, Ellipsis, ExternalLink, MessageCircle, Mic, Newspaper, Pause, Play, Search, SkipForward, Smile, Tag, User, UserPlus, Users, X } from "lucide-react";
+import { Video, Settings, Image, Bookmark, Volume2, Maximize, Minimize, Aperture, ArrowLeft, ChevronLeft, ChevronRight, CirclePlus, Compass, Ellipsis, ExternalLink, MessageCircle, Mic, Newspaper, Pause, Play, Search, SkipForward, Smile, Tag, User, UserPlus, Users, X } from "lucide-react";
 import { isSectionVisible, type PortfolioData, type ResumeProfile, type SectionKey, type SlideDeck, type Work } from "../types";
 import { defaultCaseWorks } from "../caseStudies";
+import AssistantVideoCall from "../components/AssistantVideoCall";
 import SlidePlayer from "../components/SlidePlayer";
 import { getVisitorKey } from "../tracking";
 import { createDeskScene, type DeskHotspot, type DeskScene } from "./deskScene";
+import { homeApps, homeSize, homeScreenUrl, type HomeDevice } from "./deviceAppearance";
 import "./desk.css";
+import wechatOwnerAvatar from "./assets/wechat-owner-avatar.jpg";
+import { toolUrl } from "../toolNavigation";
+import { universityBooks, readUniversityBooks } from "./universityBooks";
 
 /**
  * 3D 书桌版主页。场景本身见 deskScene.ts；这里负责数据、悬停提示、
@@ -15,17 +22,20 @@ import "./desk.css";
 type Device = "laptop" | "tablet" | "phone" | "notebook" | "speaker";
 
 const LABELS: Record<DeskHotspot, string> = {
-  laptop: "笔记本电脑 · 关于我",
+  poster: "相框",
+  laptop: "笔记本电脑 · 桌面",
   tablet: "平板 · 相册、视频、作品",
-  phone: "手机 · 微信和联系方式",
+  phone: "手机 · 微信聊天",
   notebook: "笔记本 · 诗与随笔",
-  lamp: "台灯 · 点一下开关",
+  lamp: "台灯 · 查看触摸开关",
   mug: "咖啡",
   speaker: "小音箱 · 听歌",
   socket: "插线板 · 总电源",
-  keyboard: "键盘 · 唤醒电脑",
-  mouse: "鼠标 · 唤醒电脑",
+  keyboard: "键盘 · 俯视查看",
+  mouse: "鼠标 · 俯视查看",
   plant: "绿植",
+  bookshelf: "书架 · 大学四年",
+  scissors: "剪刀 · 万创核心",
 };
 
 const emptyData: PortfolioData = {
@@ -90,11 +100,6 @@ async function loadPortfolio(): Promise<PortfolioData | null> {
   } catch { /* 读不到就保持空状态，各个应用显示空提示 */ } finally {
     window.clearTimeout(timeout);
   }
-  // 本地开发时数据库常常是空的，用仓库里的示例数据把桌面铺起来；线上永远以接口为准。
-  if (import.meta.env.DEV && !data?.profile?.name && !data?.works?.length) {
-    const sample = (await import("../data/portfolio.json")).default as unknown as PortfolioData;
-    data = { ...emptyData, ...sample };
-  }
   return data ? visibleData(data) : null;
 }
 
@@ -114,14 +119,31 @@ function flipFrom(origin: DOMRect | null, box: DOMRect) {
   return `translate3d(${dx}px, ${dy}px, 0) scale(${sx}, ${sy})`;
 }
 
-function DeviceShell({ kind, origin, onClosed, children, label }: { kind: Device; origin: DOMRect | null; onClosed(): void; children: ReactNode; label: string }) {
+function DeviceShell({ kind, origin, onClosed, children, label, scene }: { kind: Device; origin: DOMRect | null; onClosed(): void; children: ReactNode; label: string; scene?: DeskScene | null }) {
   const ref = useRef<HTMLDivElement>(null);
   const [phase, setPhase] = useState<"measure" | "from" | "open" | "leave">("measure");
   const [from, setFrom] = useState("");
   const closedRef = useRef(false);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreenError, setFullscreenError] = useState("");
+  const isScreen = kind === "laptop" || kind === "tablet" || kind === "phone";
+  useEffect(() => {
+    const sync = () => setFullscreen(document.fullscreenElement === stageRef.current);
+    document.addEventListener("fullscreenchange", sync);
+    return () => { document.removeEventListener("fullscreenchange", sync); };
+  }, []);
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await stageRef.current?.requestFullscreen();
+      setFullscreenError("");
+    } catch { setFullscreenError("浏览器未允许全屏，请使用浏览器的全屏功能。"); }
+  };
 
   useLayoutEffect(() => {
     if (!ref.current) return;
+    if (isScreen && scene) { setPhase("open"); return; }
     setFrom(flipFrom(origin, ref.current.getBoundingClientRect()));
     setPhase("from");
   }, []);
@@ -132,12 +154,30 @@ function DeviceShell({ kind, origin, onClosed, children, label }: { kind: Device
     return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
   }, [phase]);
 
+  useLayoutEffect(() => {
+    if (!isScreen || !scene) return;
+    if (fullscreen) { if(ref.current) Object.assign(ref.current.style,{width:'',height:'',transform:''}); return; }
+    let frame = 0;
+    const sync = () => {
+      const [width,height] = homeSize[kind as HomeDevice];
+      const transform = scene.screenTransform(kind, width, height);
+      if (ref.current && transform) {
+        Object.assign(ref.current.style,{width:width+'px',height:height+'px',transform});
+      }
+      frame = requestAnimationFrame(sync);
+    };
+    sync(); return () => cancelAnimationFrame(frame);
+  }, [isScreen, scene, kind, fullscreen]);
   const finish = useCallback(() => {
     if (closedRef.current) return;
     closedRef.current = true;
     onClosed();
   }, [onClosed]);
-  const close = useCallback(() => setPhase("leave"), []);
+  const close = useCallback(() => {
+    if (document.fullscreenElement === stageRef.current) void document.exitFullscreen().catch(() => {});
+    if (isScreen && scene) { finish(); return; }
+    setPhase("leave");
+  }, [isScreen, scene, finish]);
   useEffect(() => {
     if (phase !== "leave") return;
     const timer = window.setTimeout(finish, 650);
@@ -152,8 +192,13 @@ function DeviceShell({ kind, origin, onClosed, children, label }: { kind: Device
   const style: CSSProperties = { transform: phase === "open" || phase === "measure" ? undefined : from };
   return (
     <CloseContext.Provider value={close}>
-      <div className="desk-backdrop" data-phase={phase} onClick={close} />
-      <div className="desk-stage" data-phase={phase}>
+      {!(isScreen && scene) && <div className="desk-backdrop" data-phase={phase} onClick={close} />}
+      <div ref={stageRef} className={`desk-stage${isScreen && scene && !fullscreen ? " desk-stage--in-screen" : ""}`} data-phase={phase}>
+        <div className="desk-device-tools">
+          {isScreen && <button type="button" onClick={toggleFullscreen} aria-label={fullscreen ? "退出全屏" : "全屏显示"} title={fullscreen ? "退出全屏" : "全屏显示"}>{fullscreen ? <Minimize size={18}/> : <Maximize size={18}/>}</button>}
+          {fullscreenError && <span role="status">{fullscreenError}</span>}
+          <button type="button" onClick={close} aria-label="返回书桌"><X size={20}/></button>
+        </div>
         <div
           ref={ref}
           role="dialog"
@@ -277,11 +322,23 @@ function WorkDetail({ work }: { work: Work }) {
  * 笔记本电脑：一个桌面窗口，侧栏切换个人信息各部分。
  * ==================================================================== */
 
+function DeviceHome({device,onOpen}: {device:HomeDevice;onOpen(id:string,event:ReactMouseEvent<HTMLElement>):void}) {
+  const [time,setTime]=useState(clock);
+  useEffect(()=>{const timer=window.setInterval(()=>setTime(clock()),1000);return ()=>window.clearInterval(timer);},[]);
+  const [w,h]=homeSize[device];
+  const items=[...homeApps[device],...(device==='laptop'?homeApps.laptop.map((a,i)=>({...a,x:920,y:58+i*88,size:46})):[])];
+  return <div className="desk-shared-home" style={{backgroundImage:`url("${homeScreenUrl(device,time)}")`}}>
+    {items.map((a,i)=><button key={i} className="desk-home-target" aria-label={a.label} title={a.label} style={{left:`${a.x/w*100}%`,top:`${a.y/h*100}%`,width:`${a.size/w*100}%`,height:`${(a.size+24)/h*100}%`}} onClick={e=>onOpen(a.id,e)}/>)}
+    {device==='phone'&&<button className="desk-home-target" aria-label="打开微信聊天" style={{left:'6%',top:'29.77%',width:'88%',height:'10.93%'}} onClick={e=>onOpen('wechat',e)}/>}
+  </div>;
+}
+
 type LaptopTab = "about" | "experience" | "plan" | "works" | "resume";
 
 function LaptopWindow({ data }: { data: PortfolioData }) {
   const close = useCloseDevice();
   const [tab, setTab] = useState<LaptopTab>("about");
+  const [appOpen, setAppOpen] = useState(false);
   const [work, setWork] = useState<Work | null>(null);
   const { profile, experiences, prospects, contact } = data;
   const pageCopy = profile.pageCopy || {};
@@ -291,10 +348,12 @@ function LaptopWindow({ data }: { data: PortfolioData }) {
   const openWork = work && (works.find(item => item.id === work.id) || work);
   const tabs: [LaptopTab, string][] = [["about", "关于我"], ["experience", "经历"], ["plan", "规划"], ["works", "作品"], ["resume", "简历"]];
   return (
-    <div className="desk-mac" data-screen>
+    <div className="desk-desktop" data-screen>
+      <DeviceHome device="laptop" onOpen={id=>{setTab(id as LaptopTab);setWork(null);setAppOpen(true);}} />
+      {appOpen && <div className="desk-mac">
       <header className="desk-mac__titlebar">
         <span className="desk-mac__lights">
-          <button type="button" aria-label="关闭" onClick={close} className="desk-mac__light desk-mac__light--red" />
+          <button type="button" aria-label="关闭窗口" onClick={() => setAppOpen(false)} className="desk-mac__light desk-mac__light--red" />
           <span className="desk-mac__light desk-mac__light--yellow" />
           <span className="desk-mac__light desk-mac__light--green" />
         </span>
@@ -362,6 +421,7 @@ function LaptopWindow({ data }: { data: PortfolioData }) {
           )}
         </main>
       </div>
+    </div>}
     </div>
   );
 }
@@ -405,19 +465,14 @@ function TabletScreen({ data }: { data: PortfolioData }) {
   useEffect(() => { const timer = window.setInterval(() => setTime(clock()), 20_000); return () => window.clearInterval(timer); }, []);
   const pageCopy = data.profile.pageCopy || {};
   const allWorks = useMemo(() => [...data.works, ...(pageCopy.caseWorks || []), ...(pageCopy.aiWorks || [])], [data]);
-  const photos = useMemo(() => {
-    const list = [
-      ...(data.gallery || []).map(item => ({ url: item.imageUrl, title: item.title })),
-      ...(data.treasures || []).map(item => ({ url: item.imageUrl, title: "珍藏" })),
-      ...(pageCopy.postList || []).flatMap(item => item.images.map(url => ({ url, title: item.title }))),
-      ...allWorks.flatMap(item => (item.images || []).map(url => ({ url, title: item.title }))),
-    ].filter(item => item.url);
-    const seen = new Set<string>();
-    return list.filter(item => (seen.has(item.url) ? false : (seen.add(item.url), true)));
-  }, [data, allWorks]);
-  const videos = allWorks.filter(isVideo);
+  const photos = (pageCopy.albumPhotos || []).filter(item => item.imageUrl).map(item => ({url: item.imageUrl, title: item.title}));
+  const videos = (pageCopy.albumVideos || []).filter(isVideo);
+  useEffect(() => {
+    setPhoto(index => index !== null && index >= photos.length ? null : index);
+    setPost(index => index !== null && index >= (pageCopy.postList || []).length ? null : index);
+  }, [photos.length, pageCopy.postList?.length]);
   // 内容续签后，已经点开的作品也换成新地址
-  const openWork = work && (allWorks.find(item => item.id === work.id) || work);
+  const openWork = work && ([...allWorks, ...videos].find(item => item.id === work.id) || null);
   const posts = pageCopy.postList || [];
   const slides = pageCopy.slideList || [];
   const icons: AppIcon[] = [
@@ -436,14 +491,8 @@ function TabletScreen({ data }: { data: PortfolioData }) {
   const titles: Record<TabletApp, string> = { photos: "相册", videos: "视频", works: "作品", posts: "图文", slides: "演示" };
   return (
     <div className="desk-tablet" data-screen>
-      <div className="desk-tablet__status"><span>{time}</span><span>Wi-Fi · 86%</span></div>
-      {!nav.app && (
-        <div className="desk-home">
-          <div className="desk-home__clock">{time}</div>
-          <p className="desk-home__hint">点开一个应用看看</p>
-          <AppGrid icons={icons} onOpen={(id, event) => nav.open(id as TabletApp, event)} />
-        </div>
-      )}
+      {nav.app && <div className="desk-tablet__status"><span>{time}</span><span>Wi-Fi · 86%</span></div>}
+      {!nav.app && <DeviceHome device="tablet" onOpen={(id,event)=>nav.open(id as TabletApp,event)} />}
       {nav.app && (
         <AppView title={openWork?.title || titles[nav.app]} origin={nav.origin} onBack={back}>
           {nav.app === "photos" && (photo === null ? (
@@ -493,7 +542,7 @@ function TabletScreen({ data }: { data: PortfolioData }) {
         </AppView>
       )}
       {deck && <SlidePlayer deck={slides.find(item => item.id === deck.id) || deck} onClose={() => setDeck(null)} />}
-      <button type="button" className="desk-homebar" aria-label={nav.app ? "回到主屏" : "收起平板"} onClick={() => (nav.app ? (setWork(null), setPhoto(null), setPost(null), nav.home()) : close())} />
+      <button type="button" className="desk-homebar" aria-label="回到主屏" onClick={() => { setWork(null); setPhoto(null); setPost(null); nav.home(); }} />
     </div>
   );
 }
@@ -502,7 +551,7 @@ function TabletScreen({ data }: { data: PortfolioData }) {
  * 手机：主屏 + 微信（和小柴聊天）+ 名片 + 音乐。
  * ==================================================================== */
 
-type PhoneApp = "wechat" | "card" | "music";
+type PhoneApp = "wechat" | "music";
 type ChatMessage = { role: "user" | "assistant"; content: string; error?: boolean };
 
 const CONVERSATION_STORAGE = "myspace_assistant_conversation";
@@ -597,8 +646,19 @@ function useShibaChat(active: boolean) {
   return { config, messages, streaming, send };
 }
 
-type WxPage = "chat" | "shiba" | "owner" | "moments";
+type WxPage = "chat" | "shiba" | "owner" | "ownerChat" | "call" | "moments" | "chatInfo" | "searchChat" | "settings";
 type WxTab = "chats" | "contacts" | "discover" | "me";
+
+// Independently drawn icons: distinct filled and outline states for each tab.
+function WxTabIcon({ tab, active }: { tab: WxTab; active: boolean }) {
+  const fill = active ? "currentColor" : "none";
+  return <svg width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
+    {tab === "chats" && <><path fill={fill} d="M14 4C7.7 4 3 7.8 3 12.7c0 2.7 1.5 5 4 6.6L6 23l4.5-2.1c1.1.3 2.3.5 3.5.5 6.3 0 11-3.8 11-8.7S20.3 4 14 4Z"/><g stroke="none" fill={active ? "#fff" : "currentColor"}><circle cx="10" cy="12" r="1.25"/><circle cx="18" cy="12" r="1.25"/></g></>}
+    {tab === "contacts" && <><rect x="5" y="3.5" width="19" height="21" rx="2" fill={fill}/><path d="M2 8h5M2 14h5M2 20h5"/><g stroke={active ? "#fff" : "currentColor"}><circle cx="14.5" cy="10.5" r="3"/><path d="M9 20c0-6 11-6 11 0"/></g></>}
+    {tab === "discover" && <><circle cx="14" cy="14" r="10.5" fill={fill}/><path d="m18.5 9.5-3 6-6 3 3-6Z" stroke={active ? "#fff" : "currentColor"} fill={active ? "#fff" : "none"}/></>}
+    {tab === "me" && <><circle cx="14" cy="8.5" r="4.5" fill={fill}/><path d="M4.5 24v-2.5a9.5 7.5 0 0 1 19 0V24Z" fill={fill}/></>}
+  </svg>;
+}
 
 function WxNav({ title, onBack, tone = "gray", right }: { title?: string; onBack?(): void; tone?: "gray" | "white" | "clear"; right?: ReactNode }) {
   return (
@@ -610,7 +670,7 @@ function WxNav({ title, onBack, tone = "gray", right }: { title?: string; onBack
   );
 }
 
-function WxAvatar({ src, name, size = 48 }: { src?: string; name: string; size?: number }) {
+function WxAvatar({ src, name, size = 40 }: { src?: string; name: string; size?: number }) {
   const style = { width: size, height: size };
   return src ? <img className="desk-wx__avatar" style={style} src={src} alt="" loading="lazy" referrerPolicy="no-referrer" />
     : <span className="desk-wx__avatar desk-wx__avatar--text" style={style}>{name.slice(-2)}</span>;
@@ -621,29 +681,40 @@ function WeChat({ data, origin }: { data: PortfolioData; onBack(): void; origin:
   const [stack, setStack] = useState<WxPage[]>([]);
   const [direction, setDirection] = useState<"push" | "pop">("push");
   const chat = useShibaChat(true);
-  const [input, setInput] = useState("");
+  const [ownerMessages, setOwnerMessages] = useState<LocalMessage[]>([]);
+  const messageUrls = useRef<string[]>([]);
+  useEffect(() => () => messageUrls.current.forEach(url => URL.revokeObjectURL(url)), []);
+  const addOwnerMessage = (message: LocalMessage) => { if (message.kind !== "text") messageUrls.current.push(message.content); setOwnerMessages(items => [...items, message]); };
+  const [infoOwner, setInfoOwner] = useState(true);
+  const [muted, setMuted] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const [query, setQuery] = useState("");
+  const [showCallMenu, setShowCallMenu] = useState(false);
+  const [status, setStatus] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const top = stack[stack.length - 1];
-  useEffect(() => { const list = listRef.current; if (list) list.scrollTop = list.scrollHeight; }, [chat.messages, top]);
-  const owner = data.profile.name || "主人";
-  const ownerAvatar = data.profile.avatar;
+  useEffect(() => { const list = listRef.current; if (list) list.scrollTop = list.scrollHeight; }, [chat.messages, ownerMessages, top]);
+  const owner = data.profile.name?.trim() && data.profile.name.trim() !== "主人" ? data.profile.name.trim() : "张正宝";
+  const ownerAvatar = wechatOwnerAvatar;
   const pageCopy = data.profile.pageCopy || {};
   const offline = Boolean(chat.config && !chat.config.enabled);
   const lastMessage = [...chat.messages].reverse().find(m => stripThinking(m.content));
   const preview = lastMessage ? stripThinking(lastMessage.content) : chat.config?.opening || "来聊聊吧～";
-  const unread = !chat.messages.length;
+  const [contactQuery, setContactQuery] = useState("");
+  const matches = (name: string) => name.toLowerCase().includes(contactQuery.trim().toLowerCase());
   const moments = [
     ...(pageCopy.postList || []).map(post => ({ id: post.id, text: post.text || post.title, images: post.images, date: post.date || "" })),
-    ...(!(pageCopy.postList || []).length ? data.works.map(work => ({ id: work.id, text: `${work.title}\n${work.description || ""}`.trim(), images: work.images || [], date: work.tags?.join(" · ") || "" })) : []),
   ];
   const push = (page: WxPage) => { setDirection("push"); setStack(current => [...current, page]); };
   const pop = () => { setDirection("pop"); setStack(current => current.slice(0, -1)); };
-  const submit = () => { if (!input.trim() || offline) return; void chat.send(input); setInput(""); };
   const now = clock();
+  const chatMenu = (isOwner: boolean) => <button aria-label="聊天信息" onClick={() => { setInfoOwner(isOwner); push("chatInfo"); }}><Ellipsis size={25} /></button>;
+  const chevron = <span className="desk-wx__chev"><ChevronRight size={18} /></span>;
+  const settingRow = (label: string, action: () => void, trailing: ReactNode = chevron) => <button className="desk-wx__setting" onClick={action}><span>{label}</span>{trailing}</button>;
 
-  const tabs: [WxTab, string, typeof MessageCircle][] = [["chats", "微信", MessageCircle], ["contacts", "通讯录", Users], ["discover", "发现", Compass], ["me", "我", User]];
+  const tabs: [WxTab, string][] = [["chats", "微信"], ["contacts", "通讯录"], ["discover", "发现"], ["me", "我"]];
   const row = (key: string, avatar: ReactNode, title: string, sub?: string, extra?: ReactNode, onClick?: () => void, pinned = false) => (
-    <li key={key}><button type="button" className={`desk-wx__row${pinned ? " is-pinned" : ""}`} onClick={onClick}>
+    <li key={key}><button type="button" className={`desk-wx__row${sub !== undefined ? " desk-wx__row--conversation" : ""}${pinned ? " is-pinned" : ""}`} onClick={onClick}>
       {avatar}
       <span className="desk-wx__row-main"><strong>{title}</strong>{sub !== undefined && <small>{sub}</small>}</span>
       {extra}
@@ -653,31 +724,17 @@ function WeChat({ data, origin }: { data: PortfolioData; onBack(): void; origin:
 
   const main = (
     <div className="desk-wx__main">
-      {tab === "chats" && <>
-        <WxNav title={unread ? "微信(1)" : "微信"} right={<CirclePlus size={22} strokeWidth={1.6} />} />
-        <div className="desk-wx__scroll">
-          <div className="desk-wx__search"><Search size={15} />搜索</div>
+      {(tab === "chats" || tab === "contacts") && <>
+        <WxNav title={tab === "chats" ? "微信" : "通讯录"} />
+        <div className={tab === "contacts" ? "desk-wx__contacts" : "desk-wx__conversations desk-wx__scroll"}>
+        <div className={tab === "contacts" ? "desk-wx__scroll" : undefined}>
+          <label className="desk-wx__search"><Search size={16} /><input aria-label="搜索联系人" placeholder="搜索" value={contactQuery} onChange={e => setContactQuery(e.target.value)} /></label>
           <ul className="desk-wx__list">
-            {row("shiba", <span className="desk-wx__badge-wrap"><WxAvatar src={SHIBA_AVATAR} name="小柴" />{unread && <i className="desk-wx__badge">1</i>}</span>, "小柴", preview, <time>{now}</time>, () => push("chat"), true)}
-            {row("owner", <WxAvatar src={ownerAvatar} name={owner} />, owner, "[名片] 想认识我，可以先看看这里", <time>昨天</time>, () => push("owner"))}
+            {matches("小柴") && row("shiba", <WxAvatar src={SHIBA_AVATAR} name="小柴" size={tab === "contacts" ? 36 : 44} />, "小柴", tab === "chats" ? preview : undefined, undefined, () => push(tab === "chats" ? "chat" : "shiba"))}
+            {matches(owner) && row("owner", <WxAvatar src={ownerAvatar} name={owner} size={tab === "contacts" ? 36 : 44} />, owner, tab === "chats" ? "" : undefined, undefined, () => push(tab === "chats" ? "ownerChat" : "owner"), tab === "chats" && pinned)}
           </ul>
+          {tab === "contacts" && <p className="desk-wx__count">{["小柴", owner].filter(matches).length}个联系人</p>}
         </div>
-      </>}
-      {tab === "contacts" && <>
-        <WxNav title="通讯录" right={<UserPlus size={21} strokeWidth={1.6} />} />
-        <div className="desk-wx__scroll">
-          <div className="desk-wx__search"><Search size={15} />搜索</div>
-          <ul className="desk-wx__list">
-            {row("new", icon("#fa9d3b", <UserPlus size={20} />), "新的朋友")}
-            {row("tag", icon("#2782d7", <Tag size={18} />), "标签")}
-            {row("oa", icon("#2782d7", <Newspaper size={18} />), "公众号")}
-          </ul>
-          <p className="desk-wx__section">星标朋友</p>
-          <ul className="desk-wx__list">
-            {row("c-shiba", <WxAvatar src={SHIBA_AVATAR} name="小柴" size={40} />, "小柴", undefined, undefined, () => push("shiba"))}
-            {row("c-owner", <WxAvatar src={ownerAvatar} name={owner} size={40} />, owner, undefined, undefined, () => push("owner"))}
-          </ul>
-          <p className="desk-wx__count">2个朋友</p>
         </div>
       </>}
       {tab === "discover" && <>
@@ -692,17 +749,20 @@ function WeChat({ data, origin }: { data: PortfolioData; onBack(): void; origin:
         <div className="desk-wx__scroll desk-wx__scroll--white-top">
           <div className="desk-wx__me">
             <WxAvatar src={ownerAvatar} name={owner} size={64} />
-            <div><strong>{owner}</strong>{data.contact?.wechat && <small>微信号：{data.contact.wechat}</small>}</div>
+            <div><strong>{owner}</strong><button className="desk-wx__status-pill" onClick={() => setStatus(!status)}>{status ? "◉ 专注中" : "+ 状态"}</button></div>
           </div>
-          <ul className="desk-wx__list desk-wx__list--gap">
+          <ul className="desk-wx__list desk-wx__list--gap desk-wx__me-links">
             {row("me-moments", icon("linear-gradient(135deg,#f5b33f,#e8554e 45%,#4d8af0 75%,#47c66a)", <Aperture size={18} />), "朋友圈", undefined, <span className="desk-wx__chev"><ChevronRight size={18} /></span>, () => push("moments"))}
+          </ul>
+          <ul className="desk-wx__list desk-wx__list--gap desk-wx__me-links">
+            {row("me-settings", icon("#4088de", <Settings size={22} />), "设置", undefined, chevron, () => push("settings"))}
           </ul>
         </div>
       </>}
       <nav className="desk-wx__tabs">
-        {tabs.map(([id, label, Icon]) => (
-          <button key={id} type="button" aria-current={tab === id} onClick={() => setTab(id)}>
-            <span className="desk-wx__badge-wrap"><Icon size={24} strokeWidth={1.6} fill={tab === id ? "currentColor" : "none"} />{id === "chats" && unread && <i className="desk-wx__badge desk-wx__badge--tab">1</i>}</span>
+        {tabs.map(([id, label]) => (
+          <button key={id} type="button" aria-current={tab === id} onClick={() => { setTab(id); setContactQuery(""); }}>
+            <WxTabIcon tab={id} active={tab === id} />
             {label}
           </button>
         ))}
@@ -718,7 +778,7 @@ function WeChat({ data, origin }: { data: PortfolioData; onBack(): void; origin:
           <WxAvatar src={who === "shiba" ? SHIBA_AVATAR : ownerAvatar} name={who === "shiba" ? "小柴" : owner} size={62} />
           <div>
             <strong>{who === "shiba" ? "小柴" : owner}</strong>
-            {who === "shiba" ? <small>AI 数字分身 · {owner}的助理</small> : data.contact?.wechat ? <small>微信号：{data.contact.wechat}</small> : null}
+            {who === "shiba" ? <small>AI 数字分身 · {owner}的助理</small> : null}
             {who === "owner" && data.profile.tagline && <small>{data.profile.tagline}</small>}
           </div>
         </div>
@@ -727,9 +787,8 @@ function WeChat({ data, origin }: { data: PortfolioData; onBack(): void; origin:
             ? row("sign", <span />, "个性签名", "熟悉他的作品、经历和想法，有问题随时问我。")
             : row("p-moments", <span />, "朋友圈", undefined, <span className="desk-wx__thumbs">{moments.flatMap(m => m.images).slice(0, 4).map(url => <img key={url} src={url} alt="" referrerPolicy="no-referrer" />)}</span>, () => push("moments"))}
         </ul>
-        {who === "owner" && <ContactList contact={data.contact} />}
         <ul className="desk-wx__list desk-wx__list--gap">
-          <li><button type="button" className="desk-wx__action" onClick={() => push("chat")}><MessageCircle size={18} />{who === "shiba" ? "发消息" : "先和小柴聊聊"}</button></li>
+          <li><button type="button" className="desk-wx__action" onClick={() => push(who === "shiba" ? "chat" : "ownerChat")}><MessageCircle size={18} />发消息</button></li>
         </ul>
       </div>
     </div>
@@ -738,9 +797,9 @@ function WeChat({ data, origin }: { data: PortfolioData; onBack(): void; origin:
   const pages: Record<WxPage, ReactNode> = {
     chat: (
       <div className="desk-wx__page-inner desk-wx__page-inner--chat">
-        <WxNav title="小柴" onBack={pop} right={<Ellipsis size={22} />} />
+        <WxNav title="小柴" onBack={pop} right={chatMenu(false)} />
         <div className="desk-wx__messages" ref={listRef}>
-          <p className="desk-wx__time">{now}</p>
+
           {offline && <p className="desk-wx__system">小柴暂时不在线，晚点再来找她吧。</p>}
           {!chat.messages.length && !offline && (
             <div className="desk-wx__msg desk-wx__msg--assistant"><WxAvatar src={SHIBA_AVATAR} name="小柴" size={40} /><p className="desk-wx__bubble">{chat.config?.opening || `你好，我是小柴，${owner}的 AI 助理。想了解他的什么？`}</p></div>
@@ -756,18 +815,29 @@ function WeChat({ data, origin }: { data: PortfolioData; onBack(): void; origin:
               </div>
             );
           })}
-          {!chat.messages.length && !offline && chat.config?.suggestions?.length ? (
-            <div className="desk-chat__suggest">{chat.config.suggestions.map(item => <button key={item} type="button" onClick={() => void chat.send(item)}>{item}</button>)}</div>
-          ) : null}
+
         </div>
-        <form className="desk-wx__input" onSubmit={event => { event.preventDefault(); submit(); }}>
-          <span className="desk-wx__round" aria-hidden="true"><Mic size={17} /></span>
-          <input value={input} onChange={event => setInput(event.target.value)} disabled={offline} maxLength={800} aria-label="给小柴发消息" />
-          <Smile size={27} strokeWidth={1.4} aria-hidden="true" />
-          {input.trim() ? <button type="submit" className="desk-wx__send" disabled={chat.streaming}>发送</button> : <CirclePlus size={27} strokeWidth={1.4} aria-hidden="true" />}
-        </form>
+        <WeChatComposer media={false} disabled={offline || chat.streaming} onMessage={message => { void chat.send(message.content); }} />
       </div>
     ),
+    ownerChat: <div className="desk-wx__page-inner desk-wx__page-inner--chat">
+      <WxNav title={owner} onBack={pop} right={chatMenu(true)} />
+      <div className="desk-wx__messages" ref={listRef}>
+        {ownerMessages.length > 0 && <p className="desk-wx__system">仅本次会话可见，尚未发送给对方</p>}
+        {ownerMessages.map((message, i) => <div key={i} className="desk-wx__msg desk-wx__msg--user"><div className="desk-wx__bubble">{message.kind === "voice" ? <audio controls src={message.content} aria-label="语音消息" /> : message.kind === "image" ? <img className="wx-message-image" src={message.content} alt="表情图片" /> : message.content}</div><span className="desk-wx__me-avatar"><User size={22}/></span></div>)}
+      </div>
+      <WeChatComposer onMessage={addOwnerMessage} onMore={() => setShowCallMenu(!showCallMenu)} />
+      {showCallMenu && <div className="desk-wx__more"><button onClick={() => push("call")}><span className="desk-wx__more-icon"><Video size={28} /></span><span>视频通话</span></button></div>}
+    </div>,
+    chatInfo: <div className="desk-wx__page-inner"><WxNav title="聊天信息" onBack={pop} /><div className="desk-wx__scroll">
+      <div className="desk-wx__members"><button onClick={() => push(infoOwner ? "owner" : "shiba")}><WxAvatar src={infoOwner ? ownerAvatar : SHIBA_AVATAR} name={infoOwner ? owner : "小柴"} size={52}/><span>{infoOwner ? owner : "小柴"}</span></button></div>
+      <div className="desk-wx__settings-group">{settingRow("查找聊天记录", () => { setQuery(""); push("searchChat"); })}</div>
+      <div className="desk-wx__settings-group"><div className="desk-wx__setting"><span>消息免打扰</span><button className="desk-wx__switch" role="switch" aria-label="消息免打扰" aria-checked={muted} onClick={() => setMuted(!muted)} /></div>{infoOwner && <div className="desk-wx__setting"><span>置顶聊天</span><button className="desk-wx__switch" role="switch" aria-label="置顶聊天" aria-checked={pinned} onClick={() => setPinned(!pinned)} /></div>}</div>
+
+    </div></div>,
+    searchChat: <div className="desk-wx__page-inner"><WxNav title="查找聊天记录" onBack={pop}/><div className="desk-wx__scroll"><label className="desk-wx__search"><Search size={17}/><input autoFocus placeholder="搜索聊天内容" value={query} onChange={e => setQuery(e.target.value)}/></label>{query.trim() && <div className="desk-wx__search-results">{!infoOwner && chat.messages.some(m => stripThinking(m.content).includes(query)) ? chat.messages.filter(m => stripThinking(m.content).includes(query)).map((m,i) => <p key={i}>{stripThinking(m.content)}</p>) : <p>没有找到相关聊天记录</p>}</div>}</div></div>,
+    settings: <div className="desk-wx__page-inner"><WxNav title="设置" onBack={pop}/><div className="desk-wx__scroll"><div className="desk-wx__settings-group"><div className="desk-wx__setting"><span>消息免打扰</span><button className="desk-wx__switch" role="switch" aria-label="消息免打扰" aria-checked={muted} onClick={() => setMuted(!muted)}/></div></div></div></div>,
+    call: <div className="desk-wx__page-inner desk-owner-call"><WxNav title={owner} onBack={pop} /><AssistantVideoCall close={pop} identityName={owner} identityAvatar={ownerAvatar} /></div>,
     shiba: profile("shiba"),
     owner: profile("owner"),
     moments: (
@@ -810,10 +880,7 @@ function PhoneScreen({ data, music }: { data: PortfolioData; music: MusicControl
   const contact = data.contact;
   const icons: AppIcon[] = [
     { id: "wechat", label: "微信", color: "linear-gradient(145deg,#3ee07f,#07c160)", glyph: "◍" },
-    { id: "card", label: "名片", color: "linear-gradient(145deg,#ffb36b,#f0743b)", glyph: "☺" },
     { id: "music", label: "音乐", color: "linear-gradient(145deg,#ff6b8b,#d6305a)", glyph: "♪" },
-    ...(contact?.email ? [{ id: "mail", label: "邮件", color: "linear-gradient(145deg,#6bbcff,#2b7ae8)", glyph: "✉" }] : []),
-    ...(contact?.phone ? [{ id: "tel", label: "电话", color: "linear-gradient(145deg,#6fe39a,#20a85a)", glyph: "✆" }] : []),
   ];
   const openApp = (id: string, event: ReactMouseEvent<HTMLElement>) => {
     if (id === "mail" && contact?.email) { window.location.href = `mailto:${contact.email}`; return; }
@@ -822,35 +889,16 @@ function PhoneScreen({ data, music }: { data: PortfolioData; music: MusicControl
   };
   return (
     <div className="desk-phone" data-screen>
-      <div className="desk-phone__island" aria-hidden="true" />
-      <div className="desk-phone__status"><span>{time}</span><span>5G · 86%</span></div>
-      {!nav.app && (
-        <div className="desk-home desk-home--phone">
-          <div className="desk-home__clock">{time}</div>
-          <button type="button" className="desk-notify" onClick={event => nav.open("wechat", event)}>
-            <span className="desk-notify__icon" aria-hidden="true">◍</span>
-            <span><strong>微信 · 小柴</strong><small>来聊聊吧～</small></span>
-          </button>
-          <AppGrid icons={icons} onOpen={openApp} />
-        </div>
-      )}
+      {nav.app && <div className="desk-phone__island" aria-hidden="true" />}
+      {nav.app && <div className="desk-phone__status"><span>{time}</span><span>5G · 86%</span></div>}
+      {!nav.app && <DeviceHome device="phone" onOpen={(id,event)=>nav.open(id as PhoneApp,event)} />}
       {nav.app === "wechat" && <WeChat data={data} onBack={nav.home} origin={nav.origin} />}
-      {nav.app === "card" && (
-        <AppView title="名片" origin={nav.origin} onBack={nav.home}>
-          <div className="desk-wechat__card">
-            {data.profile.avatar ? <Img className="desk-wechat__card-avatar" src={data.profile.avatar} alt="" /> : null}
-            <h3>{data.profile.name || "你好"}</h3>
-            {data.profile.tagline && <p>{data.profile.tagline}</p>}
-            <ContactList contact={contact} />
-          </div>
-        </AppView>
-      )}
       {nav.app === "music" && (
         <AppView title="音乐" origin={nav.origin} onBack={nav.home} tone="dark">
           <MusicPanel music={music} />
         </AppView>
       )}
-      <button type="button" className="desk-homebar" aria-label={nav.app ? "回到主屏" : "收起手机"} onClick={() => (nav.app ? nav.home() : close())} />
+      <button type="button" className="desk-homebar" aria-label="回到主屏" onClick={() => nav.home()} />
     </div>
   );
 }
@@ -859,10 +907,42 @@ function PhoneScreen({ data, music }: { data: PortfolioData; music: MusicControl
  * 纸质笔记本：诗集，左右两页，翻页有动画。
  * ==================================================================== */
 
+function UniversitySpread({ index, data }: { index: number; data: PortfolioData }) {
+  const close = useContext(CloseContext);
+  const book = readUniversityBooks(data.profile.pageCopy)[index];
+  const [spread, setSpread] = useState(0);
+  const count = Math.max(1, Math.ceil(book.pages.length / 2));
+  useEffect(() => setSpread(s => Math.min(s, count - 1)), [count]);
+  return <div className="university-book" data-book-id={book.id}>
+    <header className="university-book__header"><span>{book.title}</span></header>
+    <div className="university-book__spread" key={spread}>
+      {[0, 1].map(side => {
+        const number = spread * 2 + side;
+        const page = book.pages[number];
+        return <article className="university-book__page" key={side} aria-label={`第 ${number + 1} 页`}>
+          <div className="university-book__body">
+            {number === 0 && <p className="university-book__eyebrow">{book.title}</p>}
+            {page?.title && <h2>{page.title}</h2>}
+            {page?.imageUrl && <figure><Img src={page.imageUrl} alt={page.caption || ""} />{page.caption && <figcaption>{page.caption}</figcaption>}</figure>}
+            {page?.text?.split(/\n\s*\n/).map((paragraph, i) => <p key={i}>{paragraph}</p>)}
+            {!page?.title && !page?.text && !page?.imageUrl && <p className="university-book__empty">尚未写下的故事</p>}
+          </div>
+          <footer>{String(number + 1).padStart(2, "0")}</footer>
+        </article>;
+      })}
+    </div>
+    <nav className="university-book__navigation" aria-label="书页导航">
+      <button disabled={spread === 0} onClick={() => setSpread(s => s - 1)}><ChevronLeft size={18} />上一页</button>
+      <span>{spread * 2 + 1}–{Math.min(spread * 2 + 2, Math.max(2, book.pages.length))} / {Math.max(2, book.pages.length)}</span>
+      <button disabled={spread + 1 >= count} onClick={() => setSpread(s => s + 1)}>下一页<ChevronRight size={18} /></button>
+    </nav>
+  </div>;
+}
+
 function NotebookSpread({ data }: { data: PortfolioData }) {
   const close = useCloseDevice();
   const pageCopy = data.profile.pageCopy || {};
-  const poems = (pageCopy.poemList?.length ? pageCopy.poemList : data.poems || []).filter(poem => poem.text?.trim());
+  const poems = (pageCopy.poemList || []).filter(poem => poem.text?.trim());
   const [index, setIndex] = useState(0);
   const [turn, setTurn] = useState<"next" | "prev" | "">("");
   const go = (step: number) => {
@@ -870,10 +950,11 @@ function NotebookSpread({ data }: { data: PortfolioData }) {
     setTurn(step > 0 ? "next" : "prev");
     setIndex((index + step + poems.length) % poems.length);
   };
+  useEffect(() => setIndex(i => Math.min(i, Math.max(0, poems.length - 1))), [poems.length]);
   const poem = poems[index];
   return (
     <div className="desk-book">
-      <button type="button" className="desk-book__close" aria-label="合上笔记本" onClick={close}><X size={18} /></button>
+
       <div className="desk-book__page desk-book__page--left">
         <p className="desk-book__kicker">诗与随笔</p>
         {poem ? <>
@@ -882,12 +963,12 @@ function NotebookSpread({ data }: { data: PortfolioData }) {
           {poem.note && <p className="desk-book__note">{poem.note}</p>}
           <p className="desk-book__count">第 {index + 1} 篇 / 共 {poems.length} 篇</p>
         </> : <>
-          <h2>{data.profile.name || "随笔"}</h2>
-          {paragraphs(data.profile.intro).slice(0, 3).map((line, i) => <p key={i}>{line}</p>)}
+          <h2>暂无诗与随笔</h2>
+
         </>}
       </div>
       <div className="desk-book__page desk-book__page--right" key={index} data-turn={turn}>
-        {poem ? poem.text.split("\n").map((line, i) => <p key={i} className="desk-book__line">{line || "\u00a0"}</p>) : <p className="desk-book__line">{data.profile.quote || "这一本还没写满。"}</p>}
+        <div className="desk-book__writing">{poem ? poem.text.split("\n").map((line, i) => <p key={i} className="desk-book__line">{line || "\u00a0"}</p>) : <p className="desk-book__line">{"这一本还没写下内容。"}</p>}</div>
       </div>
       {poems.length > 1 && <>
         <button type="button" className="desk-book__turn desk-book__turn--prev" aria-label="上一篇" onClick={() => go(-1)}><ChevronLeft size={22} /></button>
@@ -1000,7 +1081,7 @@ function SpeakerPanel({ music }: { music: MusicControls }) {
   const close = useCloseDevice();
   return (
     <div className="desk-speaker">
-      <header><strong>小音箱</strong><button type="button" aria-label="关闭" onClick={close}><X size={16} /></button></header>
+      <header><strong>小音箱</strong></header>
       <MusicPanel music={music} />
     </div>
   );
@@ -1013,12 +1094,33 @@ function SpeakerPanel({ music }: { music: MusicControls }) {
 export default function DeskApp() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<DeskScene | null>(null);
+  const focusedDeviceRef = useRef<Device | "scissors" | "lamp" | "poster" | "keyboard" | "mouse" | null>(null);
+  const [focusedDevice, setFocusedDevice] = useState<Device | "scissors" | "lamp" | "poster" | "keyboard" | "mouse" | null>(null);
+  const deviceOpenTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(deviceOpenTimer.current), []);
   const [data, setData] = useState<PortfolioData>(emptyData);
   const [ready, setReady] = useState(false);
   const [webglFailed, setWebglFailed] = useState(false);
   const [open, setOpen] = useState<{ kind: Device; origin: DOMRect | null } | null>(null);
-  const [hover, setHover] = useState<{ kind: DeskHotspot; x: number; y: number } | null>(null);
   const [lampOn, setLampOn] = useState(true);
+  const [shelfFocused, setShelfFocused] = useState(false);
+  const [selectedBook, setSelectedBook] = useState<number | null>(null);
+  const closeShelf = useCallback(() => {
+    window.clearTimeout(deviceOpenTimer.current);
+    sceneRef.current?.focus(null);
+    setShelfFocused(false);
+    focusedDeviceRef.current = null;
+    setFocusedDevice(null);
+  }, []);
+  useEffect(() => {
+    if ((!shelfFocused && !focusedDevice) || selectedBook !== null || open) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") closeShelf(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [shelfFocused, focusedDevice, selectedBook, open, closeShelf]);
+  const [context,setContext]=useState<{id:string;plugKind?:'lamp'|'speaker'|'laptop';x:number;y:number}|null>(null);
+  useEffect(()=>{if(!context)return;const close=(e:KeyboardEvent)=>{if(e.key==='Escape')setContext(null);};window.addEventListener('keydown',close);return ()=>window.removeEventListener('keydown',close);},[context]);
+  const [plugs, setPlugs] = useState({ lamp: true, speaker: true, laptop: true });
   const [powerOn, setPowerOn] = useState(true);
   const [toast, setToast] = useState("");
   const music = useMusic(data.musicTracks || []);
@@ -1033,20 +1135,61 @@ export default function DeskApp() {
   }, [toast]);
 
   const openDevice = useCallback((kind: Device) => {
+    setShelfFocused(false);
     const scene = sceneRef.current;
     const hotspot: DeskHotspot = kind;
-    const origin = scene?.screenRect(hotspot) || null;
+    window.clearTimeout(deviceOpenTimer.current);
     scene?.focus(hotspot);
-    setHover(null);
-    setOpen({ kind, origin });
+    if (scene && kind === "notebook" && focusedDeviceRef.current !== kind) {
+      focusedDeviceRef.current = kind;
+      setFocusedDevice(kind);
+      return;
+    }
+    if (scene && (kind === "laptop" || kind === "tablet" || kind === "phone")) {
+      focusedDeviceRef.current = kind;
+      setFocusedDevice(kind);
+      // Open when the camera reaches the screen.
+      return;
+    }
+    setOpen({ kind, origin: scene?.screenRect(hotspot) || null });
   }, []);
 
   const select = useCallback((hotspot: DeskHotspot) => {
-    const { powerOn: power, data: current } = stateRef.current;
+    const { data: current, powerOn: power } = stateRef.current;
     switch (hotspot) {
+      case "keyboard":
+      case "mouse":
+      case "poster":
+        window.clearTimeout(deviceOpenTimer.current);
+        focusedDeviceRef.current = hotspot;
+        setFocusedDevice(hotspot);
+        setShelfFocused(false);
+        sceneRef.current?.focus(hotspot);
+        return;
+      case "scissors":
+        window.clearTimeout(deviceOpenTimer.current);
+        if (focusedDeviceRef.current === "scissors") {
+          window.location.assign(toolUrl("/tools/wanchuang/index.html"));
+          return;
+        }
+        focusedDeviceRef.current = "scissors";
+        setFocusedDevice("scissors");
+        setShelfFocused(false);
+        sceneRef.current?.focus("scissors");
+        return;
+      case "bookshelf":
+        window.clearTimeout(deviceOpenTimer.current);
+        focusedDeviceRef.current = null;
+        setFocusedDevice(null);
+        sceneRef.current?.focus("bookshelf");
+        setShelfFocused(true);
+        return;
       case "lamp":
-        if (!power) { showToast("插线板关着，台灯没电。"); return; }
-        setLampOn(on => !on);
+        window.clearTimeout(deviceOpenTimer.current);
+        focusedDeviceRef.current = "lamp";
+        setFocusedDevice("lamp");
+        setShelfFocused(false);
+        sceneRef.current?.focus("lamp");
         return;
       case "socket":
         setPowerOn(on => !on);
@@ -1056,12 +1199,6 @@ export default function DeskApp() {
         return;
       case "plant":
         showToast("看累了就看看绿植，让眼睛歇一会儿。");
-        return;
-      case "keyboard":
-      case "mouse":
-        sceneRef.current?.pressKeys();
-        if (!power) { showToast("电脑没电了，先打开插线板。"); return; }
-        openDevice("laptop");
         return;
       case "laptop":
       case "speaker":
@@ -1077,11 +1214,11 @@ export default function DeskApp() {
     let alive = true;
     let busy = false;
     let lastAttempt = Date.now();
-    // 素材地址是带签名的临时链接：每 45 分钟续签一次，图片或音视频加载失败时也立刻续签。
+    // 定期同步后台内容，返回页面时立即刷新，同时续签媒体地址。
     const refresh = async (force = false) => {
       if (!alive || busy || document.hidden) return;
       const now = Date.now();
-      if (now - lastAttempt < (force ? 30_000 : 45 * 60_000)) return;
+      if (now - lastAttempt < (force ? 1_000 : 30_000)) return;
       busy = true;
       lastAttempt = now;
       try {
@@ -1091,18 +1228,20 @@ export default function DeskApp() {
         busy = false;
       }
     };
-    const visible = () => { void refresh(); };
+    const visible = () => { void refresh(true); };
     const mediaError = (event: Event) => {
       if (event.target instanceof HTMLImageElement || event.target instanceof HTMLMediaElement) void refresh(true);
     };
     void loadPortfolio().then(next => { if (alive && next) setData(next); });
-    const timer = window.setInterval(visible, 60_000);
+    const timer = window.setInterval(() => { void refresh(); }, 30_000);
     document.addEventListener("visibilitychange", visible);
+    window.addEventListener("focus", visible);
     document.addEventListener("error", mediaError, true);
     return () => {
       alive = false;
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", visible);
+      window.removeEventListener("focus", visible);
       document.removeEventListener("error", mediaError, true);
     };
   }, []);
@@ -1113,8 +1252,14 @@ export default function DeskApp() {
     let scene: DeskScene;
     try {
       scene = createDeskScene({
+        onContext: setContext,
+        onLampChange: setLampOn,
+        onFocusReady: kind => {
+          if (focusedDeviceRef.current === kind && (kind === "laptop" || kind === "tablet" || kind === "phone")) setOpen({kind,origin:null});
+        },
+        onBookSelect: setSelectedBook,
         canvas,
-        onHover: (kind, x, y) => setHover(kind ? { kind, x, y } : null),
+        onHover: () => {},
         onSelect: kind => select(kind),
         onReady: () => {
           setReady(true);
@@ -1133,6 +1278,12 @@ export default function DeskApp() {
   useEffect(() => { sceneRef.current?.setIdentity(data.profile.name, data.profile.tagline, data.profile.avatar); }, [data, ready]);
   useEffect(() => { sceneRef.current?.setLamp(lampOn); }, [lampOn, ready]);
   useEffect(() => {
+    for (const kind of ["lamp", "speaker", "laptop"] as const) sceneRef.current?.setPlugConnected(kind, plugs[kind]);
+  }, [plugs, ready]);
+  useEffect(() => {
+    if (!plugs.speaker && music.playing) music.toggle();
+  }, [plugs.speaker, music.playing]);
+  useEffect(() => {
     sceneRef.current?.setPower(powerOn);
     if (!powerOn && music.playing) music.toggle();
   }, [powerOn, ready]);
@@ -1140,39 +1291,49 @@ export default function DeskApp() {
   useEffect(() => { document.title = data.profile.name ? `${data.profile.name}的书桌` : "我的书桌"; }, [data.profile.name]);
 
   const closeDevice = useCallback(() => {
+    window.clearTimeout(deviceOpenTimer.current);
     sceneRef.current?.focus(null);
+    focusedDeviceRef.current = null;
+    setFocusedDevice(null);
     setOpen(null);
   }, []);
 
-  const dock: [DeskHotspot, string][] = [["laptop", "电脑"], ["tablet", "平板"], ["phone", "手机"], ["notebook", "笔记本"], ["speaker", "音箱"], ["lamp", lampOn && powerOn ? "关灯" : "开灯"]];
+  const dock: [DeskHotspot, string][] = [["poster", "相框"],["laptop", "电脑"], ["tablet", "平板"], ["phone", "手机"], ["notebook", "笔记本"], ["speaker", "音箱"], ["lamp", "台灯"]];
 
   return (
-    <div className={`desk-page${ready ? " is-ready" : ""}${open ? " has-device" : ""}`}>
+    <div className={`desk-page${ready ? " is-ready" : ""}${open ? " has-device" : ""}${open && ["laptop","tablet","phone"].includes(open.kind) ? " has-screen" : ""}`}>
       <canvas ref={canvasRef} className="desk-canvas" aria-label="三维书桌场景，可以点击桌上的物品" />
       {webglFailed && <div className="desk-fallback">你的浏览器不支持 3D 画面，可以用下方按钮打开各个物品。</div>}
 
-      <header className="desk-hud">
-        <div>
-          <h1>{data.profile.name ? `${data.profile.name}的书桌` : "我的书桌"}</h1>
-          <p className="desk-hud__hint-desktop">点一点桌上的东西：电脑、平板、手机、笔记本都能打开。</p>
-          <p className="desk-hud__hint-mobile">左右拖动看看桌面，点物品打开。</p>
-        </div>
-        <a className="desk-hud__link" href="/">经典版主页</a>
-      </header>
+      {(shelfFocused || focusedDevice) && !open && selectedBook === null && <button className="desk-focus-close" type="button" aria-label="返回书桌" onClick={closeShelf}><X size={20}/></button>}
+      {!focusedDevice && !shelfFocused && <header className="desk-hud">
+        <ThemePicker current="desk" />
+      </header>}
 
-      {hover && !open && (
-        <div className="desk-tip" style={{ left: hover.x, top: hover.y }}>{LABELS[hover.kind]}</div>
-      )}
+      {context && <div className="desk-context-backdrop" onClick={()=>setContext(null)}>
+        <div className="desk-radial" role="dialog" aria-label="物品操作" style={{left:Math.max(126,Math.min(window.innerWidth-126,context.x)),top:Math.max(126,Math.min(window.innerHeight-126,context.y))}} onClick={e=>e.stopPropagation()}>
+          {(context.plugKind ? [plugs[context.plugKind]?'拔下':'插上'] : ['移动','旋转','固定位置']).map((label,i)=> <button key={label} className="desk-radial__action" style={{transform:`translate(-50%,-50%) translate(${Math.cos((-90+i*120)*Math.PI/180)*82}px,${Math.sin((-90+i*120)*Math.PI/180)*82}px)`}} onClick={()=>{
+            if(context.plugKind){const kind=context.plugKind;setPlugs(p=>({...p,[kind]:!p[kind]}));}
+            else if(i===2){if(!sceneRef.current?.saveLayout()){showToast('保存失败，请重试');return;}showToast('位置已固定');}
+            else {sceneRef.current?.editObject(context.id,i===0?'move':'rotate');showToast(i===0?'拖动物品移动，再次长按可固定':'左右拖动物品旋转，再次长按可固定');}
+            setContext(null);
+          }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d={context.plugKind?'M8 3v6m8-6v6M6 9h12v4a6 6 0 0 1-12 0Zm6 10v4':i===0?'M12 2v20M2 12h20M8 6l4-4 4 4M6 8l-4 4 4 4M18 8l4 4-4 4M8 18l4 4 4-4':i===1?'M20 10a8 8 0 1 0-2 8M20 3v7h-7':'M7 10V7a5 5 0 0 1 10 0v3M5 10h14v12H5Z'}/></svg>{label}</button>)}
+          <button className="desk-radial__close" aria-label="关闭操作菜单" onClick={()=>setContext(null)}><X size={20}/></button>
+        </div>
+      </div>}
       {toast && <div className="desk-toast" role="status">{toast}</div>}
 
-      <nav className="desk-dock" aria-label="桌上的物品">
+      {!shelfFocused && !focusedDevice && <nav className="desk-dock" aria-label="桌上的物品">
         {dock.map(([kind, label]) => (
           <button key={kind} type="button" onClick={() => select(kind)}>{label}</button>
         ))}
-      </nav>
+      </nav>}
 
+      {selectedBook !== null && <DeviceShell kind="notebook" origin={sceneRef.current?.screenRect("bookshelf") || null} onClosed={() => setSelectedBook(null)} label={universityBooks[selectedBook].title}>
+        <UniversitySpread index={selectedBook} data={data} />
+      </DeviceShell>}
       {open && (
-        <DeviceShell kind={open.kind} origin={open.origin} onClosed={closeDevice} label={LABELS[open.kind]}>
+        <DeviceShell scene={sceneRef.current} kind={open.kind} origin={open.origin} onClosed={closeDevice} label={LABELS[open.kind]}>
           {open.kind === "laptop" && <LaptopWindow data={data} />}
           {open.kind === "tablet" && <TabletScreen data={data} />}
           {open.kind === "phone" && <PhoneScreen data={data} music={music} />}

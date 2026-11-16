@@ -49,7 +49,7 @@ export function avatarCreateBody(config: AvatarCallSettings) {
   return {
     call_mode: 'video', character_id: '1', model: config.model,
     avatar: {
-      persona: config.persona, name: '小柴',
+      persona: config.persona, name: '个人虚拟人',
       ...(config.avatarId ? { id: config.avatarId } : { image_uri: config.imageUrl }),
       ...(config.voice ? { voice: config.voice } : {}),
       ...(config.greeting ? { greeting_instruction: config.greeting } : {}),

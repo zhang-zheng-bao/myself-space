@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ArrowLeft, ArrowUpRight, AudioLines, Bookmark, BriefcaseBusiness, Check, ChevronRight, Download, Film, Folder, Grid2X2, Layers3, Link2, Pencil, Plus, Search, ShieldCheck, X } from "lucide-react";
 import "./toolbox.css";
+import { toolUrl } from "../toolNavigation";
 
 const categories = ["全部工具", "媒体处理", "创作辅助"];
 const apps = [{ id: "wanchuang", name: "万创核心", href: "/tools/wanchuang/index.html", category: "媒体处理", description: "从一条链接开始，收集视频与封面、提取文稿，让灵感成为随手可用的创作素材。", tags: ["视频下载", "语音转写", "素材收集"] }];
@@ -32,7 +33,7 @@ export default function Toolbox({ description }: { description: string }) {
       <div className="tb-toolbar"><div className="tb-tabs" aria-label="工具分类">{categories.map(item => <button key={item} aria-pressed={category === item} onClick={() => setCategory(item)}>{item}{item === "全部工具" && <span>{apps.length}</span>}</button>)}</div><label className="tb-search"><Search size={16} /><input aria-label="搜索工具" placeholder="搜索工具…" value={query} onChange={e => setQuery(e.target.value)} /></label></div>
       <div className="tb-section-title"><h3><Bookmark size={18} />精选应用<span className="tb-amber-label">推荐</span></h3><p>把常用的工具放在这里</p></div>
       <div className="tb-grid">
-        {filtered.map(app => <a className="tb-card" key={app.id} href={app.href} aria-label={`打开${app.name}网页版`}>
+        {filtered.map(app => <a className="tb-card" key={app.id} href={toolUrl(app.href, "toolbox")} aria-label={`打开${app.name}网页版`}>
           <span className="tb-app-logo" aria-hidden="true"><img src="/tools/wanchuang/assets/clipharbor-logo.png" alt="" width="48" height="48" /></span>
           <span className="tb-card-copy"><span className="tb-card-name">{app.name}<span className="tb-amber-label">预览版</span></span><span className="tb-card-meta">视频下载 · 语音转写</span></span><ChevronRight size={16} className="tb-card-arrow" />
         </a>)}
@@ -45,7 +46,7 @@ export default function Toolbox({ description }: { description: string }) {
           { name: "视频下载", detail: "保存画面，收集灵感", icon: Film, tone: "cyan", target: "view=download&mode=video" },
           { name: "语音转写", detail: "从音视频中提取文稿", icon: AudioLines, tone: "violet", target: "view=speech" },
           { name: "素材收集", detail: "一并收集视频与封面", icon: Folder, tone: "amber", target: "view=download&mode=both" },
-        ].map(item => <a className="tb-capability" key={item.name} href={`/tools/wanchuang/index.html?${item.target}`} aria-label={`打开万创核心${item.name}`}><span className={`tb-capability-icon tb-capability-icon--${item.tone}`}><item.icon size={24} /></span><span><strong>{item.name}</strong><small>{item.detail}</small></span><ArrowUpRight size={16} className="tb-capability-arrow" aria-hidden="true" /></a>)}</div>
+        ].map(item => <a className="tb-capability" key={item.name} href={toolUrl(`/tools/wanchuang/index.html?${item.target}`, "toolbox")} aria-label={`打开万创核心${item.name}`}><span className={`tb-capability-icon tb-capability-icon--${item.tone}`}><item.icon size={24} /></span><span><strong>{item.name}</strong><small>{item.detail}</small></span><ArrowUpRight size={16} className="tb-capability-arrow" aria-hidden="true" /></a>)}</div>
       </section>}
       <ol className="tb-journey">{[
         { title: "发现工具", description: "找到适合的创作工具", icon: Search },

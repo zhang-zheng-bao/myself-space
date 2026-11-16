@@ -1,3 +1,4 @@
+import { readUniversityBooks } from "./desk/universityBooks";
 import React, { ChangeEvent, createContext, useContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import "./admin-theme.css";
@@ -3536,6 +3537,9 @@ export default function AdminApp() {
       { key: "cases", label: "案例分析", icon: FileText },
       { key: "gallery", label: "应用技能", icon: Images },
       { key: "treasures", label: "我的珍藏", icon: Gem },
+      { key: "university", label: "大学四年", icon: FileText },
+      { key: "albumPhotos", label: "相册", icon: Images },
+      { key: "albumVideos", label: "视频", icon: Presentation },
       { key: "poems", label: "诗与惆怅", icon: Feather },
       { key: "posts", label: "图文分享", icon: StickyNote },
       { key: "slides", label: "演示文稿", icon: Presentation },
@@ -5950,6 +5954,47 @@ export default function AdminApp() {
               </>
             )}
 
+
+            {active === "university" && <Section title="大学四年" description="桌面书架的四本书。按阅读顺序编辑每一页，保存后同步到书架。" action={<SaveCurrentButton label="保存四本书" scoped={scopedList(d => d.profile.pageCopy?.universityBooks, (d,v) => {d.profile.pageCopy!.universityBooks=v;})} />}>
+              {readUniversityBooks(data.profile.pageCopy).map((book, bookIndex) => {
+                const changeBook = (mutate: (value: ReturnType<typeof readUniversityBooks>[number]) => void) => update(draft => {
+                  const books = readUniversityBooks(draft.profile.pageCopy);
+                  mutate(books[bookIndex]); draft.profile.pageCopy!.universityBooks = books;
+                });
+                return <details key={book.id} className="adm-panel my-3 p-4"><summary className="cursor-pointer">{book.title} · {book.pages.length} 页</summary>
+                  {book.pages.map((page, index) => <section key={page.id || index} className="my-4 space-y-3 border-t border-zinc-700 pt-4">
+                    <p>第 {index+1} 页</p>
+                    <Field label="标题" value={page.title || ""} onChange={v => changeBook(b => {b.pages[index].title=v;})} />
+                    <Field label="正文" textarea value={page.text || ""} onChange={v => changeBook(b => {b.pages[index].text=v;})} />
+                    <Field label="图片 URL" value={page.imageUrl || ""} onChange={v => changeBook(b => {b.pages[index].imageUrl=v;})} />
+                    <label className="block">上传图片<input type="file" accept="image/*" onChange={e => upload(e, url => changeBook(b => {b.pages[index].imageUrl=url;}))}/></label>
+                    {page.imageUrl && <img src={page.imageUrl} alt={page.caption || ""} className="max-h-48 object-contain"/>}
+                    <Field label="图片说明" value={page.caption || ""} onChange={v => changeBook(b => {b.pages[index].caption=v;})} />
+                    <div className="flex gap-4"><button disabled={index===0} onClick={() => changeBook(b => { [b.pages[index-1], b.pages[index]]=[b.pages[index],b.pages[index-1]]; })}>上移</button><button disabled={index===book.pages.length-1} onClick={() => changeBook(b => { [b.pages[index+1],b.pages[index]]=[b.pages[index],b.pages[index+1]]; })}>下移</button><button onClick={() => changeBook(b => {b.pages.splice(index,1);})}>删除此页</button></div>
+                  </section>)}
+                  <button className="mt-4" onClick={() => changeBook(b => {b.pages.push({id:uid('page'),title:'',text:''});})}>＋ 新增一页</button>
+                </details>;
+              })}
+            </Section>}
+{active === "albumPhotos" && <Section title="相册" description="平板相册的独立内容，按这里的顺序展示。删除全部内容后前台显示空状态。" action={<SaveCurrentButton label="保存相册" scoped={scopedList(d => d.profile.pageCopy?.albumPhotos, (d,v) => {d.profile.pageCopy!.albumPhotos=v;})} />}>
+<button onClick={() => update(d => {d.profile.pageCopy!.albumPhotos=[...(d.profile.pageCopy!.albumPhotos || []), {id:uid('media'),title:'',imageUrl:''}];})}>＋ 新增图片</button>
+{(data.profile.pageCopy?.albumPhotos || []).map((item,index,list) => <details key={item.id} className="adm-panel my-3 p-4"><summary>{index+1}. {item.title || '未命名'}</summary><div className="space-y-3 pt-4">
+<Field label="标题" value={item.title} onChange={v => update(d => {d.profile.pageCopy!.albumPhotos![index].title=v;})}/>
+<Field label="图片 URL" value={item.imageUrl || ''} onChange={v => update(d => {d.profile.pageCopy!.albumPhotos![index].imageUrl=v;})}/>
+<label className="block">上传图片<input type="file" accept="image/*" onChange={e => upload(e, v => update(d => {d.profile.pageCopy!.albumPhotos![index].imageUrl=v;}))}/></label>
+{item.imageUrl && <img src={item.imageUrl} alt={item.title} className="max-h-48 object-contain"/>}
+<div className="flex gap-4"><button disabled={index===0} onClick={() => update(d => {const a=d.profile.pageCopy!.albumPhotos!;[a[index-1],a[index]]=[a[index],a[index-1]];})}>上移</button><button disabled={index===list.length-1} onClick={() => update(d => {const a=d.profile.pageCopy!.albumPhotos!;[a[index+1],a[index]]=[a[index],a[index+1]];})}>下移</button><button onClick={() => update(d => {d.profile.pageCopy!.albumPhotos!.splice(index,1);})}>删除</button></div>
+</div></details>)}
+</Section>}{active === "albumVideos" && <Section title="视频" description="平板视频的独立内容，按这里的顺序展示。删除全部内容后前台显示空状态。" action={<SaveCurrentButton label="保存视频" scoped={scopedList(d => d.profile.pageCopy?.albumVideos, (d,v) => {d.profile.pageCopy!.albumVideos=v;})} />}>
+<button onClick={() => update(d => {d.profile.pageCopy!.albumVideos=[...(d.profile.pageCopy!.albumVideos || []), {id:uid('media'),title:'',category:'video',description:'',images:[],tags:[],videoUrl:''}];})}>＋ 新增视频</button>
+{(data.profile.pageCopy?.albumVideos || []).map((item,index,list) => <details key={item.id} className="adm-panel my-3 p-4"><summary>{index+1}. {item.title || '未命名'}</summary><div className="space-y-3 pt-4">
+<Field label="标题" value={item.title} onChange={v => update(d => {d.profile.pageCopy!.albumVideos![index].title=v;})}/>
+<Field label="视频 URL" value={item.videoUrl || ''} onChange={v => update(d => {d.profile.pageCopy!.albumVideos![index].videoUrl=v;})}/>
+<label className="block">上传视频<input type="file" accept="video/*" onChange={e => upload(e, v => update(d => {d.profile.pageCopy!.albumVideos![index].videoUrl=v;}))}/></label>
+<Field label="说明" textarea value={item.description} onChange={v => update(d => {d.profile.pageCopy!.albumVideos![index].description=v;})}/><Field label="封面 URL" value={item.images[0] || ''} onChange={v => update(d => {d.profile.pageCopy!.albumVideos![index].images=v?[v]:[];})}/><label className="block">上传封面<input type="file" accept="image/*" onChange={e => upload(e,v => update(d => {d.profile.pageCopy!.albumVideos![index].images=[v];}))}/></label>{item.videoUrl && <video src={item.videoUrl} controls preload="metadata" className="max-h-48"/>}
+<div className="flex gap-4"><button disabled={index===0} onClick={() => update(d => {const a=d.profile.pageCopy!.albumVideos!;[a[index-1],a[index]]=[a[index],a[index-1]];})}>上移</button><button disabled={index===list.length-1} onClick={() => update(d => {const a=d.profile.pageCopy!.albumVideos!;[a[index+1],a[index]]=[a[index],a[index+1]];})}>下移</button><button onClick={() => update(d => {d.profile.pageCopy!.albumVideos!.splice(index,1);})}>删除</button></div>
+</div></details>)}
+</Section>}
             {active === "poems" && (
               <>
                 <Section

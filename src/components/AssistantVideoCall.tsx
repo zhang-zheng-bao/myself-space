@@ -1,3 +1,4 @@
+import "./assistant-video-call.css";
 import { useEffect, useRef, useState } from 'react';
 import { Mic, MicOff, Phone, PhoneOff } from 'lucide-react';
 
@@ -10,6 +11,8 @@ type Rtc = {
   leaveChannel(): Promise<void>;
   publishLocalAudioStream(enabled: boolean): Promise<void>;
   switchMicrophone(deviceId: string): Promise<void>;
+  setAudioConstraints(constraints: MediaTrackConstraints): Promise<void>;
+  enableAudioVolumeIndication(interval: number): void;
   setRecordingVolume(volume: number): void;
   publishLocalVideoStream(enabled: boolean): Promise<void>;
   setRemoteViewConfig(video: HTMLVideoElement, user: string, stream: number): void;
@@ -105,7 +108,7 @@ function loadSdk() {
   });
 }
 
-export default function AssistantVideoCall({ close }: { close(): void }) {
+export default function AssistantVideoCall({ close, identityName = "视频通话", identityAvatar }: { close(): void; identityName?: string; identityAvatar?: string }) {
   const video = useRef<HTMLVideoElement>(null);
   const active = useRef<AbortController | null>(null);
   const rtc = useRef<Rtc | null>(null);
@@ -123,7 +126,6 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
   const [microphoneId, setMicrophoneId] = useState(readStoredMicrophone);
   const [microphoneGain, setMicrophoneGain] = useState(readStoredMicrophoneGain);
   const [microphoneTestActive, setMicrophoneTestActive] = useState(false);
-  const [microphoneDeviceChangeVersion, setMicrophoneDeviceChangeVersion] = useState(0);
   const [silenceHint, setSilenceHint] = useState(false);
   const captionId = useRef(0);
   const captionBox = useRef<HTMLDivElement>(null);
@@ -133,7 +135,7 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
   const microphoneTest = useRef<(() => void) | null>(null);
   const microphoneTestRequest = useRef<Promise<MediaStream> | null>(null);
   const microphoneTestGeneration = useRef(0);
-  const callMicrophoneMonitor = useRef<(() => void) | null>(null);
+  const mutedRef = useRef(false);
   const silenceTimer = useRef<number | null>(null);
 
   function saveMicrophoneId(deviceId: string) {
@@ -187,13 +189,17 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
   }
   async function selectMicrophone(deviceId: string) {
     stopMicrophoneTest();
-    saveMicrophoneId(deviceId);
     const engine = rtc.current;
-    if (phaseRef.current !== 'connected' || !engine) return;
+    if (phaseRef.current !== 'connected' || !engine) { saveMicrophoneId(deviceId); return; }
     const targetId = resolveMicrophoneId(deviceId);
-    if (!targetId) { setMessage('切换麦克风失败，请重试。'); return; }
-    try { await engine.switchMicrophone(targetId); }
-    catch { if (rtc.current === engine) setMessage('切换麦克风失败，请重试。'); }
+    if (!targetId) { setMessage('没有可用的麦克风，请检查设备连接。'); return; }
+    setAudioControlBusy(true);
+    try {
+      await engine.switchMicrophone(targetId);
+      if (rtc.current === engine) { saveMicrophoneId(deviceId); setMessage(''); }
+    } catch {
+      if (rtc.current === engine) setMessage('切换麦克风失败，仍保留原来的选择，请检查设备权限。');
+    } finally { setAudioControlBusy(false); }
   }
   async function selectMicrophoneGain(value: string) {
     const gain = Number(value);
@@ -241,7 +247,6 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
     const mediaDevices = navigator.mediaDevices;
     const onDeviceChange = () => {
       stopMicrophoneTest();
-      setMicrophoneDeviceChangeVersion(version => version + 1);
       void refreshMicrophones();
     };
     void refreshMicrophones();
@@ -251,27 +256,6 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
       disposeMicrophoneTest();
     };
   }, []);
-  useEffect(() => {
-    if (phase !== 'connected' || muted) {
-      callMicrophoneMonitor.current?.();
-      callMicrophoneMonitor.current = null;
-      setMicLevel(0);
-      return;
-    }
-    setMicLevel(0);
-    const dispose = startLevelMonitor(microphoneId, {
-      onReady: () => { void refreshMicrophones(); },
-      onLevel: level => {
-        if (phaseRef.current === 'connected' && !muted) setMicLevel(level);
-      },
-      onError: () => { setMicLevel(0); },
-    });
-    callMicrophoneMonitor.current = dispose;
-    return () => {
-      dispose();
-      if (callMicrophoneMonitor.current === dispose) callMicrophoneMonitor.current = null;
-    };
-  }, [phase, muted, microphoneId, microphoneDeviceChangeVersion]);
   useEffect(() => {
     if (phase !== 'connected' || muted || micLevel >= 2) {
       if (silenceTimer.current !== null) window.clearTimeout(silenceTimer.current);
@@ -333,6 +317,7 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
     const clearMediaTimeout = () => window.clearTimeout(mediaTimeout);
     element?.addEventListener('playing', clearMediaTimeout);
     phaseRef.current = 'connecting';
+    mutedRef.current = false;
     setPhase('connecting'); setMessage(''); setMuted(false); setHasPicture(false); setCaptions([]); setMicLevel(0);
     const fail = (text: string) => { failure = text; controller.abort(); };
     try {
@@ -403,21 +388,30 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
                     void element.play().catch(() => {});
                   } else if (next === 1) setHasPicture(false);
                 });
+                engine.on('audioVolume', (levels: { userId: string; volume: number }[]) => {
+                  if (signal.aborted || phaseRef.current !== 'connected' || mutedRef.current) return;
+                  // AliRTC uses an empty userId for the actual local capture.
+                  const local = levels.find(level => level.userId === '');
+                  setMicLevel(Number.isFinite(local?.volume) ? Math.max(0, Math.min(100, local!.volume)) : 0);
+                });
                 engine.on('bye', () => { if (!signal.aborted) fail('音视频连接已断开。'); });
                 await engine.setChannelProfile('communication');
                 signal.throwIfAborted();
                 // AliRTC 7.1.9 has no setDefaultPublish* methods; publish flags set before join become the defaults.
                 await engine.publishLocalVideoStream(false);
                 signal.throwIfAborted();
+                // Apply the input device before join automatically captures/publishes.
+                await engine.setAudioConstraints({
+                  deviceId: selectedMicrophoneId ? { exact: selectedMicrophoneId } : undefined,
+                  echoCancellation: true,
+                });
+                signal.throwIfAborted();
+                engine.enableAudioVolumeIndication(200);
                 engine.setDefaultSubscribeAllRemoteAudioStreams(true);
                 engine.setDefaultSubscribeAllRemoteVideoStreams(true);
                 await engine.joinChannel(data.token, data.userId);
                 signal.throwIfAborted();
                 await engine.publishLocalAudioStream(true);
-                if (selectedMicrophoneId) {
-                  try { await engine.switchMicrophone(selectedMicrophoneId); }
-                  catch { if (!signal.aborted) setMessage('切换麦克风失败，请重试。'); }
-                }
                 try { await engine.setRecordingVolume(selectedMicrophoneGain); }
                 catch { if (!signal.aborted) setMessage('调整麦克风增益失败，请重试。'); }
                 if (!signal.aborted) { phaseRef.current = 'connected'; setPhase('connected'); }
@@ -432,8 +426,6 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
       if (!signal.aborted) failure = error instanceof Error && error.name !== 'TypeError' ? error.message : '通话连接已断开，请稍后重试。';
     } finally {
       controller.abort();
-      callMicrophoneMonitor.current?.();
-      callMicrophoneMonitor.current = null;
       window.clearTimeout(mediaTimeout);
       element?.removeEventListener('playing', clearMediaTimeout);
       // Destroy the SDK instance even if joinChannel did not settle.
@@ -456,7 +448,11 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
     setAudioControlBusy(true);
     try {
       await engine.publishLocalAudioStream(muted);
-      if (rtc.current === engine) setMuted(!muted);
+      if (rtc.current === engine) {
+        mutedRef.current = !muted;
+        setMuted(!muted);
+        setMicLevel(0);
+      }
     } catch { if (rtc.current === engine) setMessage('切换麦克风失败，请重试。'); }
     finally { setAudioControlBusy(false); }
   }
@@ -466,19 +462,19 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
         onPlaying={() => { if (active.current && !active.current.signal.aborted) setHasPicture(true); }}
         style={{ visibility: hasPicture ? 'visible' : 'hidden' }} />
       {!hasPicture && <div role="status" className="assistant-video-call__state">
-        <img src="/assistant-shiba.webp" alt="" />
-        <strong>{phase === 'idle' ? '数字人通话' : '正在连接画面…'}</strong>
+        {identityAvatar && <img src={identityAvatar} alt="" />}
+        <strong>{phase === 'idle' ? identityName + ' · 视频通话' : '正在连接画面…'}</strong>
         {phase === 'idle' && <small>{{
           checking: '正在检查通话状态…',
           ready: captionsEnabled ? '通话使用麦克风，双方说话会显示字幕。' : '语音视频通话，使用麦克风。',
           preview: '当前为管理员预览，请先登录后台。',
-          disabled: '请在后台应用配置中启用数字人通话。',
+          disabled: '暂时无法接通，请稍后再试。',
           error: '暂时无法读取通话状态，请返回后重试。',
         }[availability]}</small>}
       </div>}
       {phase !== 'idle' && captions.length > 0 && <div ref={captionBox} className="assistant-video-call__captions" aria-live="polite">
         {captions.map(caption => <p key={caption.id} className="assistant-video-call__caption" data-role={caption.role}
-          aria-label={caption.role === 'user' ? '你说' : '小柴说'}>
+          aria-label={caption.role === 'user' ? '你说' : identityName + '说'}>
           {caption.text}
         </p>)}
       </div>}
@@ -487,7 +483,7 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
     <div className="assistant-video-call__controls">
       {phase !== 'connecting' && <div className="assistant-video-call__mic-settings">
         <label htmlFor="assistant-call-mic-select">麦克风</label>
-        <select id="assistant-call-mic-select" value={microphoneId} onChange={event => void selectMicrophone(event.target.value)}>
+        <select id="assistant-call-mic-select" disabled={audioControlBusy} value={microphoneId} onChange={event => void selectMicrophone(event.target.value)}>
           <option value="">系统默认</option>
           {microphones.map((device, index) => <option key={`${device.deviceId}-${index}`} value={device.deviceId}>
             {device.label || `麦克风 ${index + 1}`}
@@ -519,8 +515,6 @@ export default function AssistantVideoCall({ close }: { close(): void }) {
         {phase === 'idle'
           ? <button type="button" data-primary disabled={availability !== 'ready'} onClick={() => void connect()}><Phone size={16} />开始通话</button>
         : <button type="button" data-danger onClick={() => {
-          callMicrophoneMonitor.current?.();
-          callMicrophoneMonitor.current = null;
           setMicLevel(0);
           active.current?.abort();
         }}><PhoneOff size={16} />{phase === 'connecting' ? '取消' : '挂断'}</button>}
