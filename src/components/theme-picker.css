@@ -1,0 +1,15 @@
+.theme-picker { position:relative; align-self:center; flex:none; margin:0 16px 0 8px; z-index:45; pointer-events:auto; font-family:system-ui,"Microsoft YaHei",sans-serif; }
+.theme-picker__trigger { display:flex; align-items:center; gap:8px; height:36px; padding:0 12px; border:1px solid #ffffff24; border-radius:18px; background:#ffffff0d; color:#e8e6df; font:500 12px/1.2 system-ui,sans-serif; cursor:pointer; white-space:nowrap; transition:background .18s; }
+.theme-picker__trigger:hover { background:#ffffff18; }
+.theme-picker__trigger svg:last-child { opacity:.6; transition:transform .18s; }
+.theme-picker__trigger .is-open { transform:rotate(180deg); }
+.theme-picker__panel { position:absolute; right:0; top:calc(100% + 9px); width:168px; padding:6px; border:1px solid #dedbd4; border-radius:14px; background:#faf9f6; box-shadow:0 12px 36px #00000024; color:#353832; }
+.theme-picker__panel button { display:flex; align-items:center; gap:10px; width:100%; min-height:40px; padding:0 10px; border:0; border-radius:9px; background:transparent; color:inherit; font:500 13px/1.4 system-ui,sans-serif; cursor:pointer; text-align:left; }
+.theme-picker__panel button span { flex:1; }
+.theme-picker__panel button:hover { background:#eeece6; }
+.theme-picker__panel button[aria-pressed="true"] { background:#e7ebe4; color:#344b3b; }
+.theme-picker button:focus-visible { outline:2px solid #839b79; outline-offset:3px; }
+[data-theme="ink"] .theme-picker__trigger, .desk-page .theme-picker__trigger { color:#393b33; border-color:#393b3324; background:#faf9f6dc; backdrop-filter:blur(12px); }
+.desk-hud .theme-picker { margin:0 0 0 auto; }
+@media(max-width:820px) { .theme-picker { margin:0 5px; } .theme-picker__trigger { height:34px; padding:0 10px; gap:6px; } }
+@media(prefers-reduced-motion:reduce) { .theme-picker__trigger, .theme-picker__trigger svg { transition:none; } }

@@ -954,6 +954,15 @@ function normalizePageCopy(pageCopy: JsonRecord | undefined, transform: (url?: s
     ));
   }
 
+  if (Array.isArray(copy.universityBooks)) {
+    copy.universityBooks = copy.universityBooks.map(book => ({...book, pages: Array.isArray(book.pages) ? book.pages.map(page => ({...page, imageUrl: transform(String(page.imageUrl || ""))})) : []}));
+  }
+  if (Array.isArray(copy.albumPhotos)) {
+    copy.albumPhotos = copy.albumPhotos.map(item => ({...item, imageUrl: transform(String(item.imageUrl || ""))}));
+  }
+  if (Array.isArray(copy.albumVideos)) {
+    copy.albumVideos = copy.albumVideos.map(item => ({...item, videoUrl: transform(String(item.videoUrl || "")), images: (item.images || []).map(url => transform(String(url)))}));
+  }
   // 图文与演示文稿：同属 pageCopy 内的媒体载体，规则与 poemList / aiWorks 相同。
   if (Array.isArray(copy.postList)) {
     copy.postList = copy.postList.map((item) => {

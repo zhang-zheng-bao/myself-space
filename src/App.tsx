@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import ThemePicker from "./components/ThemePicker";
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   AppWindow,
@@ -33,6 +34,7 @@ import AdminApp from "./AdminApp";
 import { isInstrumental } from "./musicMetadata";
 import TimelineArc from "./components/TimelineArc";
 import EntranceCinematic from "./components/EntranceCinematic";
+import { isReturningFromTool } from "./toolNavigation";
 import { InkCharacter, InkScenery } from "./components/InkTheme";
 import InkIntro from "./components/InkIntro";
 import { InkArrowIcon, InkBookIcon, InkMailIcon } from "./components/InkIcons";
@@ -2678,10 +2680,13 @@ function IntroDashboard({ data, onSelectWork, onNavigate }: {
   );
 }
 
+const DeskApp = lazy(() => import("./desk/DeskApp"));
+
 export default function App() {
   if (window.location.pathname.startsWith("/admin")) { dismissBootLoader(false); return <AdminApp />; }
-  // 打开或刷新页面始终使用原主题；染墨只通过页面按钮手动切换。
-  const [theme, setTheme] = useState<'original' | 'ink'>('original');
+  if (window.location.pathname.startsWith("/desk")) return <Suspense fallback={null}><DeskApp /></Suspense>;
+  // 默认原主题；允许从桌面的主题菜单直接进入染墨。
+  const [theme, setTheme] = useState<'original' | 'ink'>(() => new URLSearchParams(location.search).get('theme') === 'ink' ? 'ink' : 'original');
   useEffect(() => {
     const url = new URL(location.href);
     if (url.searchParams.has('theme')) {
@@ -2689,19 +2694,15 @@ export default function App() {
       history.replaceState(null, '', url);
     }
   }, []);
-  const changeTheme = () => setTheme(current => {
-    const next = current === 'ink' ? 'original' : 'ink';
-    // 每次从首页进入默认原主题，不再用本地存储把染墨设成默认。
-    const url = new URL(location.href);
-    url.searchParams.delete('theme');
-    history.replaceState(null, '', url);
-    return next;
-  });
   const [data, setData] = useState<PortfolioData>(normalizeData(emptyPortfolioData));
   const [portfolioConfigReady, setPortfolioConfigReady] = useState(false);
   const [portfolioReady, setPortfolioReady] = useState(false);
-  const [entered, setEntered] = useState(false);
-  const [musicEntryReady, setMusicEntryReady] = useState(false);
+  const [returningFromTool] = useState(isReturningFromTool);
+  useEffect(() => {
+    try { sessionStorage.removeItem("tool-return-to"); } catch {}
+  }, []);
+  const [entered, setEntered] = useState(returningFromTool);
+  const [musicEntryReady, setMusicEntryReady] = useState(returningFromTool);
   const [musicSettled, setMusicSettled] = useState(false);
   const beginMusicEntry = React.useCallback(() => setMusicEntryReady(true), []);
   const completeEntrance = React.useCallback(() => setEntered(true), []);
@@ -2865,7 +2866,7 @@ export default function App() {
 
   return (
     <>
-    {portfolioConfigReady && entranceAnimationEnabled && <EntranceCinematic ready={portfolioReady} soundReady={!data.profile.musicAutoplay || !(data.musicTracks || []).some(track => track.audioUrl) || musicSettled} musicLeadSeconds={data.profile.pageCopy?.musicLeadSeconds ?? 3} onMusicEntry={beginMusicEntry} onEntered={completeEntrance} />}
+    {portfolioConfigReady && entranceAnimationEnabled && !returningFromTool && <EntranceCinematic ready={portfolioReady} soundReady={!data.profile.musicAutoplay || !(data.musicTracks || []).some(track => track.audioUrl) || musicSettled} musicLeadSeconds={data.profile.pageCopy?.musicLeadSeconds ?? 3} onMusicEntry={beginMusicEntry} onEntered={completeEntrance} />}
     {portfolioReady && <div data-theme={theme} data-analytics-page={siteEntered ? activeTab : undefined} data-analytics-title={navItems.find(item => item.key === activeTab)?.label} className="portfolio-site" inert={!siteEntered} aria-hidden={!siteEntered}>
       {theme === 'ink' && <InkScenery />}
       <FloatingSentences config={floatingSentencesConfig} />
@@ -2884,8 +2885,11 @@ export default function App() {
               <span>{item.label}</span>
             </button>
           ))}
+          <button type="button" data-track="navigation:desk" onClick={() => window.location.assign("/desk")}>
+            <span>3D桌面</span>
+          </button>
         </nav>
-        <button type="button" className="theme-switch" onClick={changeTheme} aria-label={theme === 'ink' ? '切换到原主题' : '切换到染墨主题'} title={theme === 'ink' ? '当前：染墨主题；点击切换' : '点击切换为染墨主题'}>{theme === 'ink' ? '染墨主题' : '原主题'} ⇄</button>
+        <ThemePicker current={theme} onChange={setTheme} />
         <button type="button" data-track="navigation:mobile-menu" className="mobile-menu-button" onClick={() => setMobileMenuOpen((open) => !open)} aria-label="打开导航">
           {mobileMenuOpen ? <X size={19} /> : <Menu size={19} />}
         </button>
@@ -2898,6 +2902,9 @@ export default function App() {
               <span>{item.label}</span><small>{item.sub}</small>
             </button>
           ))}
+          <button type="button" data-track="navigation:mobile:desk" onClick={() => window.location.assign("/desk")}>
+            <span>3D桌面</span><small>探索我的桌面空间</small>
+          </button>
         </nav>
       )}
 

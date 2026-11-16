@@ -1,3 +1,6 @@
+export interface UniversityPage { id?: string; title?: string; text?: string; imageUrl?: string; caption?: string; }
+export interface UniversityBook { id: string; title: string; pages: UniversityPage[]; }
+export interface AlbumPhoto { id: string; title: string; imageUrl: string; }
 export interface Profile {
   name: string;
   avatar: string;
@@ -75,6 +78,9 @@ export interface Profile {
      * 所以文案留在 poems、内容叫 poemList。
      */
     poemList?: Poem[];
+    universityBooks?: UniversityBook[];
+    albumPhotos?: AlbumPhoto[];
+    albumVideos?: Work[];
     floatingSentences?: FloatingSentencesConfig;
     /**
      * 前台是否展示「我的珍藏」栏目（由管理员后台的开关控制）。
