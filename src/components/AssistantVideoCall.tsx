@@ -401,8 +401,9 @@ export default function AssistantVideoCall({ close, identityName = "视频通话
                 await engine.publishLocalVideoStream(false);
                 signal.throwIfAborted();
                 // Apply the input device before join automatically captures/publishes.
+                // AliRTC looks the id up as a plain string; an { exact } object makes it fall back to the first microphone.
                 await engine.setAudioConstraints({
-                  deviceId: selectedMicrophoneId ? { exact: selectedMicrophoneId } : undefined,
+                  ...(selectedMicrophoneId ? { deviceId: selectedMicrophoneId } : {}),
                   echoCancellation: true,
                 });
                 signal.throwIfAborted();
