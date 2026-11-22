@@ -173,7 +173,9 @@ function DeviceShell({ kind, origin, onClosed, children, label, scene }: { kind:
 
   useLayoutEffect(() => {
     if (!isScreen || !scene) return;
-    if (fullscreen) { if(ref.current) Object.assign(ref.current.style,{width:'',height:'',transform:''}); return; }
+    // 退出贴屏显示（全屏、转成竖屏面板）时清掉内联尺寸，交还给样式表。
+    const clear = () => { if (ref.current) Object.assign(ref.current.style,{width:'',height:'',transform:''}); };
+    if (fullscreen) { clear(); return; }
     let frame = 0;
     const sync = () => {
       const [width,height] = homeSize[kind as HomeDevice];
@@ -183,7 +185,7 @@ function DeviceShell({ kind, origin, onClosed, children, label, scene }: { kind:
       }
       frame = requestAnimationFrame(sync);
     };
-    sync(); return () => cancelAnimationFrame(frame);
+    sync(); return () => { cancelAnimationFrame(frame); clear(); };
   }, [isScreen, scene, kind, fullscreen]);
   const finish = useCallback(() => {
     if (closedRef.current) return;
