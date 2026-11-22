@@ -15,6 +15,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { WebSocket } from "ws";
 import { registerAvatarCall } from "./server/avatar-call";
 import { createServer as createViteServer } from "vite";
+import compression from "compression";
 
 type JsonRecord = Record<string, any>;
 
@@ -2912,7 +2913,16 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+    // 只压缩静态文件和页面；接口里有流式响应，不经过这里。
+    app.use(compression({ filter: (req, res) => /\.(?:glb|hdr)$/.test(req.path) || compression.filter(req, res) }));
+    app.use(express.static(distPath, {
+      setHeaders(res, filePath) {
+        const relative = path.relative(distPath, filePath).split(path.sep).join("/");
+        // 带内容哈希的打包文件可以长期缓存；书桌素材改动时会换文件名或 ?v= 版本号。
+        if (relative.startsWith("assets/")) res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        else if (relative.startsWith("desk/")) res.setHeader("Cache-Control", "public, max-age=2592000");
+      },
+    }));
     app.get("*", (_req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });

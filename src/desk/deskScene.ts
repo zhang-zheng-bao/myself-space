@@ -4,6 +4,7 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { HDRLoader } from "three/examples/jsm/loaders/HDRLoader.js";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 
 /**
  * 书桌场景：全部用代码建模（几何体 + Canvas 贴图），不依赖外部模型文件。
@@ -124,20 +125,21 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
     return m;
   };
 
-  /* 木纹、墙面、地板、绿植和环境光来自 Poly Haven（CC0），放在 public/desk。全部加载完（或超时）再显示画面。 */
+  /* 木纹、墙面、地板、绿植和环境光来自 Poly Haven（CC0），放在 public/desk。全部加载完（或超时）再显示画面。
+     贴图到货后才挂到材质上：没到货时用接近的纯色，超时先显示也不会出现黑色表面。 */
   let disposed = false;
   let assetsReady = false;
   const manager = new THREE.LoadingManager();
   manager.onLoad = () => { assetsReady = true; };
-  const readyTimer = window.setTimeout(() => { assetsReady = true; }, 12000);
-  const gltfLoader = new GLTFLoader(manager);
+  const readyTimer = window.setTimeout(() => { assetsReady = true; }, 8000);
+  const gltfLoader = new GLTFLoader(manager).setMeshoptDecoder(MeshoptDecoder);
   const textureLoader = new THREE.TextureLoader(manager);
   const trackMaterial = (material: THREE.Material) => {
     disposables.push(material);
     for (const value of Object.values(material)) if (value instanceof THREE.Texture) disposables.push(value);
   };
   const loadModel = (id: string, onLoad: (model: THREE.Group) => void) => {
-    gltfLoader.load(`/desk/models/${id}/${id}.gltf`, gltf => {
+    gltfLoader.load(`/desk/models/${id}.glb`, gltf => {
       if (disposed) return;
       gltf.scene.traverse(child => {
         const item = child as THREE.Mesh;
@@ -150,19 +152,35 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
       onLoad(gltf.scene);
     }, undefined, () => { /* 素材缺失时保留其余场景 */ });
   };
-  const pbrMaps = (name: string, repeatX: number, repeatY: number) => {
-    const load = (suffix: string, srgb = false) => {
-      const texture = textureLoader.load(`/desk/textures/${name}_${suffix}_1k.jpg`);
+  type MapSlot = "map" | "normalMap" | "roughnessMap" | "aoMap";
+  const lateTexture = (url: string, setup: (texture: THREE.Texture) => void, apply: (texture: THREE.Texture) => void) => {
+    textureLoader.load(url, texture => {
+      if (disposed) { texture.dispose(); return; }
+      setup(texture);
+      track(texture);
+      apply(texture);
+    }, undefined, () => { /* 贴图缺失时保留纯色 */ });
+  };
+  /** 先用 tint 纯色显示，贴图到货后换成 color × 贴图。 */
+  const pbrMaterial = (name: string, repeatX: number, repeatY: number, color: number, tint: number, params: THREE.MeshStandardMaterialParameters = {}) => {
+    const material = std({ color: tint, roughness: 0.8, ...params });
+    const load = (suffix: string, slots: MapSlot[], srgb = false) => lateTexture(`/desk/textures/${name}_${suffix}.webp`, texture => {
       texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
       texture.repeat.set(repeatX, repeatY);
       texture.anisotropy = 8;
       if (srgb) texture.colorSpace = THREE.SRGBColorSpace;
-      return track(texture);
-    };
-    const arm = load("arm");
-    return { map: load("Diffuse", true), normalMap: load("nor_gl"), roughnessMap: arm, aoMap: arm };
+    }, texture => {
+      for (const slot of slots) material[slot] = texture;
+      if (srgb) material.color.setHex(color);
+      else if (slots.includes("roughnessMap")) material.roughness = params.roughness ?? 1;
+      material.needsUpdate = true;
+    });
+    load("diff", ["map"], true);
+    load("nor", ["normalMap"]);
+    load("arm", ["roughnessMap", "aoMap"]);
+    return material;
   };
-  new HDRLoader(manager).load("/desk/hdri/art_studio_1k.hdr", hdr => {
+  new HDRLoader(manager).load("/desk/hdri/art_studio.hdr", hdr => {
     if (disposed) { hdr.dispose(); return; }
     hdr.mapping = THREE.EquirectangularReflectionMapping;
     const env = pmrem.fromEquirectangular(hdr).texture;
@@ -182,14 +200,15 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   };
 
   /* ---------------- 房间 ---------------- */
-  const floor = mesh(track(new THREE.PlaneGeometry(10, 10)), std({ ...pbrMaps("laminate_floor_02", 5, 5), color: 0xddd3c6 }), false);
+  const floor = mesh(track(new THREE.PlaneGeometry(10, 10)), pbrMaterial("laminate_floor_02", 5, 5, 0xddd3c6, 0xb6a48f), false);
   floor.rotation.x = -Math.PI / 2;
   scene.add(floor);
 
-  const wallNormal = track(textureLoader.load("/desk/textures/white_plaster_02_nor_gl_1k.jpg"));
-  wallNormal.wrapS = wallNormal.wrapT = THREE.RepeatWrapping;
-  wallNormal.repeat.set(5, 1.7);
-  const wallMat = std({ color: 0xf3f1ec, roughness: 0.95, normalMap: wallNormal, normalScale: new THREE.Vector2(0.25, 0.25) });
+  const wallMat = std({ color: 0xf3f1ec, roughness: 0.95, normalScale: new THREE.Vector2(0.25, 0.25) });
+  lateTexture("/desk/textures/white_plaster_02_nor.webp", texture => {
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(5, 1.7);
+  }, texture => { wallMat.normalMap = texture; wallMat.needsUpdate = true; });
   const backWall = mesh(track(new THREE.PlaneGeometry(10, 3.4)), wallMat, false);
   backWall.position.set(0, 1.7, -0.62);
   scene.add(backWall);
@@ -303,20 +322,26 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   addHotspot("bookshelf", bookshelf, bookshelf, 0);
 
   // Blender 木质相框；照片单独显示，保留清晰度和聚焦平面。
-  const posterTex = track(textureLoader.load("/desk/admission-notice.png"));
-  posterTex.colorSpace = THREE.SRGBColorSpace;
-  posterTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   const poster = new THREE.Group();
-  poster.position.set(0.5, DESK_Y + 0.2125 * Math.cos(0.11) + 0.011 * Math.sin(0.11), -0.45);
+  poster.position.set(0.53, DESK_Y + 0.2125 * Math.cos(0.11) + 0.011 * Math.sin(0.11), -0.45);
   poster.rotation.x = -0.11;
-  const posterArt = new THREE.Mesh(track(new THREE.PlaneGeometry(0.28875, 0.385)), track(new THREE.MeshBasicMaterial({ map: posterTex, color: 0xd2d2d2, toneMapped: false })));
+  const posterArt = new THREE.Mesh(track(new THREE.PlaneGeometry(0.28875, 0.385)), track(new THREE.MeshBasicMaterial({ color: 0xcfcdc8, toneMapped: false })));
+  lateTexture("/desk/admission-notice.webp", texture => {
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  }, texture => {
+    const material = posterArt.material as THREE.MeshBasicMaterial;
+    material.map = texture;
+    material.color.setHex(0xd2d2d2);
+    material.needsUpdate = true;
+  });
   posterArt.position.z = 0.003;
   poster.add(posterArt);
   scene.add(poster);
   addHotspot("poster", poster, posterArt, 0);
 
   /* ---------------- 书桌 ---------------- */
-  const deskMat = std({ ...pbrMaps("oak_veneer_01", 2, 1), color: 0xe9dccb, roughness: 1 });
+  const deskMat = pbrMaterial("oak_veneer_01", 2, 1, 0xe9dccb, 0xd0b48f, { roughness: 1 });
   const deskTop = mesh(rbox(1.7, 0.03, 0.86, 0.005), deskMat);
   deskTop.position.set(0, DESK_Y - 0.015, -0.17);
   scene.add(deskTop);
@@ -417,7 +442,7 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
       if (!disposed) parent.add(gltf.scene);
     }, undefined, error => console.error('Failed to load desk model', url, error));
   };
-  loadDeskModel('/desk/models/wooden-photo-frame.glb?v=1', poster, object => {
+  loadDeskModel('/desk/models/wooden-photo-frame.glb?v=2', poster, object => {
     if (object.name === 'Protective_glass' || object.name === 'Protective glass') {
       object.castShadow = false;
       object.receiveShadow = false;
@@ -425,7 +450,7 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
       materials.forEach(material => { material.depthWrite = false; });
     }
   });
-  loadDeskModel('/desk/models/reference-macbook.glb?v=5', laptop);
+  loadDeskModel('/desk/models/reference-macbook.glb?v=6', laptop);
   const keyboardInk = track(new THREE.MeshBasicMaterial({ color: 0x20252b, side: THREE.DoubleSide, toneMapped: false }));
   loadDeskModel('/desk/models/reference-keyboard.glb?v=5', keyboard, object => {
     if (/^Legend[ _]/.test(object.name)) {
@@ -584,7 +609,7 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   tabletTilt.add(tabletScreen);
   tablet.add(tabletTilt);
   // The folio cover and rear kickstand are authored in Blender.
-  gltfLoader.load("/desk/models/tablet-folio.glb", gltf => {
+  gltfLoader.load("/desk/models/tablet-folio.glb?v=2", gltf => {
     gltf.scene.traverse(object => {
       if (object instanceof THREE.Mesh) {
         track(object.geometry);
@@ -610,7 +635,7 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   phoneCradle.position.set(0, 0.045, 0);
   phoneCradle.rotation.x = -0.22;
   phoneStand.add(phoneCradle);
-  loadDeskModel('/desk/models/reference-phone-stand.glb?v=1', phoneStand);
+  loadDeskModel('/desk/models/reference-phone-stand.glb?v=2', phoneStand);
   scene.add(phoneStand);
   const phone = new THREE.Group();
   phone.position.copy(phoneStand.position);
@@ -713,7 +738,7 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   const lampControls: THREE.Object3D[] = [];
   const brightnessBars: THREE.Mesh[] = [];
   const lampEmissive: THREE.MeshStandardMaterial[] = [];
-  gltfLoader.load("/desk/models/desk-lamp.glb?v=20261115-stepped-controls", gltf => {
+  gltfLoader.load("/desk/models/desk-lamp.glb?v=20261122", gltf => {
     gltf.scene.traverse(object => {
       if (!(object instanceof THREE.Mesh)) return;
       if (/Power_touch|Power touch|Mode_M|Mode M|Brightness_bar|Brightness bar/.test(object.name)) lampControls.push(object);
@@ -774,7 +799,7 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   /* ---------------- 杯子和热气 ---------------- */
   const mug = new THREE.Group();
   mug.position.set(0.4, DESK_Y, -0.15);
-  loadDeskModel('/desk/models/reference-tumbler.glb?v=2', mug);
+  loadDeskModel('/desk/models/reference-tumbler.glb?v=3', mug);
   scene.add(mug);
   addHotspot("mug", mug, mug, 0.01);
 
@@ -782,7 +807,7 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   fabricTex.wrapS = fabricTex.wrapT = THREE.RepeatWrapping;
   fabricTex.repeat.set(4, 2);
   const speaker = new THREE.Group();
-  speaker.position.set(0.66, DESK_Y, -0.33);
+  speaker.position.set(0.72, DESK_Y, -0.33);
   speaker.rotation.y = -0.45;
   const speakerProfile: THREE.Vector2[] = [];
   for (let i = 0; i <= 8; i += 1) { const a = (i / 8) * Math.PI / 2; speakerProfile.push(new THREE.Vector2(0.037 + Math.sin(a) * 0.013, 0.013 - Math.cos(a) * 0.013)); }
@@ -806,7 +831,8 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
 
   /* ---------------- 插线板（国标五孔）、插头、充电器和电线 ---------------- */
   const socket = new THREE.Group();
-  socket.position.set(0.2, DESK_Y, -0.45);
+  // 整条插线板留在相框左侧，两者不重叠。
+  socket.position.set(0.16, DESK_Y, -0.45);
   const stripBody = mesh(rbox(0.32, 0.034, 0.068, 0.012), whitePlastic);
   stripBody.position.y = 0.017;
   socket.add(stripBody);
@@ -869,7 +895,7 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
     const startObject = [lampPlug, speakerPlug, socket, charger][index];
     const endObject = [lamp, speaker, null, laptop][index];
     const original = points.map(p => new THREE.Vector3(...p));
-    const startLocal = index === 2 ? original.slice(0, 3).map(p => socket.worldToLocal(p.clone()))
+    const startLocal = index === 2 ? original.slice(0, 2).map(p => socket.worldToLocal(p.clone()))
       : index === 3 ? [new THREE.Vector3(0, 0.017, 0.021), new THREE.Vector3(0, 0.017, 0.035), new THREE.Vector3(0, 0.005, 0.065)]
       : [new THREE.Vector3(0, 0.029, 0), new THREE.Vector3(0, 0.044, 0), new THREE.Vector3(0, 0.012, -0.055)];
     const endLocal = index === 0 ? new THREE.Vector3(0, 0.009, -0.09)
@@ -882,13 +908,24 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
       const start = startLocal.map(p => startObject.localToWorld(p.clone()));
       const end = endObject ? endObject.localToWorld(endLocal.clone()) : endLocal.clone();
       const tail = endObject ? endObject.localToWorld(endLocal.clone().add(new THREE.Vector3(index === 3 ? 0.035 : 0, 0, index === 3 ? 0 : -0.035))) : original[original.length - 2].clone();
-      const signature = [...start.flatMap(p => p.toArray()), ...end.toArray(), ...tail.toArray()].join(",");
+      const signature = [...start.flatMap(p => p.toArray()), ...end.toArray(), ...tail.toArray(), ...(index === 1 ? [...poster.position.toArray(), ...poster.quaternion.toArray()] : [])].join(",");
       if (signature === previous) return;
       previous = signature;
-      const middle = start[2].clone().lerp(tail, 0.5);
+      const middle = start[start.length - 1].clone().lerp(tail, 0.5);
       middle.y = DESK_Y + radius;
       middle.z -= 0.03;
-      const curve = new THREE.CatmullRomCurve3([...start, middle, tail, end]);
+      // 音箱线从相框背后的支架下面绕过去，不穿过相框。
+      const via = index === 1 ? [-0.2, 0.21].map((x, i) => {
+        const point = poster.localToWorld(new THREE.Vector3(x, -0.2125, -0.07));
+        point.y = DESK_Y + radius * (i === 0 ? 3 : 1);
+        return point;
+      }) : [middle];
+      // 插线板自己的电源线：贴着桌面走到后沿，从桌子和墙之间的缝垂到地面。
+      const drop = (dx: number, y: number, z: number) => new THREE.Vector3(start[1].x + dx, y, z);
+      const points = index === 2
+        ? [start[0], start[1], drop(0.008, DESK_Y + radius, -0.57), drop(0.01, DESK_Y + radius + 0.0005, -0.598), drop(0.01, DESK_Y - 0.006, -0.6062), drop(0.01, DESK_Y - 0.05, -0.6068), drop(0.012, 0.3, -0.6068), drop(0.02, 0.12, -0.6), drop(0.045, radius, -0.56)]
+        : [...start, ...via, tail, end];
+      const curve = new THREE.CatmullRomCurve3(points, false, "centripetal");
       line.geometry.dispose();
       line.geometry = new THREE.TubeGeometry(curve, 64, radius, 8, false);
     });
@@ -900,7 +937,7 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   const plugTop = DESK_Y + 0.066;
   cable([[sx + outletX[0], plugTop, sz + 0.016], [sx + outletX[0], plugTop + 0.012, sz + 0.004], [sx + outletX[0] - 0.01, DESK_Y + 0.02, sz - 0.055], [sx - 0.25, cy, sz - 0.06], [-0.5, cy, -0.47], [-0.64, cy, -0.4]]);
   cable([[sx + outletX[2], plugTop, sz + 0.016], [sx + outletX[2], plugTop + 0.012, sz + 0.004], [sx + outletX[2] + 0.01, DESK_Y + 0.02, sz - 0.055], [0.42, cy, -0.5], [0.58, cy, -0.42], [0.63, cy + 0.01, -0.37]]);
-  cable([[sx + 0.16, DESK_Y + 0.017, sz], [sx + 0.2, cy, sz - 0.04], [sx + 0.24, DESK_Y - 0.01, -0.6], [sx + 0.26, 0.35, -0.61], [sx + 0.3, 0.02, -0.57]]);
+  cable([[sx + 0.158, DESK_Y + 0.016, sz], [sx + 0.176, cy, sz - 0.022], [sx + 0.19, 0.35, -0.607], [sx + 0.22, 0.004, -0.56]]);
   // USB-C 线：从充电器前面落到桌面，接到电脑右侧的接口。
   const portX = -0.02 + 0.17;
   const portZ = -0.22;
@@ -951,7 +988,7 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   // Reference scissors authored in Blender; the pivot is the model origin.
   // Blade tip rests on the 6 mm floor; the tilted blade rests against the inner rim.
   scissors.position.set(0, 0.09701939, 0.02879688);
-  gltfLoader.load("/desk/models/reference-scissors.glb?v=2", gltf => {
+  gltfLoader.load("/desk/models/reference-scissors.glb?v=3", gltf => {
     gltf.scene.traverse(object => {
       if (!(object instanceof THREE.Mesh)) return;
       const materials = Array.isArray(object.material) ? object.material : [object.material];
@@ -982,7 +1019,8 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
   let holdTimer=0;
   const clearHold=()=>window.clearTimeout(holdTimer);
   const layoutObjects = new Map<string, THREE.Object3D>([...Array.from(hotspots.entries()).filter(([kind]) => kind !== "scissors"), ["phoneStand", phoneStand], ["penCup", penCup], ["poster", poster], ["pen", pen], ["bookshelf", bookshelf]]);
-  const layoutKey = "desk-layout-v1";
+  // 默认摆放改动后换版本号，避免旧的本地摆放把物品放回重叠的位置。
+  const layoutKey = "desk-layout-v2";
   try {
     const saved = JSON.parse(localStorage.getItem(layoutKey) || "null");
     if (saved?.version === 1 && saved.objects) {
@@ -1214,6 +1252,9 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
     pos.copy(homeTarget).addScaledVector(homeOffset, k);
   };
   homePose(camPos, camTarget);
+  // 进场镜头：画面出现时从稍远稍高的位置推到书桌前。
+  const introOffset = new THREE.Vector3(0, 0.34, 0.62);
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   /* ---------------- 状态 ---------------- */
   let lampOn = true;
@@ -1361,11 +1402,19 @@ wantPos.copy(wantTarget).addScaledVector(normal, distance);
       placeKeys();
     }
 
-    renderer.render(scene, camera);
     if (!readySent && assetsReady) {
       readySent = true;
+      if (!focused && !reducedMotion) {
+        // 画面淡入的同时，镜头从远处推近到书桌。
+        camPos.copy(wantPos).add(introOffset);
+        camera.position.copy(camPos);
+        camera.lookAt(camTarget);
+      }
+      renderer.render(scene, camera);
       options.onReady?.();
+      return;
     }
+    renderer.render(scene, camera);
   };
   raf = requestAnimationFrame(loop);
 
