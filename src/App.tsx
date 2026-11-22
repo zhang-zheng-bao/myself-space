@@ -1,4 +1,5 @@
 import ThemePicker from "./components/ThemePicker";
+import { coverThenSwitch, dismissBootLoader } from "./themeTransition";
 import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
@@ -2435,9 +2436,6 @@ function ContactPane({ data }: { data: PortfolioData }) {
 
 
 /** 内容就绪即移除题签，不让装饰性书写动画拖延进入。 */
-function dismissBootLoader(_animate: boolean) {
-  document.getElementById("boot-loader")?.remove();
-}
 
 function preloadImage(url: string) {
   return new Promise<void>((resolve) => {
@@ -2885,7 +2883,7 @@ export default function App() {
               <span>{item.label}</span>
             </button>
           ))}
-          <button type="button" data-track="navigation:desk" onClick={() => window.location.assign("/desk")}>
+          <button type="button" data-track="navigation:desk" onClick={event => coverThenSwitch("desk", event.currentTarget.getBoundingClientRect(), () => window.location.assign("/desk"), true)}>
             <span>3D桌面</span>
           </button>
         </nav>
@@ -2902,7 +2900,7 @@ export default function App() {
               <span>{item.label}</span><small>{item.sub}</small>
             </button>
           ))}
-          <button type="button" data-track="navigation:mobile:desk" onClick={() => window.location.assign("/desk")}>
+          <button type="button" data-track="navigation:mobile:desk" onClick={event => coverThenSwitch("desk", event.currentTarget.getBoundingClientRect(), () => window.location.assign("/desk"), true)}>
             <span>3D桌面</span><small>探索我的桌面空间</small>
           </button>
         </nav>

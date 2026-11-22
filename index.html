@@ -6,6 +6,12 @@
     <meta name="theme-color" content="#05090b" />
     <script>
       if (!location.pathname.startsWith("/admin")) document.documentElement.classList.add("portfolio-document");
+      // 切换主题跳转过来时，加载页沿用过场的底色；直接打开书桌页也用浅色。
+      try {
+        var veil = sessionStorage.getItem("theme-veil");
+        sessionStorage.removeItem("theme-veil");
+        if (veil || location.pathname.startsWith("/desk")) document.documentElement.dataset.veil = veil || "desk";
+      } catch (error) {}
     </script>
     <style>
       html.portfolio-document { background: #05090b; color-scheme: dark; }
@@ -24,6 +30,12 @@
       .boot-loader__bars i:nth-child(3) {height:25px;background:#cbd4d2;animation-delay:-170ms;animation-duration:980ms;}
       .boot-loader__brand {font:11px/1.4 ui-monospace,Consolas,monospace;letter-spacing:.3em;color:#8b9996;}
       .boot-loader__status {font-size:12px;color:#899694;}
+      #boot-loader.is-leaving {opacity:0;pointer-events:none;transition:opacity 560ms ease;}
+      html[data-veil="desk"], html[data-veil="desk"] body, html[data-veil="desk"] #root {background:#e9e7e2;}
+      html[data-veil="desk"] #boot-loader {background:#e9e7e2;color:#3b3a36;}
+      html[data-veil="desk"] .boot-loader__bars i {background:#8a8478;box-shadow:none;}
+      html[data-veil="desk"] .boot-loader__bars i:nth-child(3) {background:#bdb7ab;}
+      html[data-veil="desk"] .boot-loader__brand, html[data-veil="desk"] .boot-loader__status {color:#7d786e;}
       @keyframes bootSignal {from{transform:scaleY(.35)}to{transform:scaleY(1)}}
       @media(prefers-reduced-motion:reduce) {.boot-loader__bars i{animation:none;}}
     </style>
