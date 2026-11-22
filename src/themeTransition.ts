@@ -26,6 +26,8 @@ export function coverThenSwitch(target: VeilTheme, origin: DOMRect | null, run: 
     if (reload) {
       // 新页面的加载页接着用同一底色，载入完成后再淡出。
       try { sessionStorage.setItem(KEY, target); } catch {}
+      // 按浏览器「后退」从缓存恢复这一页时，遮罩还在，要拿掉。
+      window.addEventListener("pageshow", event => { if (event.persisted) veil.remove(); });
       run();
       return;
     }
