@@ -1,4 +1,5 @@
 import ThemePicker from "../components/ThemePicker";
+import { dismissBootLoader } from "../themeTransition";
 import WeChatComposer, { type LocalMessage } from './WeChatComposer';
 import { Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Video, Settings, Image, Bookmark, Volume2, Maximize, Minimize, Aperture, ArrowLeft, ChevronLeft, ChevronRight, CirclePlus, Compass, Ellipsis, ExternalLink, MessageCircle, Mic, Newspaper, Pause, Play, Search, SkipForward, Smile, Tag, User, UserPlus, Users, X } from "lucide-react";
@@ -8,7 +9,7 @@ import AssistantVideoCall from "../components/AssistantVideoCall";
 import SlidePlayer from "../components/SlidePlayer";
 import { getVisitorKey } from "../tracking";
 import { createDeskScene, type DeskHotspot, type DeskScene } from "./deskScene";
-import { homeApps, homeSize, homeScreenUrl, type HomeDevice } from "./deviceAppearance";
+import { appIconUrl, homeApps, homeSize, homeScreenUrl, wallpaperUrl, type HomeDevice } from "./deviceAppearance";
 import "./desk.css";
 import wechatOwnerAvatar from "./assets/wechat-owner-avatar.jpg";
 import { toolUrl } from "../toolNavigation";
@@ -108,6 +109,19 @@ async function loadPortfolio(): Promise<PortfolioData | null> {
  * ==================================================================== */
 
 const CloseContext = createContext<() => void>(() => {});
+/** 手机竖屏放不下电脑和平板的横屏界面：这两样改成竖屏排版的整页面板。 */
+const SheetContext = createContext(false);
+const narrowPortrait = "(max-width: 720px) and (orientation: portrait)";
+function useNarrowPortrait() {
+  const [narrow, setNarrow] = useState(() => window.matchMedia(narrowPortrait).matches);
+  useEffect(() => {
+    const query = window.matchMedia(narrowPortrait);
+    const sync = () => setNarrow(query.matches);
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+  return narrow;
+}
 const useCloseDevice = () => useContext(CloseContext);
 
 function flipFrom(origin: DOMRect | null, box: DOMRect) {
@@ -127,7 +141,10 @@ function DeviceShell({ kind, origin, onClosed, children, label, scene }: { kind:
   const stageRef = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [fullscreenError, setFullscreenError] = useState("");
-  const isScreen = kind === "laptop" || kind === "tablet" || kind === "phone";
+  const narrow = useNarrowPortrait();
+  const sheet = narrow && (kind === "laptop" || kind === "tablet");
+  // 界面贴在 3D 屏幕上显示；竖屏面板和其他物品走普通的放大动画。
+  const isScreen = (kind === "laptop" || kind === "tablet" || kind === "phone") && !sheet;
   useEffect(() => {
     const sync = () => setFullscreen(document.fullscreenElement === stageRef.current);
     document.addEventListener("fullscreenchange", sync);
@@ -144,7 +161,7 @@ function DeviceShell({ kind, origin, onClosed, children, label, scene }: { kind:
   useLayoutEffect(() => {
     if (!ref.current) return;
     if (isScreen && scene) { setPhase("open"); return; }
-    setFrom(flipFrom(origin, ref.current.getBoundingClientRect()));
+    setFrom(flipFrom(origin || (sheet && scene ? scene.screenRect(kind as DeskHotspot) : null), ref.current.getBoundingClientRect()));
     setPhase("from");
   }, []);
   useEffect(() => {
@@ -193,7 +210,7 @@ function DeviceShell({ kind, origin, onClosed, children, label, scene }: { kind:
   return (
     <CloseContext.Provider value={close}>
       {!(isScreen && scene) && <div className="desk-backdrop" data-phase={phase} onClick={close} />}
-      <div ref={stageRef} className={`desk-stage${isScreen && scene && !fullscreen ? " desk-stage--in-screen" : ""}`} data-phase={phase}>
+      <div ref={stageRef} className={`desk-stage${isScreen && scene && !fullscreen ? " desk-stage--in-screen" : ""}${sheet ? " desk-stage--sheet" : ""}`} data-phase={phase}>
         <div className="desk-device-tools">
           {isScreen && <button type="button" onClick={toggleFullscreen} aria-label={fullscreen ? "退出全屏" : "全屏显示"} title={fullscreen ? "退出全屏" : "全屏显示"}>{fullscreen ? <Minimize size={18}/> : <Maximize size={18}/>}</button>}
           {fullscreenError && <span role="status">{fullscreenError}</span>}
@@ -209,7 +226,7 @@ function DeviceShell({ kind, origin, onClosed, children, label, scene }: { kind:
           style={style}
           onTransitionEnd={event => { if (event.target === event.currentTarget && event.propertyName === "transform" && phase === "leave") finish(); }}
         >
-          <div className="desk-device__content">{children}</div>
+          <div className="desk-device__content"><SheetContext.Provider value={sheet}>{children}</SheetContext.Provider></div>
         </div>
       </div>
     </CloseContext.Provider>
@@ -331,6 +348,14 @@ function DeviceHome({device,onOpen}: {device:HomeDevice;onOpen(id:string,event:R
   useEffect(()=>{const timer=window.setInterval(()=>setTime(clock()),1000);return ()=>window.clearInterval(timer);},[]);
   const [w,h]=homeSize[device];
   const items=[...homeApps[device],...(device==='laptop'?homeApps.laptop.map((a,i)=>({...a,x:920,y:58+i*88,size:46})):[])];
+  const sheet=useContext(SheetContext);
+  if(sheet) return <div className="desk-sheet-home" style={{backgroundImage:`url("${wallpaperUrl}")`}}>
+    <p className="desk-sheet-home__time">{time}</p>
+    <p className="desk-sheet-home__hint">点开一个应用看看</p>
+    <div className="desk-sheet-home__apps">
+      {homeApps[device].map(a=><button key={a.id} type="button" onClick={e=>onOpen(a.id,e)}><img src={appIconUrl(a.id)} alt="" /><span>{a.label}</span></button>)}
+    </div>
+  </div>;
   return <div className="desk-shared-home" style={{backgroundImage:`url("${homeScreenUrl(device,time)}")`}}>
     {items.map((a,i)=><button key={i} className="desk-home-target" aria-label={a.label} title={a.label} style={{left:`${a.x/w*100}%`,top:`${a.y/h*100}%`,width:`${a.size/w*100}%`,height:`${(a.size+24)/h*100}%`}} onClick={e=>onOpen(a.id,e)}/>)}
     {device==='phone'&&<button className="desk-home-target" aria-label="打开微信聊天" style={{left:'6%',top:'29.77%',width:'88%',height:'10.93%'}} onClick={e=>onOpen('wechat',e)}/>}
@@ -1267,7 +1292,7 @@ export default function DeskApp() {
         onSelect: kind => select(kind),
         onReady: () => {
           setReady(true);
-          document.getElementById("boot-loader")?.remove();
+          dismissBootLoader();
         },
       });
     } catch {
@@ -1302,10 +1327,11 @@ export default function DeskApp() {
     setOpen(null);
   }, []);
 
+  const narrow = useNarrowPortrait();
   const dock: [DeskHotspot, string][] = [["poster", "相框"],["laptop", "电脑"], ["tablet", "平板"], ["phone", "手机"], ["notebook", "笔记本"], ["speaker", "音箱"], ["lamp", "台灯"]];
 
   return (
-    <div className={`desk-page${ready ? " is-ready" : ""}${open ? " has-device" : ""}${open && ["laptop","tablet","phone"].includes(open.kind) ? " has-screen" : ""}`}>
+    <div className={`desk-page${ready ? " is-ready" : ""}${open ? " has-device" : ""}${open && (open.kind === "phone" || (!narrow && (open.kind === "laptop" || open.kind === "tablet"))) ? " has-screen" : ""}`}>
       <canvas ref={canvasRef} className="desk-canvas" aria-label="三维书桌场景，可以点击桌上的物品" />
       {webglFailed && <div className="desk-fallback">你的浏览器不支持 3D 画面，可以用下方按钮打开各个物品。</div>}
 

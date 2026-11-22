@@ -653,3 +653,22 @@ button.desk-wx__setting { cursor: pointer; }
 .desk-wx__tabs { padding: 5px 0 20px; }
 .desk-wx__tabs button { min-height: 42px; gap: 1px; font-size: 10px; line-height: 14px; }
 .desk-wx__tabs svg { width: 22px; height: 22px; }
+
+/* 手机竖屏：电脑和平板改成竖屏排版的整页面板，字和按钮保持正常大小。 */
+.desk-stage--sheet { padding: 56px 8px 8px; }
+.desk-stage--sheet .desk-device--laptop, .desk-stage--sheet .desk-device--tablet {
+  box-sizing: border-box; width: 100%; height: 100%; aspect-ratio: auto;
+  border-width: 5px; border-radius: 26px;
+}
+.desk-stage--sheet .desk-device__content { border-radius: 20px; }
+.desk-stage--sheet .desk-device-tools { top: 12px; right: 12px; }
+.desk-stage--sheet .desk-device-tools button { width: 38px; height: 38px; }
+.desk-stage--sheet .desk-desktop .desk-mac { inset: 0; border: 0; border-radius: 0; box-shadow: none; background: #fafafa; }
+.desk-sheet-home { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 13% 20px 28px; background-size: cover; background-position: center; color: white; text-shadow: 0 1px 12px #0b1a3066; }
+.desk-sheet-home__time { margin: 0; font-size: 68px; font-weight: 200; line-height: 1; }
+.desk-sheet-home__hint { margin: 12px 0 0 4px; font-size: 15px; opacity: .85; }
+.desk-sheet-home__apps { margin-top: auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px 8px; padding: 22px 12px; border-radius: 28px; background: #ffffff38; border: 1px solid #ffffff4d; backdrop-filter: blur(14px); }
+.desk-sheet-home__apps button { display: grid; justify-items: center; gap: 7px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-size: 13px; text-shadow: inherit; cursor: pointer; }
+.desk-sheet-home__apps img { width: 60px; height: 60px; border-radius: 15px; box-shadow: 0 6px 16px #0b1a3040; transition: transform .16s ease; }
+.desk-sheet-home__apps button:active img { transform: scale(.92); }
+.desk-sheet-home__apps button:focus-visible { outline: 2px solid white; outline-offset: 6px; border-radius: 12px; }
