@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, Loader2, Maximize, Minimize, Pause, Play, X } from "lucide-react";
 import type { SlideDeck } from "../types";
@@ -228,8 +228,29 @@ export default function SlidePlayer({ deck, onClose }: { deck: SlideDeck; onClos
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
 
+  // 页面上别的元素（比如书桌页的平板）处于全屏时，body 下的弹层不会被绘制，所以把弹层挂到全屏元素里，退出全屏后再挪回 body。
+  const [host] = useState(() => {
+    const element = document.createElement("div");
+    element.style.display = "contents";
+    return element;
+  });
+  useLayoutEffect(() => {
+    const place = () => {
+      const active = document.fullscreenElement;
+      if (active && host.contains(active)) return;
+      const parent = active ?? document.body;
+      if (host.parentNode !== parent) parent.appendChild(host);
+    };
+    place();
+    document.addEventListener("fullscreenchange", place);
+    return () => {
+      document.removeEventListener("fullscreenchange", place);
+      host.remove();
+    };
+  }, [host]);
+
   const toggleFullscreen = useCallback(() => {
-    if (document.fullscreenElement) void document.exitFullscreen();
+    if (document.fullscreenElement === rootRef.current) void document.exitFullscreen();
     else void rootRef.current?.requestFullscreen?.().catch(() => undefined);
   }, []);
 
@@ -342,6 +363,6 @@ export default function SlidePlayer({ deck, onClose }: { deck: SlideDeck; onClos
         </footer>
       )}
     </div>,
-    document.body,
+    host,
   );
 }

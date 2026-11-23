@@ -1,4 +1,5 @@
 import ThemePicker from "../components/ThemePicker";
+import { dismissBootLoader } from "../themeTransition";
 import WeChatComposer, { type LocalMessage } from './WeChatComposer';
 import { Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Video, Settings, Image, Bookmark, Volume2, Maximize, Minimize, Aperture, ArrowLeft, ChevronLeft, ChevronRight, CirclePlus, Compass, Ellipsis, ExternalLink, MessageCircle, Mic, Newspaper, Pause, Play, Search, SkipForward, Smile, Tag, User, UserPlus, Users, X } from "lucide-react";
@@ -8,7 +9,7 @@ import AssistantVideoCall from "../components/AssistantVideoCall";
 import SlidePlayer from "../components/SlidePlayer";
 import { getVisitorKey } from "../tracking";
 import { createDeskScene, type DeskHotspot, type DeskScene } from "./deskScene";
-import { homeApps, homeSize, homeScreenUrl, type HomeDevice } from "./deviceAppearance";
+import { appIconUrl, homeApps, homeSize, homeScreenUrl, wallpaperUrl, type HomeDevice } from "./deviceAppearance";
 import "./desk.css";
 import wechatOwnerAvatar from "./assets/wechat-owner-avatar.jpg";
 import { toolUrl } from "../toolNavigation";
@@ -108,15 +109,28 @@ async function loadPortfolio(): Promise<PortfolioData | null> {
  * ==================================================================== */
 
 const CloseContext = createContext<() => void>(() => {});
+/** 手机竖屏放不下电脑和平板的横屏界面：这两样改成竖屏排版的整页面板。 */
+const SheetContext = createContext(false);
+const narrowPortrait = "(max-width: 720px) and (orientation: portrait)";
+function useNarrowPortrait() {
+  const [narrow, setNarrow] = useState(() => window.matchMedia(narrowPortrait).matches);
+  useEffect(() => {
+    const query = window.matchMedia(narrowPortrait);
+    const sync = () => setNarrow(query.matches);
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+  return narrow;
+}
 const useCloseDevice = () => useContext(CloseContext);
 
 function flipFrom(origin: DOMRect | null, box: DOMRect) {
   if (!origin || !box.width || !box.height) return "translate3d(0, 48px, 0) scale(.9)";
   const dx = origin.left + origin.width / 2 - (box.left + box.width / 2);
   const dy = origin.top + origin.height / 2 - (box.top + box.height / 2);
-  const sx = Math.max(0.03, origin.width / box.width);
-  const sy = Math.max(0.03, origin.height / box.height);
-  return `translate3d(${dx}px, ${dy}px, 0) scale(${sx}, ${sy})`;
+  // 横竖用同一个比例：物件和面板长宽比不同时，内容不会被拉扁或撑大。
+  const scale = Math.min(1, Math.max(0.03, Math.min(origin.width / box.width, origin.height / box.height)));
+  return `translate3d(${dx}px, ${dy}px, 0) scale(${scale})`;
 }
 
 function DeviceShell({ kind, origin, onClosed, children, label, scene }: { kind: Device; origin: DOMRect | null; onClosed(): void; children: ReactNode; label: string; scene?: DeskScene | null }) {
@@ -127,7 +141,10 @@ function DeviceShell({ kind, origin, onClosed, children, label, scene }: { kind:
   const stageRef = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [fullscreenError, setFullscreenError] = useState("");
-  const isScreen = kind === "laptop" || kind === "tablet" || kind === "phone";
+  const narrow = useNarrowPortrait();
+  const sheet = narrow && (kind === "laptop" || kind === "tablet");
+  // 界面贴在 3D 屏幕上显示；竖屏面板和其他物品走普通的放大动画。
+  const isScreen = (kind === "laptop" || kind === "tablet" || kind === "phone") && !sheet;
   useEffect(() => {
     const sync = () => setFullscreen(document.fullscreenElement === stageRef.current);
     document.addEventListener("fullscreenchange", sync);
@@ -144,7 +161,7 @@ function DeviceShell({ kind, origin, onClosed, children, label, scene }: { kind:
   useLayoutEffect(() => {
     if (!ref.current) return;
     if (isScreen && scene) { setPhase("open"); return; }
-    setFrom(flipFrom(origin, ref.current.getBoundingClientRect()));
+    setFrom(flipFrom(origin || (sheet && scene ? scene.screenRect(kind as DeskHotspot) : null), ref.current.getBoundingClientRect()));
     setPhase("from");
   }, []);
   useEffect(() => {
@@ -156,7 +173,9 @@ function DeviceShell({ kind, origin, onClosed, children, label, scene }: { kind:
 
   useLayoutEffect(() => {
     if (!isScreen || !scene) return;
-    if (fullscreen) { if(ref.current) Object.assign(ref.current.style,{width:'',height:'',transform:''}); return; }
+    // 退出贴屏显示（全屏、转成竖屏面板）时清掉内联尺寸，交还给样式表。
+    const clear = () => { if (ref.current) Object.assign(ref.current.style,{width:'',height:'',transform:''}); };
+    if (fullscreen) { clear(); return; }
     let frame = 0;
     const sync = () => {
       const [width,height] = homeSize[kind as HomeDevice];
@@ -166,7 +185,7 @@ function DeviceShell({ kind, origin, onClosed, children, label, scene }: { kind:
       }
       frame = requestAnimationFrame(sync);
     };
-    sync(); return () => cancelAnimationFrame(frame);
+    sync(); return () => { cancelAnimationFrame(frame); clear(); };
   }, [isScreen, scene, kind, fullscreen]);
   const finish = useCallback(() => {
     if (closedRef.current) return;
@@ -193,7 +212,7 @@ function DeviceShell({ kind, origin, onClosed, children, label, scene }: { kind:
   return (
     <CloseContext.Provider value={close}>
       {!(isScreen && scene) && <div className="desk-backdrop" data-phase={phase} onClick={close} />}
-      <div ref={stageRef} className={`desk-stage${isScreen && scene && !fullscreen ? " desk-stage--in-screen" : ""}`} data-phase={phase}>
+      <div ref={stageRef} className={`desk-stage${isScreen && scene && !fullscreen ? " desk-stage--in-screen" : ""}${sheet ? " desk-stage--sheet" : ""}`} data-phase={phase}>
         <div className="desk-device-tools">
           {isScreen && <button type="button" onClick={toggleFullscreen} aria-label={fullscreen ? "退出全屏" : "全屏显示"} title={fullscreen ? "退出全屏" : "全屏显示"}>{fullscreen ? <Minimize size={18}/> : <Maximize size={18}/>}</button>}
           {fullscreenError && <span role="status">{fullscreenError}</span>}
@@ -209,7 +228,7 @@ function DeviceShell({ kind, origin, onClosed, children, label, scene }: { kind:
           style={style}
           onTransitionEnd={event => { if (event.target === event.currentTarget && event.propertyName === "transform" && phase === "leave") finish(); }}
         >
-          <div className="desk-device__content">{children}</div>
+          <div className="desk-device__content"><SheetContext.Provider value={sheet}>{children}</SheetContext.Provider></div>
         </div>
       </div>
     </CloseContext.Provider>
@@ -291,10 +310,14 @@ function WorkCards({ works, onPick }: { works: Work[]; onPick(work: Work): void 
 function WorkDetail({ work }: { work: Work }) {
   const [index, setIndex] = useState(0);
   const images = work.images?.filter(Boolean) || [];
+  // 后台内容每 30 秒同步一次，COS 签名地址每次都不同；播放中换 src 会从头加载，所以只在换了文件或加载失败后才换新地址。外链视频的查询参数可能就是视频本身，只忽略 COS 签名。
+  const videoFile = `${work.id}|${/[?&]q-signature=/.test(work.videoUrl || "") ? work.videoUrl?.split("?")[0] : work.videoUrl}`;
+  const video = useRef({ file: videoFile, url: work.videoUrl, failed: false });
+  if (video.current.file !== videoFile || (video.current.failed && video.current.url !== work.videoUrl)) video.current = { file: videoFile, url: work.videoUrl, failed: false };
   return (
     <article className="desk-work">
       {isVideo(work) ? (
-        <video className="desk-work__media" src={work.videoUrl} poster={images[0]} controls playsInline />
+        <video className="desk-work__media" src={video.current.url} poster={images[0]} controls playsInline onError={() => { video.current.failed = true; }} />
       ) : images.length ? (
         <div className="desk-work__gallery">
           <Img className="desk-work__media" src={images[index]} alt={work.title} />
@@ -327,6 +350,14 @@ function DeviceHome({device,onOpen}: {device:HomeDevice;onOpen(id:string,event:R
   useEffect(()=>{const timer=window.setInterval(()=>setTime(clock()),1000);return ()=>window.clearInterval(timer);},[]);
   const [w,h]=homeSize[device];
   const items=[...homeApps[device],...(device==='laptop'?homeApps.laptop.map((a,i)=>({...a,x:920,y:58+i*88,size:46})):[])];
+  const sheet=useContext(SheetContext);
+  if(sheet) return <div className="desk-sheet-home" style={{backgroundImage:`url("${wallpaperUrl}")`}}>
+    <p className="desk-sheet-home__time">{time}</p>
+    <p className="desk-sheet-home__hint">点开一个应用看看</p>
+    <div className="desk-sheet-home__apps">
+      {homeApps[device].map(a=><button key={a.id} type="button" onClick={e=>onOpen(a.id,e)}><img src={appIconUrl(a.id)} alt="" /><span>{a.label}</span></button>)}
+    </div>
+  </div>;
   return <div className="desk-shared-home" style={{backgroundImage:`url("${homeScreenUrl(device,time)}")`}}>
     {items.map((a,i)=><button key={i} className="desk-home-target" aria-label={a.label} title={a.label} style={{left:`${a.x/w*100}%`,top:`${a.y/h*100}%`,width:`${a.size/w*100}%`,height:`${(a.size+24)/h*100}%`}} onClick={e=>onOpen(a.id,e)}/>)}
     {device==='phone'&&<button className="desk-home-target" aria-label="打开微信聊天" style={{left:'6%',top:'29.77%',width:'88%',height:'10.93%'}} onClick={e=>onOpen('wechat',e)}/>}
@@ -908,18 +939,22 @@ function PhoneScreen({ data, music }: { data: PortfolioData; music: MusicControl
  * ==================================================================== */
 
 function UniversitySpread({ index, data }: { index: number; data: PortfolioData }) {
-  const close = useContext(CloseContext);
   const book = readUniversityBooks(data.profile.pageCopy)[index];
-  const [spread, setSpread] = useState(0);
-  const count = Math.max(1, Math.ceil(book.pages.length / 2));
-  useEffect(() => setSpread(s => Math.min(s, count - 1)), [count]);
+  // 手机竖屏一次只放得下一页；横屏和电脑是左右两页的跨页。
+  const single = useNarrowPortrait();
+  const per = single ? 1 : 2;
+  // 跨页要凑成偶数页；单页显示时不补空白页。
+  const total = single ? Math.max(1, book.pages.length) : Math.max(1, Math.ceil(book.pages.length / 2)) * 2;
+  const [first, setFirst] = useState(0);
+  useEffect(() => setFirst(page => Math.min(page, total - 1)), [total]);
+  const start = first - (first % per);
   return <div className="university-book" data-book-id={book.id}>
     <header className="university-book__header"><span>{book.title}</span></header>
-    <div className="university-book__spread" key={spread}>
-      {[0, 1].map(side => {
-        const number = spread * 2 + side;
+    <div className="university-book__spread" key={start}>
+      {Array.from({ length: per }, (_, offset) => {
+        const number = start + offset;
         const page = book.pages[number];
-        return <article className="university-book__page" key={side} aria-label={`第 ${number + 1} 页`}>
+        return <article className="university-book__page" data-side={number % 2 ? "right" : "left"} key={number} aria-label={`第 ${number + 1} 页`}>
           <div className="university-book__body">
             {number === 0 && <p className="university-book__eyebrow">{book.title}</p>}
             {page?.title && <h2>{page.title}</h2>}
@@ -932,9 +967,9 @@ function UniversitySpread({ index, data }: { index: number; data: PortfolioData 
       })}
     </div>
     <nav className="university-book__navigation" aria-label="书页导航">
-      <button disabled={spread === 0} onClick={() => setSpread(s => s - 1)}><ChevronLeft size={18} />上一页</button>
-      <span>{spread * 2 + 1}–{Math.min(spread * 2 + 2, Math.max(2, book.pages.length))} / {Math.max(2, book.pages.length)}</span>
-      <button disabled={spread + 1 >= count} onClick={() => setSpread(s => s + 1)}>下一页<ChevronRight size={18} /></button>
+      <button disabled={start === 0} onClick={() => setFirst(start - per)}><ChevronLeft size={18} />上一页</button>
+      <span>{single ? start + 1 : `${start + 1}–${start + 2}`} / {total}</span>
+      <button disabled={start + per >= total} onClick={() => setFirst(start + per)}>下一页<ChevronRight size={18} /></button>
     </nav>
   </div>;
 }
@@ -1263,7 +1298,7 @@ export default function DeskApp() {
         onSelect: kind => select(kind),
         onReady: () => {
           setReady(true);
-          document.getElementById("boot-loader")?.remove();
+          dismissBootLoader();
         },
       });
     } catch {
@@ -1298,10 +1333,11 @@ export default function DeskApp() {
     setOpen(null);
   }, []);
 
+  const narrow = useNarrowPortrait();
   const dock: [DeskHotspot, string][] = [["poster", "相框"],["laptop", "电脑"], ["tablet", "平板"], ["phone", "手机"], ["notebook", "笔记本"], ["speaker", "音箱"], ["lamp", "台灯"]];
 
   return (
-    <div className={`desk-page${ready ? " is-ready" : ""}${open ? " has-device" : ""}${open && ["laptop","tablet","phone"].includes(open.kind) ? " has-screen" : ""}`}>
+    <div className={`desk-page${ready ? " is-ready" : ""}${open ? " has-device" : ""}${open && (open.kind === "phone" || (!narrow && (open.kind === "laptop" || open.kind === "tablet"))) ? " has-screen" : ""}`}>
       <canvas ref={canvasRef} className="desk-canvas" aria-label="三维书桌场景，可以点击桌上的物品" />
       {webglFailed && <div className="desk-fallback">你的浏览器不支持 3D 画面，可以用下方按钮打开各个物品。</div>}
 
@@ -1329,7 +1365,7 @@ export default function DeskApp() {
         ))}
       </nav>}
 
-      {selectedBook !== null && <DeviceShell kind="notebook" origin={sceneRef.current?.screenRect("bookshelf") || null} onClosed={() => setSelectedBook(null)} label={universityBooks[selectedBook].title}>
+      {selectedBook !== null && <DeviceShell kind="notebook" origin={sceneRef.current?.bookRect(selectedBook) || null} onClosed={() => setSelectedBook(null)} label={universityBooks[selectedBook].title}>
         <UniversitySpread index={selectedBook} data={data} />
       </DeviceShell>}
       {open && (

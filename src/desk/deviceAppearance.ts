@@ -8,6 +8,7 @@ export const homeApps: Record<HomeDevice, HomeApp[]> = {
   tablet: ['photos:相册','videos:视频','works:作品','posts:图文','slides:演示'].map((v,i) => ({id:v.split(':')[0],label:v.split(':')[1],x:112+i*170,y:300,size:76})),
   phone: [{id:'wechat',label:'微信',x:84,y:728,size:64},{id:'music',label:'音乐',x:252,y:728,size:64}],
 };
+export const wallpaperUrl = wallpaperImage;
 const uri = (svg: string) => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
 // Embed the bitmap so SVG images also render it in Three.js canvas textures.
 function wallpaper(device: HomeDevice) {
