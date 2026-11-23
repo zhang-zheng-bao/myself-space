@@ -943,7 +943,8 @@ function UniversitySpread({ index, data }: { index: number; data: PortfolioData 
   // 手机竖屏一次只放得下一页；横屏和电脑是左右两页的跨页。
   const single = useNarrowPortrait();
   const per = single ? 1 : 2;
-  const total = Math.max(1, Math.ceil(book.pages.length / 2)) * 2;
+  // 跨页要凑成偶数页；单页显示时不补空白页。
+  const total = single ? Math.max(1, book.pages.length) : Math.max(1, Math.ceil(book.pages.length / 2)) * 2;
   const [first, setFirst] = useState(0);
   useEffect(() => setFirst(page => Math.min(page, total - 1)), [total]);
   const start = first - (first % per);
