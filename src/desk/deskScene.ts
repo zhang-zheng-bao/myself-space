@@ -26,7 +26,9 @@ export type DeskSceneOptions = {
 
 export type DeskScene = {
   screenTransform(hotspot: DeskHotspot, width: number, height: number): string | null;
-  screenRect(hotspot: DeskHotspot): DOMRect | null;
+  screenRect(hotspot: DeskHotspot, part?: THREE.Object3D): DOMRect | null;
+  /** 书架上第 index 本书在屏幕上的位置。 */
+  bookRect(index: number): DOMRect | null;
   focus(hotspot: DeskHotspot | null): void;
   setLamp(on: boolean): void;
   setLayoutEditing(editing: boolean): void;
@@ -1310,9 +1312,15 @@ export function createDeskScene(options: DeskSceneOptions): DeskScene {
         if (focused === "bookshelf") {
           // 从书架正面看四本书，随书架移动和旋转保持一致。
           object.updateWorldMatrix(true, false);
-          wantTarget.copy(object.localToWorld(tmp.set(-0.035, 0.115, 0)));
-          const distance = Math.max(0.40, 0.30 / camera.aspect);
-          wantPos.copy(object.localToWorld(tmp.set(-0.035, 0.17, distance)));
+          if (portrait()) {
+            // 竖屏只需要装下四本书：镜头抬高往下看，越过书架前面的笔筒和剪刀。
+            wantTarget.copy(object.localToWorld(tmp.set(-0.06, 0.115, 0.04)));
+            wantPos.copy(object.localToWorld(tmp.set(-0.06, 0.41, 0.39)));
+          } else {
+            wantTarget.copy(object.localToWorld(tmp.set(-0.035, 0.115, 0)));
+            const distance = Math.max(0.40, 0.30 / camera.aspect);
+            wantPos.copy(object.localToWorld(tmp.set(-0.035, 0.17, distance)));
+          }
         } else if (focused === "keyboard" || focused === "mouse") {
           // Fit each object's current world bounds, including its saved rotation.
           object.updateWorldMatrix(true, true);
@@ -1439,8 +1447,9 @@ wantPos.copy(wantTarget).addScaledVector(normal, distance);
       const g=(dx3*dy2-dx2*dy3)/det,h=(dx1*dy3-dx3*dy1)/det;
       return 'matrix3d('+[(bp.x-a.x+g*bp.x)/width,(bp.y-a.y+g*bp.y)/width,0,g/width,(d.x-a.x+h*d.x)/height,(d.y-a.y+h*d.y)/height,0,h/height,0,0,1,0,a.x,a.y,0,1].join(',')+')';
     },
-    screenRect(kind) {
-      const object = measureTargets.get(kind);
+    bookRect(index) { return this.screenRect("bookshelf", shelfBooks[index]); },
+    screenRect(kind, part) {
+      const object = part ?? measureTargets.get(kind);
       if (!object) return null;
       object.updateWorldMatrix(true, true);
       box.setFromObject(object);

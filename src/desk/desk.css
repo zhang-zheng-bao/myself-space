@@ -558,12 +558,6 @@ button.desk-wx__setting { cursor: pointer; }
 .university-book__body .university-book__eyebrow { font-size: 12px; letter-spacing: .25em; color: #8a8174; }
 .university-book__body .university-book__empty { margin-top: 28%; text-align: center; font-size: 15px; color: #aaa294; }
 .university-book__page footer { padding-top: 18px; text-align: center; font-size: 11px; color: #9c9487; }
-@media (max-width: 640px) {
-  .university-book__spread { display: block; overflow-y: auto; }
-  .university-book__page { min-height: 65dvh; }
-  .university-book__body { overflow: visible; }
-  .university-book__page + .university-book__page { border-left: 0; border-top: 1px solid #ded7c9; }
-}
 
 /* Conversation list proportions follow the mobile WeChat reference. */
 .desk-wx__row--conversation { min-height: 72px; }
@@ -623,12 +617,19 @@ button.desk-wx__setting { cursor: pointer; }
 .university-book__navigation { position: absolute; top: calc(100% + 18px); left: 0; right: 0; padding: 0; color: #fff; text-shadow: 0 1px 4px #000; }
 .university-book__navigation > span { font-size: 12px; }
 .university-book__empty { opacity: .65; }
-@media (max-width: 600px) {
- .university-book__spread { display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; }
- .university-book__page { min-height: 0; padding: 20px 14px; }
- .university-book__body { overflow-y: auto; }
- .university-book__body h2 { font-size: 20px; }
- .university-book__body p { font-size: 14px; }
+.university-book__page[data-side="right"]:only-child { border-radius: 10px 2px 2px 2px; background: linear-gradient(90deg, #d6cebf 0%, #f5f1e7 5%, #fffdf7 22%, #faf8f1 100%); }
+/* 诗集和纪念册不超出手机屏幕，留在正中。 */
+.desk-stage { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.desk-device--notebook, .desk-device--speaker { max-width: 100%; max-height: 100%; }
+@media (max-width: 720px) and (orientation: portrait) {
+ /* 一次一页，按一页书的比例显示；下面留出翻页按钮的位置。 */
+ .desk-stage:has(.university-book) { padding-bottom: 70px; }
+ .desk-device--notebook:has(.university-book) { width: min(100%, 50dvh); height: auto; aspect-ratio: 2 / 3; }
+ .university-book { height: 100%; }
+ .university-book__spread { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
+ .university-book__page { min-height: 0; padding: 26px 22px 18px; }
+ .university-book__body h2 { font-size: 22px; }
+ .university-book__body p { font-size: 15px; }
 }
 
 .wx-composer { flex: none; min-width: 0; padding-bottom: 20px; background: #f6f6f6; }

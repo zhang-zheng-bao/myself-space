@@ -128,9 +128,9 @@ function flipFrom(origin: DOMRect | null, box: DOMRect) {
   if (!origin || !box.width || !box.height) return "translate3d(0, 48px, 0) scale(.9)";
   const dx = origin.left + origin.width / 2 - (box.left + box.width / 2);
   const dy = origin.top + origin.height / 2 - (box.top + box.height / 2);
-  const sx = Math.max(0.03, origin.width / box.width);
-  const sy = Math.max(0.03, origin.height / box.height);
-  return `translate3d(${dx}px, ${dy}px, 0) scale(${sx}, ${sy})`;
+  // 横竖用同一个比例：物件和面板长宽比不同时，内容不会被拉扁或撑大。
+  const scale = Math.min(1, Math.max(0.03, Math.min(origin.width / box.width, origin.height / box.height)));
+  return `translate3d(${dx}px, ${dy}px, 0) scale(${scale})`;
 }
 
 function DeviceShell({ kind, origin, onClosed, children, label, scene }: { kind: Device; origin: DOMRect | null; onClosed(): void; children: ReactNode; label: string; scene?: DeskScene | null }) {
@@ -939,18 +939,21 @@ function PhoneScreen({ data, music }: { data: PortfolioData; music: MusicControl
  * ==================================================================== */
 
 function UniversitySpread({ index, data }: { index: number; data: PortfolioData }) {
-  const close = useContext(CloseContext);
   const book = readUniversityBooks(data.profile.pageCopy)[index];
-  const [spread, setSpread] = useState(0);
-  const count = Math.max(1, Math.ceil(book.pages.length / 2));
-  useEffect(() => setSpread(s => Math.min(s, count - 1)), [count]);
+  // 手机竖屏一次只放得下一页；横屏和电脑是左右两页的跨页。
+  const single = useNarrowPortrait();
+  const per = single ? 1 : 2;
+  const total = Math.max(1, Math.ceil(book.pages.length / 2)) * 2;
+  const [first, setFirst] = useState(0);
+  useEffect(() => setFirst(page => Math.min(page, total - 1)), [total]);
+  const start = first - (first % per);
   return <div className="university-book" data-book-id={book.id}>
     <header className="university-book__header"><span>{book.title}</span></header>
-    <div className="university-book__spread" key={spread}>
-      {[0, 1].map(side => {
-        const number = spread * 2 + side;
+    <div className="university-book__spread" key={start}>
+      {Array.from({ length: per }, (_, offset) => {
+        const number = start + offset;
         const page = book.pages[number];
-        return <article className="university-book__page" key={side} aria-label={`第 ${number + 1} 页`}>
+        return <article className="university-book__page" data-side={number % 2 ? "right" : "left"} key={number} aria-label={`第 ${number + 1} 页`}>
           <div className="university-book__body">
             {number === 0 && <p className="university-book__eyebrow">{book.title}</p>}
             {page?.title && <h2>{page.title}</h2>}
@@ -963,9 +966,9 @@ function UniversitySpread({ index, data }: { index: number; data: PortfolioData 
       })}
     </div>
     <nav className="university-book__navigation" aria-label="书页导航">
-      <button disabled={spread === 0} onClick={() => setSpread(s => s - 1)}><ChevronLeft size={18} />上一页</button>
-      <span>{spread * 2 + 1}–{Math.min(spread * 2 + 2, Math.max(2, book.pages.length))} / {Math.max(2, book.pages.length)}</span>
-      <button disabled={spread + 1 >= count} onClick={() => setSpread(s => s + 1)}>下一页<ChevronRight size={18} /></button>
+      <button disabled={start === 0} onClick={() => setFirst(start - per)}><ChevronLeft size={18} />上一页</button>
+      <span>{single ? start + 1 : `${start + 1}–${start + 2}`} / {total}</span>
+      <button disabled={start + per >= total} onClick={() => setFirst(start + per)}>下一页<ChevronRight size={18} /></button>
     </nav>
   </div>;
 }
@@ -1361,7 +1364,7 @@ export default function DeskApp() {
         ))}
       </nav>}
 
-      {selectedBook !== null && <DeviceShell kind="notebook" origin={sceneRef.current?.screenRect("bookshelf") || null} onClosed={() => setSelectedBook(null)} label={universityBooks[selectedBook].title}>
+      {selectedBook !== null && <DeviceShell kind="notebook" origin={sceneRef.current?.bookRect(selectedBook) || null} onClosed={() => setSelectedBook(null)} label={universityBooks[selectedBook].title}>
         <UniversitySpread index={selectedBook} data={data} />
       </DeviceShell>}
       {open && (
